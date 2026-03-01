@@ -1,0 +1,15 @@
+[project]
+name = "backend"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "functions-framework>=3.10.1",
+    "google-cloud-aiplatform>=1.138.0",
+    "google-genai>=1.63.0",
+    "httpx>=0.28.1",
+    "notion-client>=3.0.0",
+    "pymupdf>=1.27.1",
+    "python-dotenv>=1.2.2",
+]

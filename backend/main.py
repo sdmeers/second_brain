@@ -205,7 +205,7 @@ def call_vertex_ai(user_input, existing_categories, is_book=False, title_hint=""
     }
 
     response = client.models.generate_content(
-        model="gemini-3-flash",
+        model="gemini-3.1-flash-lite",
         contents=prompt,
         config=types.GenerateContentConfig(
             system_instruction=system_instruction,

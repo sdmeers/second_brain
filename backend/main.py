@@ -165,11 +165,15 @@ def call_vertex_ai(user_input, existing_categories, is_book=False, title_hint=""
     )
     
     prompt = (
-        f"Analyze this {'book title' if is_book else 'content'}:\n"
+        f"Analyze this {'book or chapter' if is_book else 'content'}:\n"
         f"TITLE HINT: {title_hint}\n"
         f"AUTHOR HINT: {author_hint}\n"
-        f"CONTENT: {user_input}"
+        f"CONTENT: {user_input if not is_book else 'Please provide a comprehensive summary of this book/chapter based on your internal knowledge.'}"
     )
+
+    if is_book:
+        system_instruction += "\n\nBOOK MODE: You are summarizing a book based on your internal training data. Ensure the Author, Type (Book), and Summary are accurate to the published work."
+
 
     response_schema = {
         "type": "OBJECT",
@@ -288,7 +292,13 @@ def centaur_api(request):
             page = notion.pages.retrieve(page_id=page_id)
             title = page["properties"]["Name"]["title"][0]["plain_text"]
             
-            ai_data = call_vertex_ai(title, existing_categories, is_book=True, title_hint=title)
+            # Check if an author was already manually entered in Notion
+            author_hint = ""
+            authors_prop = page["properties"].get("Authors", {}).get("rich_text", [])
+            if authors_prop:
+                author_hint = authors_prop[0].get("plain_text", "")
+            
+            ai_data = call_vertex_ai(title, existing_categories, is_book=True, title_hint=title, author_hint=author_hint)
             
             notion.pages.update(
                 page_id=page_id,

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Centaur Notes",
-  "version": "1.1",
+  "version": "2.5",
   "description": "Capture articles and YouTube transcripts into Notion with AI.",
   "permissions": [
     "activeTab",
@@ -10,6 +10,8 @@
   ],
   "host_permissions": [
     "https://*.youtube.com/*",
+    "https://*.google.com/*",
+    "https://*.googlevideo.com/*",
     "http://localhost:8080/*"
   ],
   "action": {

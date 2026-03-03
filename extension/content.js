@@ -15,8 +15,20 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       const turndownService = new TurndownService();
       const markdown = turndownService.turndown(article.content);
 
+      // Try to find author in meta tags if Readability missed it
+      let author = article.byline;
+      if (!author) {
+        const authorMeta = document.querySelector('meta[name="author"]') || 
+                           document.querySelector('meta[property="og:article:author"]') ||
+                           document.querySelector('.p-author');
+        if (authorMeta) {
+          author = authorMeta.content || authorMeta.innerText;
+        }
+      }
+
       sendResponse({
         title: article.title,
+        byline: author,
         markdown: markdown,
         url: window.location.href
       });

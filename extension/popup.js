@@ -29,22 +29,139 @@ document.addEventListener('DOMContentLoaded', async () => {
       // Handle YouTube vs. Standard Web Page
       if (url.includes("youtube.com/watch")) {
         statusMessage.textContent = "Fetching YouTube transcript...";
-        const videoId = new URL(url).searchParams.get("v");
-        const ytResponse = await chrome.runtime.sendMessage({ action: "getYouTubeTranscript", videoId });
-        if (ytResponse.error) throw new Error(ytResponse.error);
-        markdownText = ytResponse.transcript;
+        
+        // 1. Extract and fetch transcript metadata from the page context
+        const [{ result }] = await chrome.scripting.executeScript({
+          target: { tabId: currentTab.id },
+          world: "MAIN",
+          func: async () => {
+            console.error("CENTAUR DEBUG: Starting extraction v2.2...");
+            try {
+              // Priority 1: Deep Scrape DOM
+              const deepScrape = () => {
+                const results = [];
+                // Search for segments in standard DOM and common containers
+                const selectors = [
+                  'ytd-transcript-segment-renderer', 
+                  '.segment-text', 
+                  '#segments-container yt-formatted-string'
+                ];
+                
+                for (const sel of selectors) {
+                  const elements = document.querySelectorAll(sel);
+                  if (elements.length > 5) {
+                    console.error(`CENTAUR DEBUG: Found ${elements.length} via ${sel}`);
+                    return Array.from(elements).map(e => e.innerText.replace(/\s+/g, " ")).join(" ");
+                  }
+                }
+                return null;
+              };
+
+              const domTranscript = deepScrape();
+              if (domTranscript && domTranscript.length > 100) {
+                console.error("CENTAUR DEBUG: Successfully scraped from DOM.");
+                return { transcript: domTranscript };
+              }
+
+              // Priority 2: Player Data
+              const playerResponse = window.ytInitialPlayerResponse || 
+                                     (window._yt_player && window._yt_player.initialPlayerResponse);
+              
+              if (!playerResponse) {
+                console.error("CENTAUR DEBUG: Player data missing from window.");
+                return { error: "No player data. Please open the 'Show transcript' panel on YouTube first, then try again." };
+              }
+              
+              const tracks = playerResponse.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+              if (!tracks || tracks.length === 0) {
+                console.error("CENTAUR DEBUG: No tracks in playerResponse.");
+                return { error: "No captions found. Please click 'Show transcript' on the video page." };
+              }
+              
+              const track = tracks.sort((a, b) => {
+                const aCode = (a.languageCode || "").toLowerCase();
+                const bCode = (b.languageCode || "").toLowerCase();
+                if (aCode === "en") return -1;
+                if (bCode === "en") return 1;
+                return (aCode.startsWith("en") ? -1 : 1);
+              })[0];
+              
+              console.error("CENTAUR DEBUG: Selected track URL:", track.baseUrl);
+              
+              // Brute force fetch with varied credentials
+              const formats = ["json3", "srv1"];
+              for (const fmt of formats) {
+                const url = new URL(track.baseUrl);
+                url.searchParams.set("fmt", fmt);
+                
+                for (const cred of ['include', 'omit']) {
+                  try {
+                    console.error(`CENTAUR DEBUG: Fetching ${fmt} with ${cred}...`);
+                    const res = await fetch(url.toString(), { credentials: cred });
+                    const body = await res.text();
+                    
+                    if (body && body.length > 100) {
+                      if (fmt === "json3" || body.startsWith("{")) {
+                        const data = JSON.parse(body);
+                        const text = data.events?.filter(e => e.segs).map(e => e.segs.map(s => s.utf8).join("")).join(" ");
+                        if (text && text.length > 100) return { transcript: text };
+                      } else {
+                        const matches = body.match(/<text.*?>([\s\S]*?)<\/text>/gi);
+                        if (matches) {
+                          const text = matches.map(m => m.replace(/<text[^>]*>/i, "").replace(/<\/text>/i, "").replace(/&(#?[a-zA-Z0-9]+);/g, (m, e) => {
+                            const ent = { 'amp': '&', 'lt': '<', 'gt': '>', 'quot': '"', 'apos': "'", '#39': "'" };
+                            return ent[e] || m;
+                          })).join(" ");
+                          if (text.length > 100) return { transcript: text };
+                        }
+                      }
+                    }
+                  } catch (e) { console.error(`CENTAUR DEBUG: Fetch error:`, e); }
+                }
+              }
+              
+              return { baseUrl: track.baseUrl };
+            } catch (e) {
+              console.error("CENTAUR DEBUG: Fatal:", e);
+              return { error: "Failed to extract transcript: " + e.message };
+            }
+          }
+        });
+
+        if (result.error) throw new Error(result.error);
+        
+        if (result.transcript) {
+          markdownText = result.transcript;
+        } else if (result.baseUrl) {
+          // 2. Fetch via background script as a fallback
+          const ytResponse = await chrome.runtime.sendMessage({ 
+            action: "getYouTubeTranscript", 
+            baseUrl: result.baseUrl 
+          });
+          
+          if (ytResponse.error) throw new Error(ytResponse.error);
+          markdownText = ytResponse.transcript;
+        } else {
+          throw new Error("Could not find a valid transcript.");
+        }
       } else {
         statusMessage.textContent = "Extracting article text...";
+        var extractedTitle = ""; // Initialize outside
         try {
           const extraction = await chrome.tabs.sendMessage(currentTab.id, { action: "extractContent" });
-          if (extraction && extraction.markdown) {
-            markdownText = extraction.markdown;
-          } else {
+          var authorHint = "";
+          if (extraction) {
+            if (extraction.markdown) markdownText = extraction.markdown;
+            if (extraction.title) extractedTitle = extraction.title;
+            if (extraction.byline) authorHint = extraction.byline;
+            if (extraction.error) console.error("Extraction error:", extraction.error);
+          }
+          
+          if (!markdownText) {
             console.log("Extraction returned no content, falling back to backend fetch.");
-            markdownText = ""; 
           }
         } catch (e) {
-          console.log("Content script connection failed, falling back to backend fetch.");
+          console.log("Content script connection failed (try refreshing the page):", e);
           markdownText = "";
         }
       }
@@ -57,7 +174,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         body: JSON.stringify({ 
           source: "extension", 
           url: url, 
-          markdownText: markdownText 
+          markdownText: markdownText,
+          title: extractedTitle || "",
+          authorHint: authorHint || ""
         })
       });
 

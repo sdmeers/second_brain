@@ -4,6 +4,7 @@ import os
 import io
 import httpx
 import fitz  # PyMuPDF
+from bs4 import BeautifulSoup
 from notion_client import Client
 from google import genai
 from google.genai import types
@@ -65,10 +66,13 @@ def get_existing_categories():
         return []
 
 def fetch_and_extract_content(url):
-    """Downloads content from a URL and extracts text if it's a PDF."""
+    """Downloads content from a URL and extracts text if it's a PDF or HTML."""
     try:
         print(f"Fetching URL for backend extraction: {url}")
-        response = httpx.get(url, follow_redirects=True, timeout=30.0)
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        response = httpx.get(url, follow_redirects=True, timeout=30.0, headers=headers)
         response.raise_for_status()
         
         content_type = response.headers.get("Content-Type", "").lower()
@@ -84,8 +88,17 @@ def fetch_and_extract_content(url):
                 text += doc[i].get_text()
             return text.strip()
         else:
-            print(f"URL is not a PDF (Content-Type: {content_type}). Extraction failed.")
-            return None
+            print(f"Processing as HTML (Content-Type: {content_type})...")
+            soup = BeautifulSoup(response.content, 'html.parser')
+            
+            # Remove scripts, styles, and other non-content elements
+            for element in soup(["script", "style", "nav", "footer", "header", "aside"]):
+                element.decompose()
+            
+            # Extract text
+            text = soup.get_text(separator=' ', strip=True)
+            # Limit length to avoid prompt bloat
+            return text[:50000]
     except Exception as e:
         print(f"Error fetching/extracting content: {e}")
         return None
@@ -121,26 +134,112 @@ def markdown_to_notion_blocks(markdown_text):
             })
     return blocks
 
-def call_vertex_ai(user_input, existing_categories, is_book=False):
+import re
+
+def call_vertex_ai(user_input, existing_categories, is_book=False, title_hint="", author_hint=""):
     """Constructs prompt and calls Gemini 2.0 Flash to summarize content."""
+    # Ensure existing_categories uses double quotes in the prompt
+    categories_str = json.dumps(existing_categories)
+    
     system_instruction = (
-        "You are 'Centaur Notes', an expert AI summarising texts about AI, Defence, Tech, and Geopolitics. "
-        "Output a JSON object: {title, top_3_points: [], summary: 'Markdown string', selected_categories: []}. "
-        f"Prioritize these 'Existing Categories': {existing_categories}. "
-        "Summary should be 200-400 words with rich Markdown (### for subheadings)."
+        "You are 'Centaur Notes', an expert AI researcher and summarizer. "
+        "Your goal is to categorize and summarize content with high precision."
+        "\n\nEXTRACTION GUIDELINES:"
+        "\n1. Title: Strictly extract the actual title from the source. The provided 'TITLE HINT' is the official page title; use it as the primary source for the Title unless it is clearly generic (like 'Substack')."
+        "\n2. Author(s): Identify the primary author(s). Use the provided 'AUTHOR HINT' as a primary clue."
+        "\n3. Type: Classify the content as one of: Paper, News, Blog, Report, Video, Podcast, Book."
+        "   - 'Paper' means an academic paper or peer-reviewed journal article."
+        "   - 'Video' is usually a YouTube video but could be any video source."
+        "   - 'Podcast' is for audio shows."
+        "\n4. Keywords: Provide 3-5 descriptive keywords that capture the specific topics discussed."
+        "\n\nCATEGORIZATION GUIDELINES:"
+        f"\n1. Use these 'Existing Categories' if they are highly relevant: {categories_str}."
+        "\n2. If the content's primary theme is NOT covered by existing categories (e.g., 'Leadership', 'History'), create 1-2 NEW high-level categories."
+        "\n3. Avoid redundancy: Do NOT create new categories that are synonyms or narrow subsets of existing ones."
+        "\n4. Accuracy: Never assign a category that is not a core theme of the content. Do not force-fit unrelated content into existing categories."
+        "\n\nSUMMARY GUIDELINES:"
+        "\n- Provide a detailed Markdown summary (300-600 words)."
+        "\n- Use ### for subheadings."
+        "\n- Elaborate on nuances and key arguments beyond the top 3 points."
+        "\n\nCRITICAL: Output ONLY valid JSON using double quotes for all property names and string values."
     )
     
-    prompt = f"Analyze this {'book title' if is_book else 'content'}: {user_input}"
+    prompt = (
+        f"Analyze this {'book title' if is_book else 'content'}:\n"
+        f"TITLE HINT: {title_hint}\n"
+        f"AUTHOR HINT: {author_hint}\n"
+        f"CONTENT: {user_input}"
+    )
+
+    response_schema = {
+        "type": "OBJECT",
+        "properties": {
+            "title": {"type": "STRING"},
+            "authors": {
+                "type": "ARRAY",
+                "items": {"type": "STRING"}
+            },
+            "type": {
+                "type": "STRING",
+                "enum": ["Paper", "News", "Blog", "Report", "Video", "Podcast", "Book"]
+            },
+            "keywords": {
+                "type": "ARRAY",
+                "items": {"type": "STRING"}
+            },
+            "top_3_points": {
+                "type": "ARRAY",
+                "items": {"type": "STRING"}
+            },
+            "summary": {"type": "STRING"},
+            "selected_categories": {
+                "type": "ARRAY",
+                "items": {"type": "STRING"}
+            },
+        },
+        "required": ["title", "authors", "type", "keywords", "top_3_points", "summary", "selected_categories"]
+    }
 
     response = client.models.generate_content(
         model="gemini-2.0-flash",
         contents=prompt,
         config=types.GenerateContentConfig(
             system_instruction=system_instruction,
-            response_mime_type="application/json"
+            response_mime_type="application/json",
+            response_schema=response_schema
         )
     )
-    return json.loads(response.text)
+    
+    raw_text = response.text.strip()
+    
+    def repair_json(text):
+        # 1. Remove markdown code blocks
+        text = re.sub(r'^```(?:json)?\n', '', text, flags=re.MULTILINE)
+        text = re.sub(r'\n```$', '', text, flags=re.MULTILINE)
+        
+        # 2. Try parsing directly
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+            
+        # 3. Handle single quotes issue (common LLM failure)
+        # This is a basic repair: replace ' with " but be careful about apostrophes
+        # We only replace single quotes that look like property delimiters
+        text_repaired = re.sub(r"\'(\w+)\'\s*:", r'"\1":', text) # Property names
+        text_repaired = re.sub(r":\s*\'(.*?)\'([,\s}])", r': "\1"\2', text_repaired) # String values
+        
+        try:
+            return json.loads(text_repaired)
+        except json.JSONDecodeError as e:
+            print(f"Failed to repair JSON. Raw text: {text[:500]}")
+            raise e
+
+    try:
+        return repair_json(raw_text)
+    except Exception as e:
+        print(f"AI JSON Parse Error: {e}")
+        raise e
 
 @functions_framework.http
 def centaur_api(request):
@@ -157,6 +256,8 @@ def centaur_api(request):
         if source == "extension":
             url = request_json.get("url")
             markdown_text = request_json.get("markdownText")
+            title_hint = request_json.get("title", "")
+            author_hint = request_json.get("authorHint", "")
             
             # If no text provided, try to fetch and extract from URL on backend
             if not markdown_text or markdown_text.strip() == "":
@@ -164,13 +265,16 @@ def centaur_api(request):
                 if not markdown_text:
                     return (json.dumps({"error": "Failed to extract text from this URL. Only articles and PDFs are supported."}), 400, headers)
 
-            ai_data = call_vertex_ai(markdown_text, existing_categories)
+            ai_data = call_vertex_ai(markdown_text, existing_categories, title_hint=title_hint, author_hint=author_hint)
             
             new_page = notion.pages.create(
                 parent={"database_id": NOTION_DATABASE_ID},
                 properties={
                     "Name": {"title": [{"text": {"content": ai_data.get("title", "Untitled")}}]},
                     "URL": {"url": url},
+                    "Authors": {"rich_text": [{"text": {"content": ", ".join(ai_data.get("authors", []))}}]},
+                    "Type": {"select": {"name": ai_data.get("type", "News")}},
+                    "Keywords": {"multi_select": [{"name": k[:100]} for k in ai_data.get("keywords", [])]},
                     "Categories": {"multi_select": [{"name": c} for c in ai_data.get("selected_categories", [])]},
                     "Top 3 Points": {"rich_text": [{"text": {"content": "\n".join([f"• {p}" for p in ai_data.get("top_3_points", [])])}}]},
                     "Date Added": {"date": {"start": datetime.now().strftime("%Y-%m-%d")}}
@@ -184,11 +288,14 @@ def centaur_api(request):
             page = notion.pages.retrieve(page_id=page_id)
             title = page["properties"]["Name"]["title"][0]["plain_text"]
             
-            ai_data = call_vertex_ai(title, existing_categories, is_book=True)
+            ai_data = call_vertex_ai(title, existing_categories, is_book=True, title_hint=title)
             
             notion.pages.update(
                 page_id=page_id,
                 properties={
+                    "Authors": {"rich_text": [{"text": {"content": ", ".join(ai_data.get("authors", []))}}]},
+                    "Type": {"select": {"name": ai_data.get("type", "Book")}},
+                    "Keywords": {"multi_select": [{"name": k[:100]} for k in ai_data.get("keywords", [])]},
                     "Categories": {"multi_select": [{"name": c} for c in ai_data.get("selected_categories", [])]},
                     "Top 3 Points": {"rich_text": [{"text": {"content": "\n".join([f"• {p}" for p in ai_data.get("top_3_points", [])])}}]},
                     "Date Added": {"date": {"start": datetime.now().strftime("%Y-%m-%d")}}

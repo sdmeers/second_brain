@@ -137,9 +137,10 @@ def markdown_to_notion_blocks(markdown_text):
 import re
 
 def call_vertex_ai(user_input, existing_categories, is_book=False, title_hint="", author_hint=""):
-    """Constructs prompt and calls Gemini 2.0 Flash to summarize content."""
+    """Constructs prompt and calls Gemini to summarize content."""
     # Ensure existing_categories uses double quotes in the prompt
     categories_str = json.dumps(existing_categories)
+    print(f"DEBUG: Existing categories passed to AI: {categories_str}")
     
     system_instruction = (
         "You are 'Centaur Notes', an expert AI researcher and summarizer. "
@@ -153,7 +154,7 @@ def call_vertex_ai(user_input, existing_categories, is_book=False, title_hint=""
         "   - 'Podcast' is for audio shows."
         "\n4. Keywords: Provide 3-5 descriptive keywords that capture the specific topics discussed."
         "\n\nCATEGORIZATION GUIDELINES:"
-        f"\n1. Use these 'Existing Categories' if they are highly relevant: {categories_str}."
+        f"\n1. You MUST assign at least 1-3 categories. Use these 'Existing Categories' if they are relevant: {categories_str}."
         "\n2. If the content's primary theme is NOT covered by existing categories (e.g., 'Leadership', 'History'), create 1-2 NEW high-level categories."
         "\n3. Avoid redundancy: Do NOT create new categories that are synonyms or narrow subsets of existing ones."
         "\n4. Accuracy: Never assign a category that is not a core theme of the content. Do not force-fit unrelated content into existing categories."
@@ -168,11 +169,20 @@ def call_vertex_ai(user_input, existing_categories, is_book=False, title_hint=""
         f"Analyze this {'book or chapter' if is_book else 'content'}:\n"
         f"TITLE HINT: {title_hint}\n"
         f"AUTHOR HINT: {author_hint}\n"
-        f"CONTENT: {user_input if not is_book else 'Please provide a comprehensive summary of this book/chapter based on your internal knowledge.'}"
+        f"CONTENT: {user_input if not is_book else 'Please provide a comprehensive summary of this book/chapter based on your research.'}"
     )
 
+    tools = []
     if is_book:
-        system_instruction += "\n\nBOOK MODE: You are summarizing a book based on your internal training data. Ensure the Author, Type (Book), and Summary are accurate to the published work."
+        system_instruction += (
+            "\n\nBOOK MODE: You are summarizing a book. You MUST use the provided Google Search tool to verify the book's core arguments, "
+            "specific terminology, and key frameworks (e.g., if the title mentions 'Four Battlegrounds', "
+            "search for exactly what those four battlegrounds are according to the author). "
+            "Ensure the Author, Type (Book), and Summary are accurate to the published work. "
+            "\n- RESEARCH TASK: Find the official book page, a major retailer (like Amazon), or the publisher's site. Provide this in the 'url' field."
+            "\n- Do not hallucinate facts; if you cannot find specific details via search, stick to the general themes you can verify."
+        )
+        tools = [types.Tool(google_search=types.GoogleSearch())]
 
 
     response_schema = {
@@ -187,6 +197,7 @@ def call_vertex_ai(user_input, existing_categories, is_book=False, title_hint=""
                 "type": "STRING",
                 "enum": ["Paper", "News", "Blog", "Report", "Video", "Podcast", "Book"]
             },
+            "url": {"type": "STRING"},
             "keywords": {
                 "type": "ARRAY",
                 "items": {"type": "STRING"}
@@ -201,18 +212,31 @@ def call_vertex_ai(user_input, existing_categories, is_book=False, title_hint=""
                 "items": {"type": "STRING"}
             },
         },
-        "required": ["title", "authors", "type", "keywords", "top_3_points", "summary", "selected_categories"]
+        "required": ["title", "authors", "type", "url", "keywords", "top_3_points", "summary", "selected_categories"]
     }
 
-    response = client.models.generate_content(
-        model="gemini-3.1-flash-lite",
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            system_instruction=system_instruction,
-            response_mime_type="application/json",
-            response_schema=response_schema
+    # Gemini does not support controlled generation (response_schema or application/json) with Grounding tools yet.
+    # We fallback to standard JSON prompting for Books.
+    if is_book:
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=system_instruction + "\n\nCRITICAL: You MUST return a JSON object that matches this schema:\n" + json.dumps(response_schema, indent=2),
+                tools=tools
+            )
         )
-    )
+    else:
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                response_mime_type="application/json",
+                response_schema=response_schema,
+                tools=tools
+            )
+        )
     
     raw_text = response.text.strip()
     
@@ -240,10 +264,13 @@ def call_vertex_ai(user_input, existing_categories, is_book=False, title_hint=""
             raise e
 
     try:
-        return repair_json(raw_text)
+        ai_result = repair_json(raw_text)
+        print(f"DEBUG: AI returned {len(ai_result.get('selected_categories', []))} categories: {ai_result.get('selected_categories')}")
+        return ai_result
     except Exception as e:
         print(f"AI JSON Parse Error: {e}")
         raise e
+
 
 @functions_framework.http
 def centaur_api(request):
@@ -305,15 +332,22 @@ def centaur_api(request):
                 properties={
                     "Authors": {"rich_text": [{"text": {"content": ", ".join(ai_data.get("authors", []))}}]},
                     "Type": {"select": {"name": ai_data.get("type", "Book")}},
+                    "URL": {"url": ai_data.get("url")},
                     "Keywords": {"multi_select": [{"name": k[:100]} for k in ai_data.get("keywords", [])]},
                     "Categories": {"multi_select": [{"name": c} for c in ai_data.get("selected_categories", [])]},
                     "Top 3 Points": {"rich_text": [{"text": {"content": "\n".join([f"• {p}" for p in ai_data.get("top_3_points", [])])}}]},
                     "Date Added": {"date": {"start": datetime.now().strftime("%Y-%m-%d")}}
                 }
             )
+            
+            # Construct summary with buy link at the top if available
+            summary_content = ai_data.get("summary", "")
+            if ai_data.get("url"):
+                summary_content = f"[Buy this book]({ai_data.get('url')})\n\n" + summary_content
+
             notion.blocks.children.append(
                 block_id=page_id,
-                children=markdown_to_notion_blocks(ai_data.get("summary", ""))
+                children=markdown_to_notion_blocks(summary_content)
             )
             return (json.dumps({"status": "success"}), 200, headers)
 

@@ -31,9 +31,13 @@ Do not hallucinate facts; if you cannot find specific details, stick to the gene
 You must format your response entirely in valid Markdown, starting with a YAML frontmatter block.
 
 CRITICAL RULES:
-1. You must wrap key concepts, technologies, theories, or recurring themes in double brackets to create bi-directional links (e.g., [[Agentic Workflows]]).
-2. Be concise but highly analytical. Extract the meaning, frameworks, and implications.
-3. In the YAML frontmatter, provide an array of lowercase tags.
+1. You must wrap key concepts, technologies, theories, or recurring themes in double brackets to create bi-directional links.
+2. WIKILINK FORMATTING: You MUST aggressively standardize your wikilinks to prevent graph duplication.
+   - ALWAYS use Title Case (e.g., [[Artificial Intelligence]], not [[artificial intelligence]]).
+   - ALWAYS use singular nouns where possible (e.g., [[Autonomous Weapon]], not [[Autonomous Weapons]]).
+   - ALWAYS spell out acronyms fully (e.g., [[Artificial General Intelligence]], not [[AGI]] or [[Artificial General Intelligence (AGI)]]).
+3. Be concise but highly analytical. Extract the meaning, frameworks, and implications.
+4. In the YAML frontmatter, provide an array of lowercase tags.
 
 OUTPUT FORMAT TEMPLATE:
 ```yaml

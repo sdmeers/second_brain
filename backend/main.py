@@ -81,11 +81,15 @@ Your goal is to analyze the provided text and extract a structured ontology.
 You must format your response entirely in valid Markdown, starting with a YAML frontmatter block.
 
 CRITICAL RULES:
-1. You must wrap key concepts, technologies, theories, or recurring themes in double brackets to create bi-directional links (e.g., [[Agentic Workflows]]).
-2. Be concise but highly analytical. Do not just summarize; extract the meaning and implications.
-3. If quoting directly from the text, use Markdown blockquotes (>).
-4. Do not output the raw text again. You are only generating the analysis/summary node.
-5. In the YAML frontmatter, provide an array of lowercase tags.
+1. You must wrap key concepts, technologies, theories, or recurring themes in double brackets to create bi-directional links.
+2. WIKILINK FORMATTING: You MUST aggressively standardize your wikilinks to prevent graph duplication.
+   - ALWAYS use Title Case (e.g., [[Artificial Intelligence]], not [[artificial intelligence]]).
+   - ALWAYS use singular nouns where possible (e.g., [[Autonomous Weapon]], not [[Autonomous Weapons]]).
+   - ALWAYS spell out acronyms fully (e.g., [[Artificial General Intelligence]], not [[AGI]] or [[Artificial General Intelligence (AGI)]]).
+3. Be concise but highly analytical. Do not just summarize; extract the meaning and implications.
+4. If quoting directly from the text, use Markdown blockquotes (>).
+5. Do not output the raw text again. You are only generating the analysis/summary node.
+6. In the YAML frontmatter, provide an array of lowercase tags.
 
 OUTPUT FORMAT TEMPLATE:
 ```yaml
@@ -171,8 +175,8 @@ async def process_capture(payload: CapturePayload):
             if not content_text:
                 raise HTTPException(status_code=400, detail="No markdown text provided for non-PDF source.")
             
-            source_filename = f"{safe_title}_raw"
-            source_path = os.path.join(SOURCES_PATH, f"{source_filename}.md")
+            source_filename = f"{safe_title}_raw.md"
+            source_path = os.path.join(SOURCES_PATH, source_filename)
             with open(source_path, "w", encoding="utf-8") as f:
                 f.write(f"# {payload.title}\nSource: {payload.url}\n\n{content_text}")
                 
@@ -183,7 +187,7 @@ async def process_capture(payload: CapturePayload):
             author=payload.authorHint,
             url=payload.url,
             content=content_text,
-            source_file_name=source_filename
+            source_file_name=source_filename.replace('.md', '').replace('.pdf', '') # Strip extension for wikilink
         )
         
         # 3. Save the Brain Node to Inbox

@@ -29,7 +29,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       let authorHint = "";
 
       // Handle PDF vs YouTube vs Standard Web Page
-      if (url.toLowerCase().split('?')[0].endsWith('.pdf')) {
+      if (url.toLowerCase().split('?')[0].endsWith('.pdf') || url.toLowerCase().includes('/pdf/')) {
         statusMessage.textContent = "PDF detected. Sending to backend for processing...";
       } else if (url.includes("youtube.com/watch")) {
         statusMessage.textContent = "Fetching YouTube transcript...";

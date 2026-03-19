@@ -160,7 +160,8 @@ async def process_capture(payload: CapturePayload):
         safe_title = sanitize_filename(payload.title)
         
         content_text = payload.markdownText
-        is_pdf = payload.url.lower().split('?')[0].endswith('.pdf')
+        clean_url = payload.url.lower().split('?')[0]
+        is_pdf = clean_url.endswith('.pdf') or '/pdf/' in clean_url
         
         source_filename = ""
         

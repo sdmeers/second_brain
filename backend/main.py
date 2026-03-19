@@ -143,7 +143,9 @@ tags: [brain, tag1, tag2]
     # Strip markdown block formatting if Gemini includes it
     output = response.text.strip()
     if output.startswith("```yaml"):
-        output = output[3:].strip()
+        output = output[7:].strip()
+    elif output.startswith("yaml\n---"):
+        output = output[5:].strip()
     if output.startswith("```markdown"):
         output = output[11:].strip()
     if output.endswith("```"):

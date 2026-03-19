@@ -73,7 +73,7 @@ def extract_pdf_text(url: str) -> tuple[str, bytes]:
         
     return text.strip(), pdf_bytes
 
-def generate_brain_node(title: str, author: str, url: str, content: str, source_file_name: str) -> str:
+def generate_brain_node(title_hint: str, author_hint: str, url: str, content: str) -> str:
     """Calls Gemini to generate the Obsidian-formatted ontology node."""
     system_instruction = """You are an expert knowledge architect building a 'Second Brain' in Obsidian. 
 Your goal is to analyze the provided text and extract a structured ontology.
@@ -94,16 +94,14 @@ CRITICAL RULES:
 OUTPUT FORMAT TEMPLATE:
 ```yaml
 ---
-title: "{Title}"
-author: "{Author}"
+title: "{Extract the true document title here}"
+author: "{Extract the Author}"
 url: "{URL}"
 date_processed: "{Date}"
 type: "{article | video | paper | book}"
 tags: [brain, tag1, tag2]
 ---
-# [[{Title}]]
-
-**Source Material:** [[{Source_File_Name}]]
+# [[{True Document Title}]]
 
 ## tl;dr
 {A concise 2-sentence summary of the core message or contribution.}
@@ -123,10 +121,9 @@ tags: [brain, tag1, tag2]
     date_str = datetime.now().strftime("%Y-%m-%d")
     
     prompt = (
-        f"Title: {title}\n"
-        f"Author/Creator: {author}\n"
+        f"Title Hint: {title_hint}\n"
+        f"Author Hint: {author_hint}\n"
         f"Source: {url}\n"
-        f"Source_File_Name: {source_file_name}\n"
         f"Date: {date_str}\n"
         f"Text to analyze: {content[:100000]}" # Limit context window just in case
     )
@@ -157,43 +154,60 @@ tags: [brain, tag1, tag2]
 async def process_capture(payload: CapturePayload):
     try:
         print(f"Received capture request for: {payload.title}")
-        safe_title = sanitize_filename(payload.title)
         
         content_text = payload.markdownText
         clean_url = payload.url.lower().split('?')[0]
         is_pdf = clean_url.endswith('.pdf') or '/pdf/' in clean_url
         
-        source_filename = ""
+        pdf_bytes = None
         
-        # 1. Handle PDF vs Text Source Archiving
+        # 1. Handle PDF vs Text extraction
         if is_pdf:
             print("Processing as PDF...")
             content_text, pdf_bytes = extract_pdf_text(payload.url)
-            source_filename = f"{safe_title}.pdf"
-            source_path = os.path.join(SOURCES_PATH, source_filename)
-            with open(source_path, "wb") as f:
-                f.write(pdf_bytes)
         else:
             print("Processing as Text/Markdown...")
             if not content_text:
                 raise HTTPException(status_code=400, detail="No markdown text provided for non-PDF source.")
-            
-            source_filename = f"{safe_title}_raw.md"
-            source_path = os.path.join(SOURCES_PATH, source_filename)
-            with open(source_path, "w", encoding="utf-8") as f:
-                f.write(f"# {payload.title}\nSource: {payload.url}\n\n{content_text}")
                 
-        # 2. Call Gemini for Analysis
+        # 2. Call Gemini for Analysis FIRST to get the true title
         print("Calling Gemini to generate Brain Node...")
         brain_node_markdown = generate_brain_node(
-            title=payload.title,
-            author=payload.authorHint,
+            title_hint=payload.title,
+            author_hint=payload.authorHint,
             url=payload.url,
-            content=content_text,
-            source_file_name=source_filename.replace('.md', '').replace('.pdf', '') # Strip extension for wikilink
+            content=content_text
         )
         
-        # 3. Save the Brain Node to Inbox
+        # 3. Parse true title from Gemini's output
+        real_title = payload.title
+        match = re.search(r'^title:\s*"(.*?)"', brain_node_markdown, re.MULTILINE)
+        if match:
+            real_title = match.group(1)
+            
+        safe_title = sanitize_filename(real_title)
+        print(f"Determined true title: {safe_title}")
+        
+        # 4. Save Source file with true title
+        source_link_name = ""
+        if is_pdf:
+            source_filename = f"{safe_title}.pdf"
+            source_link_name = source_filename
+            source_path = os.path.join(SOURCES_PATH, source_filename)
+            with open(source_path, "wb") as f:
+                f.write(pdf_bytes)
+        else:
+            source_filename = f"{safe_title}_raw.md"
+            source_link_name = f"{safe_title}_raw"
+            source_path = os.path.join(SOURCES_PATH, source_filename)
+            with open(source_path, "w", encoding="utf-8") as f:
+                f.write(f"# {real_title}\nSource: {payload.url}\n\n{content_text}")
+                
+        # 5. Inject the Source Material link
+        source_injection = f"\n\n**Source Material:** [[{source_link_name}]]\n\n## tl;dr"
+        brain_node_markdown = brain_node_markdown.replace("\n## tl;dr", source_injection, 1)
+        
+        # 6. Save the Brain Node to Inbox
         node_path = os.path.join(INBOX_PATH, f"{safe_title}.md")
         with open(node_path, "w", encoding="utf-8") as f:
             f.write(brain_node_markdown)

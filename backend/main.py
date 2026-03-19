@@ -51,9 +51,9 @@ class CapturePayload(BaseModel):
     markdownText: Optional[str] = ""
 
 def sanitize_filename(filename: str) -> str:
-    """Removes illegal characters from filenames."""
+    """Removes illegal characters and normalizes whitespace for filenames."""
     filename = re.sub(r'[\\/*?:"<>|]', "", filename)
-    filename = filename.replace("\n", " ").replace("\r", "")
+    filename = re.sub(r'\s+', " ", filename)  # Collapse multiple spaces into one
     return filename.strip()[:100]  # Limit length
 
 def extract_pdf_text(url: str) -> tuple[str, bytes]:

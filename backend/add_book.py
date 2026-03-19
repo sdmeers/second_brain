@@ -98,7 +98,8 @@ tags: [brain, book, tag1, tag2]
 
 def add_book(title: str, author: str):
     import re
-    safe_title = re.sub(r'[\\/*?:"<>|]', "", title).strip()[:100]
+    safe_title = re.sub(r'[\\/*?:"<>|]', "", title)
+    safe_title = re.sub(r'\s+', " ", safe_title).strip()[:100]
     
     markdown_content = generate_book_node(title, author)
     

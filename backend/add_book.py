@@ -1,60 +1,113 @@
 import os
-import requests
-import json
 import argparse
 from datetime import datetime
-from notion_client import Client
 from dotenv import load_dotenv
+from google import genai
+from google.genai import types
 
 load_dotenv()
 
-NOTION_API_KEY = os.getenv("NOTION_API_KEY")
-NOTION_DATABASE_ID = os.getenv("NOTION_DATABASE_ID")
-# For local dev/test, point to your local backend
-API_URL = os.getenv("BACKEND_URL", "http://localhost:8080/")
+# Configuration
+OBSIDIAN_VAULT_PATH = os.getenv("OBSIDIAN_VAULT_PATH")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-notion = Client(auth=NOTION_API_KEY)
+if not OBSIDIAN_VAULT_PATH or not GEMINI_API_KEY:
+    raise RuntimeError("CRITICAL: OBSIDIAN_VAULT_PATH or GEMINI_API_KEY missing from .env")
 
-def add_book_and_summarize(book_title, author=None):
-    print(f"Creating Notion entry for: {book_title} {'by ' + author if author else ''}")
+INBOX_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "Inbox")
+os.makedirs(INBOX_PATH, exist_ok=True)
+
+client = genai.Client(api_key=GEMINI_API_KEY)
+
+def generate_book_node(title: str, author: str) -> str:
+    print(f"Researching book: '{title}' by {author or 'Unknown Author'}...")
     
-    # 1. Prepare properties
-    properties = {
-        "Name": {"title": [{"text": {"content": book_title}}]},
-        "Date Added": {"date": {"start": datetime.now().strftime("%Y-%m-%d")}}
-    }
+    system_instruction = """You are an expert knowledge architect building a 'Second Brain' in Obsidian. 
+Your goal is to summarize a book based on your internal knowledge and research, extracting a structured ontology.
+
+You MUST use the provided Google Search tool to verify the book's core arguments, specific terminology, and key frameworks.
+Do not hallucinate facts; if you cannot find specific details, stick to the general themes you can verify.
+
+You must format your response entirely in valid Markdown, starting with a YAML frontmatter block.
+
+CRITICAL RULES:
+1. You must wrap key concepts, technologies, theories, or recurring themes in double brackets to create bi-directional links (e.g., [[Agentic Workflows]]).
+2. Be concise but highly analytical. Extract the meaning, frameworks, and implications.
+3. In the YAML frontmatter, provide an array of lowercase tags.
+
+OUTPUT FORMAT TEMPLATE:
+```yaml
+---
+title: "{Official Book Title}"
+author: "{Author}"
+url: "{Link to a major retailer or official page}"
+date_processed: "{Date}"
+type: "book"
+tags: [brain, book, tag1, tag2]
+---
+# [[{Official Book Title}]]
+
+## tl;dr
+{A concise 2-sentence summary of the core message or contribution.}
+
+## Core Concepts
+* **[[Concept 1]]**: {Definition/context}
+* **[[Concept 2]]**: {Definition/context}
+
+## Key Takeaways
+* {Point 1}
+* {Point 2}
+
+## Emergent Themes & Connections
+{Where does this fit into the broader landscape? What are the implications?}
+```"""
     
-    # If author is provided, pre-fill it in Notion so the backend can use it
-    if author:
-        properties["Authors"] = {"rich_text": [{"text": {"content": author}}]}
+    date_str = datetime.now().strftime("%Y-%m-%d")
     
-    # Create the entry in Notion
-    new_page = notion.pages.create(
-        parent={"database_id": NOTION_DATABASE_ID},
-        properties=properties
+    prompt = (
+        f"Please provide a comprehensive summary and ontology for the following book:\n"
+        f"Title Hint: {title}\n"
+        f"Author Hint: {author}\n"
+        f"Date: {date_str}"
     )
     
-    page_id = new_page["id"]
-    print(f"Page created (ID: {page_id}). Sending to AI...")
-
-    # 2. Trigger your backend with source="notion_button"
-    payload = {
-        "source": "notion_button",
-        "page_id": page_id
-    }
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            system_instruction=system_instruction,
+            temperature=0.3,
+            tools=[types.Tool(google_search=types.GoogleSearch())]
+        )
+    )
     
-    try:
-        response = requests.post(API_URL, json=payload, timeout=90)
-        response.raise_for_status()
-        print(f"Success! Book summarized and Notion updated.")
-    except Exception as e:
-        print(f"Error during AI analysis: {e}")
-        print(f"Page ID {page_id} still exists, but you'll need to update it manually or retry.")
+    # Strip markdown block formatting if Gemini includes it
+    output = response.text.strip()
+    if output.startswith("```yaml"):
+        output = output[3:].strip()
+    if output.startswith("```markdown"):
+        output = output[11:].strip()
+    if output.endswith("```"):
+        output = output[:-3].strip()
+        
+    return output
+
+def add_book(title: str, author: str):
+    import re
+    safe_title = re.sub(r'[\\/*?:"<>|]', "", title).strip()[:100]
+    
+    markdown_content = generate_book_node(title, author)
+    
+    node_path = os.path.join(INBOX_PATH, f"{safe_title}.md")
+    with open(node_path, "w", encoding="utf-8") as f:
+        f.write(markdown_content)
+        
+    print(f"\nSuccess! Book summary saved to: {node_path}")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Add a book/chapter to Centaur Notes and summarize it.")
-    parser.add_argument("title", help="The title of the book or chapter.")
-    parser.add_argument("--author", help="Optional author to improve AI accuracy.")
+    parser = argparse.ArgumentParser(description="Add a book to Centaur Brain and summarize it.")
+    parser.add_argument("title", help="The title of the book.")
+    parser.add_argument("--author", default="", help="Optional author to improve AI accuracy.")
     args = parser.parse_args()
     
-    add_book_and_summarize(args.title, args.author)
+    add_book(args.title, args.author)

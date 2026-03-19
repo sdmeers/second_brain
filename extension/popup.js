@@ -1,17 +1,17 @@
-// popup.js - Centaur Notes
-const API_BASE = "http://localhost:8080"; // Default Cloud Run Local port
+// popup.js - Centaur Brain
+const API_BASE = "http://localhost:8080"; // Local FastAPI port
 
 document.addEventListener('DOMContentLoaded', async () => {
-  const btnCapture = document.getElementById('btn-preview'); // Reusing ID for simplicity
+  const btnCapture = document.getElementById('btn-preview'); 
   const loading = document.getElementById('loading');
   const mainArea = document.getElementById('main-area');
-  const statusArea = document.getElementById('preview-area'); // Reusing ID for status display
+  const statusArea = document.getElementById('preview-area'); 
   const statusMessage = document.createElement('div');
   
-  statusArea.innerHTML = ''; // Clear preview area
+  statusArea.innerHTML = ''; 
   statusArea.appendChild(statusMessage);
 
-  btnCapture.textContent = "Capture to Notion";
+  btnCapture.textContent = "Extract to Obsidian";
 
   btnCapture.addEventListener('click', async () => {
     loading.style.display = 'block';
@@ -25,9 +25,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       
       let markdownText = "";
       let url = currentTab.url;
+      let extractedTitle = currentTab.title || "";
+      let authorHint = "";
 
-      // Handle YouTube vs. Standard Web Page
-      if (url.includes("youtube.com/watch")) {
+      // Handle PDF vs YouTube vs Standard Web Page
+      if (url.toLowerCase().split('?')[0].endsWith('.pdf')) {
+        statusMessage.textContent = "PDF detected. Sending to backend for processing...";
+      } else if (url.includes("youtube.com/watch")) {
         statusMessage.textContent = "Fetching YouTube transcript...";
         
         // 1. Extract and fetch transcript metadata from the page context
@@ -146,10 +150,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
       } else {
         statusMessage.textContent = "Extracting article text...";
-        var extractedTitle = ""; // Initialize outside
         try {
           const extraction = await chrome.tabs.sendMessage(currentTab.id, { action: "extractContent" });
-          var authorHint = "";
           if (extraction) {
             if (extraction.markdown) markdownText = extraction.markdown;
             if (extraction.title) extractedTitle = extraction.title;
@@ -167,27 +169,27 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
 
       // Send to Backend
-      statusMessage.textContent = "AI Analysis & Saving to Notion...";
-      const response = await fetch(`${API_BASE}/`, {
+      statusMessage.textContent = "Generating Brain Node & Archiving...";
+      const response = await fetch(`${API_BASE}/process`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           source: "extension", 
           url: url, 
           markdownText: markdownText,
-          title: extractedTitle || "",
+          title: extractedTitle || "Untitled",
           authorHint: authorHint || ""
         })
       });
 
       const data = await response.json();
-      if (data.error) throw new Error(data.error);
+      if (!response.ok) throw new Error(data.detail || "API Error");
 
-      statusMessage.innerHTML = `<p style="color: green; font-weight: bold;">✓ Successfully saved to Notion!</p>`;
-      setTimeout(() => window.close(), 2000);
+      statusMessage.innerHTML = `<p style="color: #4ade80; font-weight: bold;">✓ Sent to Obsidian Inbox!</p>`;
+      setTimeout(() => window.close(), 2500);
 
     } catch (err) {
-      statusMessage.innerHTML = `<p style="color: red;">Error: ${err.message}</p>`;
+      statusMessage.innerHTML = `<p style="color: #f87171;">Error: ${err.message}</p>`;
       btnCapture.style.display = 'block';
       btnCapture.textContent = "Try Again";
     } finally {

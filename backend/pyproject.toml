@@ -6,11 +6,11 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "beautifulsoup4>=4.14.3",
-    "functions-framework>=3.10.1",
-    "google-cloud-aiplatform>=1.138.0",
+    "fastapi>=0.135.1",
     "google-genai>=1.63.0",
     "httpx>=0.28.1",
-    "notion-client>=3.0.0",
     "pymupdf>=1.27.1",
     "python-dotenv>=1.2.2",
+    "python-multipart>=0.0.22",
+    "uvicorn>=0.42.0",
 ]

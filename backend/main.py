@@ -1,358 +1,208 @@
-import functions_framework
-import json
 import os
 import io
+import re
 import httpx
 import fitz  # PyMuPDF
-from bs4 import BeautifulSoup
-from notion_client import Client
-from google import genai
-from google.genai import types
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from typing import Optional
 from datetime import datetime
 from dotenv import load_dotenv
+from google import genai
+from google.genai import types
 
-# Load environment variables from .env
+# Load environment variables
 load_dotenv()
 
-# Initialize Vertex AI via the new google-genai SDK
-PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT", "vibecook-prod-sdm")
-LOCATION = os.environ.get("GCP_LOCATION", "us-central1")
+# Configuration
+OBSIDIAN_VAULT_PATH = os.getenv("OBSIDIAN_VAULT_PATH")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-client = genai.Client(
-    vertexai=True,
-    project=PROJECT_ID,
-    location=LOCATION
+if not OBSIDIAN_VAULT_PATH or not GEMINI_API_KEY:
+    raise RuntimeError("CRITICAL: OBSIDIAN_VAULT_PATH or GEMINI_API_KEY missing from .env")
+
+# Ensure Obsidian folders exist
+INBOX_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "Inbox")
+SOURCES_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "Sources")
+os.makedirs(INBOX_PATH, exist_ok=True)
+os.makedirs(SOURCES_PATH, exist_ok=True)
+
+# Initialize Gemini Client
+client = genai.Client(api_key=GEMINI_API_KEY)
+
+# Initialize FastAPI App
+app = FastAPI(title="Centaur Brain API")
+
+# Configure CORS for Chrome Extension
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Adjust this in production if needed
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-# Initialize Notion Client
-NOTION_API_KEY = os.environ.get("NOTION_API_KEY")
-NOTION_DATABASE_ID = os.environ.get("NOTION_DATABASE_ID")
+class CapturePayload(BaseModel):
+    source: str
+    url: str
+    title: Optional[str] = "Untitled Capture"
+    authorHint: Optional[str] = ""
+    markdownText: Optional[str] = ""
 
-if not NOTION_API_KEY:
-    print("CRITICAL: NOTION_API_KEY is missing from environment!")
-else:
-    # Masked print to verify token is loaded
-    print(f"Notion Client initialized with token: {NOTION_API_KEY[:7]}...{NOTION_API_KEY[-4:]}")
+def sanitize_filename(filename: str) -> str:
+    """Removes illegal characters from filenames."""
+    filename = re.sub(r'[\\/*?:"<>|]', "", filename)
+    filename = filename.replace("\n", " ").replace("\r", "")
+    return filename.strip()[:100]  # Limit length
 
-notion = Client(auth=NOTION_API_KEY)
-
-def get_cors_headers(request):
-    if request.method == 'OPTIONS':
-        return {
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
-            'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-            'Access-Control-Max-Age': '3600'
-        }
-    return {'Access-Control-Allow-Origin': '*'}
-
-def get_existing_categories():
-    """Fetches existing Multi-select options from the Notion Database property 'Categories'."""
-    try:
-        db = notion.databases.retrieve(database_id=NOTION_DATABASE_ID)
-        properties = db.get("properties", {})
-        
-        # In Notion SDK 3.0.0+, synced databases (Data Sources) might store properties differently
-        if not properties and "data_sources" in db and db["data_sources"]:
-            ds_id = db["data_sources"][0]["id"]
-            ds = notion.data_sources.retrieve(data_source_id=ds_id)
-            properties = ds.get("properties", {})
-
-        categories_prop = properties.get("Categories", {})
-        options = categories_prop.get("multi_select", {}).get("options", [])
-        return [opt["name"] for opt in options]
-    except Exception as e:
-        print(f"Error fetching categories: {e}")
-        return []
-
-def fetch_and_extract_content(url):
-    """Downloads content from a URL and extracts text if it's a PDF or HTML."""
-    try:
-        print(f"Fetching URL for backend extraction: {url}")
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
-        response = httpx.get(url, follow_redirects=True, timeout=30.0, headers=headers)
-        response.raise_for_status()
-        
-        content_type = response.headers.get("Content-Type", "").lower()
-        
-        if "application/pdf" in content_type or url.lower().split('?')[0].endswith(".pdf"):
-            print("Processing as PDF...")
-            pdf_stream = io.BytesIO(response.content)
-            doc = fitz.open(stream=pdf_stream, filetype="pdf")
-            
-            text = ""
-            max_pages = min(15, len(doc))
-            for i in range(max_pages):
-                text += doc[i].get_text()
-            return text.strip()
-        else:
-            print(f"Processing as HTML (Content-Type: {content_type})...")
-            soup = BeautifulSoup(response.content, 'html.parser')
-            
-            # Remove scripts, styles, and other non-content elements
-            for element in soup(["script", "style", "nav", "footer", "header", "aside"]):
-                element.decompose()
-            
-            # Extract text
-            text = soup.get_text(separator=' ', strip=True)
-            # Limit length to avoid prompt bloat
-            return text[:50000]
-    except Exception as e:
-        print(f"Error fetching/extracting content: {e}")
-        return None
-
-def markdown_to_notion_blocks(markdown_text):
-    """Converts a Markdown string into Notion-compatible blocks."""
-    blocks = []
-    lines = markdown_text.split("\n")
-    for line in lines:
-        line = line.strip()
-        if not line: continue
-        
-        if line.startswith("### "):
-            blocks.append({
-                "object": "block", "type": "heading_3",
-                "heading_3": {"rich_text": [{"type": "text", "text": {"content": line[4:]}}]}
-            })
-        elif line.startswith("## "):
-            blocks.append({
-                "object": "block", "type": "heading_2",
-                "heading_2": {"rich_text": [{"type": "text", "text": {"content": line[3:]}}]}
-            })
-        elif line.startswith("- ") or line.startswith("* "):
-            blocks.append({
-                "object": "block", "type": "bulleted_list_item",
-                "bulleted_list_item": {"rich_text": [{"type": "text", "text": {"content": line[2:]}}]}
-            })
-        else:
-            # Simple text fallback (bolding/italics are handled as plain text here for simplicity)
-            blocks.append({
-                "object": "block", "type": "paragraph",
-                "paragraph": {"rich_text": [{"type": "text", "text": {"content": line.replace("**", "").replace("_", "")}}]}
-            })
-    return blocks
-
-import re
-
-def call_vertex_ai(user_input, existing_categories, is_book=False, title_hint="", author_hint=""):
-    """Constructs prompt and calls Gemini to summarize content."""
-    # Ensure existing_categories uses double quotes in the prompt
-    categories_str = json.dumps(existing_categories)
-    print(f"DEBUG: Existing categories passed to AI: {categories_str}")
+def extract_pdf_text(url: str) -> tuple[str, bytes]:
+    """Downloads PDF and extracts text."""
+    headers = {"User-Agent": "Mozilla/5.0"}
+    response = httpx.get(url, follow_redirects=True, timeout=30.0, headers=headers)
+    response.raise_for_status()
     
-    system_instruction = (
-        "You are 'Centaur Notes', an expert AI researcher and summarizer. "
-        "Your goal is to categorize and summarize content with high precision."
-        "\n\nEXTRACTION GUIDELINES:"
-        "\n1. Title: Strictly extract the actual title from the source. The provided 'TITLE HINT' is the official page title; use it as the primary source for the Title unless it is clearly generic (like 'Substack')."
-        "\n2. Author(s): Identify the primary author(s). Use the provided 'AUTHOR HINT' as a primary clue."
-        "\n3. Type: Classify the content as one of: Paper, News, Blog, Report, Video, Podcast, Book."
-        "   - 'Paper' means an academic paper or peer-reviewed journal article."
-        "   - 'Video' is usually a YouTube video but could be any video source."
-        "   - 'Podcast' is for audio shows."
-        "\n4. Keywords: Provide 3-5 descriptive keywords that capture the specific topics discussed."
-        "\n\nCATEGORIZATION GUIDELINES:"
-        f"\n1. You MUST assign at least 1-3 categories. Use these 'Existing Categories' if they are relevant: {categories_str}."
-        "\n2. If the content's primary theme is NOT covered by existing categories (e.g., 'Leadership', 'History'), create 1-2 NEW high-level categories."
-        "\n3. Avoid redundancy: Do NOT create new categories that are synonyms or narrow subsets of existing ones."
-        "\n4. Accuracy: Never assign a category that is not a core theme of the content. Do not force-fit unrelated content into existing categories."
-        "\n\nSUMMARY GUIDELINES:"
-        "\n- Provide a detailed Markdown summary (300-600 words)."
-        "\n- Use ### for subheadings."
-        "\n- Elaborate on nuances and key arguments beyond the top 3 points."
-        "\n\nCRITICAL: Output ONLY valid JSON using double quotes for all property names and string values."
-    )
+    pdf_bytes = response.content
+    pdf_stream = io.BytesIO(pdf_bytes)
+    doc = fitz.open(stream=pdf_stream, filetype="pdf")
+    
+    text = ""
+    max_pages = min(20, len(doc)) # Extract up to 20 pages to save tokens
+    for i in range(max_pages):
+        text += doc[i].get_text()
+        
+    return text.strip(), pdf_bytes
+
+def generate_brain_node(title: str, author: str, url: str, content: str, source_file_name: str) -> str:
+    """Calls Gemini to generate the Obsidian-formatted ontology node."""
+    system_instruction = """You are an expert knowledge architect building a 'Second Brain' in Obsidian. 
+Your goal is to analyze the provided text and extract a structured ontology.
+
+You must format your response entirely in valid Markdown, starting with a YAML frontmatter block.
+
+CRITICAL RULES:
+1. You must wrap key concepts, technologies, theories, or recurring themes in double brackets to create bi-directional links (e.g., [[Agentic Workflows]]).
+2. Be concise but highly analytical. Do not just summarize; extract the meaning and implications.
+3. If quoting directly from the text, use Markdown blockquotes (>).
+4. Do not output the raw text again. You are only generating the analysis/summary node.
+5. In the YAML frontmatter, provide an array of lowercase tags.
+
+OUTPUT FORMAT TEMPLATE:
+```yaml
+---
+title: "{Title}"
+author: "{Author}"
+url: "{URL}"
+date_processed: "{Date}"
+type: "{article | video | paper | book}"
+tags: [brain, tag1, tag2]
+---
+# [[{Title}]]
+
+**Source Material:** [[{Source_File_Name}]]
+
+## tl;dr
+{A concise 2-sentence summary of the core message or contribution.}
+
+## Core Concepts
+* **[[Concept 1]]**: {Definition/context}
+* **[[Concept 2]]**: {Definition/context}
+
+## Key Takeaways
+* {Point 1}
+* {Point 2}
+
+## Emergent Themes & Connections
+{Where does this fit into the broader landscape? What are the implications?}
+```"""
+    
+    date_str = datetime.now().strftime("%Y-%m-%d")
     
     prompt = (
-        f"Analyze this {'book or chapter' if is_book else 'content'}:\n"
-        f"TITLE HINT: {title_hint}\n"
-        f"AUTHOR HINT: {author_hint}\n"
-        f"CONTENT: {user_input if not is_book else 'Please provide a comprehensive summary of this book/chapter based on your research.'}"
+        f"Title: {title}\n"
+        f"Author/Creator: {author}\n"
+        f"Source: {url}\n"
+        f"Source_File_Name: {source_file_name}\n"
+        f"Date: {date_str}\n"
+        f"Text to analyze: {content[:100000]}" # Limit context window just in case
     )
-
-    tools = []
-    if is_book:
-        system_instruction += (
-            "\n\nBOOK MODE: You are summarizing a book. You MUST use the provided Google Search tool to verify the book's core arguments, "
-            "specific terminology, and key frameworks (e.g., if the title mentions 'Four Battlegrounds', "
-            "search for exactly what those four battlegrounds are according to the author). "
-            "Ensure the Author, Type (Book), and Summary are accurate to the published work. "
-            "\n- RESEARCH TASK: Find the official book page, a major retailer (like Amazon), or the publisher's site. Provide this in the 'url' field."
-            "\n- Do not hallucinate facts; if you cannot find specific details via search, stick to the general themes you can verify."
-        )
-        tools = [types.Tool(google_search=types.GoogleSearch())]
-
-
-    response_schema = {
-        "type": "OBJECT",
-        "properties": {
-            "title": {"type": "STRING"},
-            "authors": {
-                "type": "ARRAY",
-                "items": {"type": "STRING"}
-            },
-            "type": {
-                "type": "STRING",
-                "enum": ["Paper", "News", "Blog", "Report", "Video", "Podcast", "Book"]
-            },
-            "url": {"type": "STRING"},
-            "keywords": {
-                "type": "ARRAY",
-                "items": {"type": "STRING"}
-            },
-            "top_3_points": {
-                "type": "ARRAY",
-                "items": {"type": "STRING"}
-            },
-            "summary": {"type": "STRING"},
-            "selected_categories": {
-                "type": "ARRAY",
-                "items": {"type": "STRING"}
-            },
-        },
-        "required": ["title", "authors", "type", "url", "keywords", "top_3_points", "summary", "selected_categories"]
-    }
-
-    # Gemini does not support controlled generation (response_schema or application/json) with Grounding tools yet.
-    # We fallback to standard JSON prompting for Books.
-    if is_book:
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=system_instruction + "\n\nCRITICAL: You MUST return a JSON object that matches this schema:\n" + json.dumps(response_schema, indent=2),
-                tools=tools
-            )
-        )
-    else:
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=system_instruction,
-                response_mime_type="application/json",
-                response_schema=response_schema,
-                tools=tools
-            )
-        )
     
-    raw_text = response.text.strip()
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            system_instruction=system_instruction,
+            temperature=0.3
+        )
+    )
     
-    def repair_json(text):
-        # 1. Remove markdown code blocks
-        text = re.sub(r'^```(?:json)?\n', '', text, flags=re.MULTILINE)
-        text = re.sub(r'\n```$', '', text, flags=re.MULTILINE)
+    # Strip markdown block formatting if Gemini includes it
+    output = response.text.strip()
+    if output.startswith("```yaml"):
+        output = output[3:].strip()
+    if output.startswith("```markdown"):
+        output = output[11:].strip()
+    if output.endswith("```"):
+        output = output[:-3].strip()
         
-        # 2. Try parsing directly
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            pass
-            
-        # 3. Handle single quotes issue (common LLM failure)
-        # This is a basic repair: replace ' with " but be careful about apostrophes
-        # We only replace single quotes that look like property delimiters
-        text_repaired = re.sub(r"\'(\w+)\'\s*:", r'"\1":', text) # Property names
-        text_repaired = re.sub(r":\s*\'(.*?)\'([,\s}])", r': "\1"\2', text_repaired) # String values
+    return output
+
+@app.post("/process")
+async def process_capture(payload: CapturePayload):
+    try:
+        print(f"Received capture request for: {payload.title}")
+        safe_title = sanitize_filename(payload.title)
         
-        try:
-            return json.loads(text_repaired)
-        except json.JSONDecodeError as e:
-            print(f"Failed to repair JSON. Raw text: {text[:500]}")
-            raise e
-
-    try:
-        ai_result = repair_json(raw_text)
-        print(f"DEBUG: AI returned {len(ai_result.get('selected_categories', []))} categories: {ai_result.get('selected_categories')}")
-        return ai_result
+        content_text = payload.markdownText
+        is_pdf = payload.url.lower().split('?')[0].endswith('.pdf')
+        
+        source_filename = ""
+        
+        # 1. Handle PDF vs Text Source Archiving
+        if is_pdf:
+            print("Processing as PDF...")
+            content_text, pdf_bytes = extract_pdf_text(payload.url)
+            source_filename = f"{safe_title}.pdf"
+            source_path = os.path.join(SOURCES_PATH, source_filename)
+            with open(source_path, "wb") as f:
+                f.write(pdf_bytes)
+        else:
+            print("Processing as Text/Markdown...")
+            if not content_text:
+                raise HTTPException(status_code=400, detail="No markdown text provided for non-PDF source.")
+            
+            source_filename = f"{safe_title}_raw"
+            source_path = os.path.join(SOURCES_PATH, f"{source_filename}.md")
+            with open(source_path, "w", encoding="utf-8") as f:
+                f.write(f"# {payload.title}\nSource: {payload.url}\n\n{content_text}")
+                
+        # 2. Call Gemini for Analysis
+        print("Calling Gemini to generate Brain Node...")
+        brain_node_markdown = generate_brain_node(
+            title=payload.title,
+            author=payload.authorHint,
+            url=payload.url,
+            content=content_text,
+            source_file_name=source_filename
+        )
+        
+        # 3. Save the Brain Node to Inbox
+        node_path = os.path.join(INBOX_PATH, f"{safe_title}.md")
+        with open(node_path, "w", encoding="utf-8") as f:
+            f.write(brain_node_markdown)
+            
+        print(f"Successfully processed: {safe_title}")
+        return {"status": "success", "title": safe_title, "node_path": node_path}
+        
+    except httpx.HTTPStatusError as e:
+        print(f"HTTP Error: {e}")
+        raise HTTPException(status_code=400, detail="Failed to download source URL")
     except Exception as e:
-        print(f"AI JSON Parse Error: {e}")
-        raise e
+        print(f"Internal Server Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-
-@functions_framework.http
-def centaur_api(request):
-    headers = get_cors_headers(request)
-    if request.method == 'OPTIONS': return ('', 204, headers)
-
-    request_json = request.get_json(silent=True)
-    if not request_json: return (json.dumps({"error": "No payload"}), 400, headers)
-
-    source = request_json.get("source")
-    existing_categories = get_existing_categories()
-
-    try:
-        if source == "extension":
-            url = request_json.get("url")
-            markdown_text = request_json.get("markdownText")
-            title_hint = request_json.get("title", "")
-            author_hint = request_json.get("authorHint", "")
-            
-            # If no text provided, try to fetch and extract from URL on backend
-            if not markdown_text or markdown_text.strip() == "":
-                markdown_text = fetch_and_extract_content(url)
-                if not markdown_text:
-                    return (json.dumps({"error": "Failed to extract text from this URL. Only articles and PDFs are supported."}), 400, headers)
-
-            ai_data = call_vertex_ai(markdown_text, existing_categories, title_hint=title_hint, author_hint=author_hint)
-            
-            new_page = notion.pages.create(
-                parent={"database_id": NOTION_DATABASE_ID},
-                properties={
-                    "Name": {"title": [{"text": {"content": ai_data.get("title", "Untitled")}}]},
-                    "URL": {"url": url},
-                    "Authors": {"rich_text": [{"text": {"content": ", ".join(ai_data.get("authors", []))}}]},
-                    "Type": {"select": {"name": ai_data.get("type", "News")}},
-                    "Keywords": {"multi_select": [{"name": k[:100]} for k in ai_data.get("keywords", [])]},
-                    "Categories": {"multi_select": [{"name": c} for c in ai_data.get("selected_categories", [])]},
-                    "Top 3 Points": {"rich_text": [{"text": {"content": "\n".join([f"• {p}" for p in ai_data.get("top_3_points", [])])}}]},
-                    "Date Added": {"date": {"start": datetime.now().strftime("%Y-%m-%d")}}
-                },
-                children=markdown_to_notion_blocks(ai_data.get("summary", ""))
-            )
-            return (json.dumps({"status": "success", "id": new_page["id"]}), 200, headers)
-
-        elif source == "notion_button":
-            page_id = request_json.get("page_id")
-            page = notion.pages.retrieve(page_id=page_id)
-            title = page["properties"]["Name"]["title"][0]["plain_text"]
-            
-            # Check if an author was already manually entered in Notion
-            author_hint = ""
-            authors_prop = page["properties"].get("Authors", {}).get("rich_text", [])
-            if authors_prop:
-                author_hint = authors_prop[0].get("plain_text", "")
-            
-            ai_data = call_vertex_ai(title, existing_categories, is_book=True, title_hint=title, author_hint=author_hint)
-            
-            notion.pages.update(
-                page_id=page_id,
-                properties={
-                    "Authors": {"rich_text": [{"text": {"content": ", ".join(ai_data.get("authors", []))}}]},
-                    "Type": {"select": {"name": ai_data.get("type", "Book")}},
-                    "URL": {"url": ai_data.get("url")},
-                    "Keywords": {"multi_select": [{"name": k[:100]} for k in ai_data.get("keywords", [])]},
-                    "Categories": {"multi_select": [{"name": c} for c in ai_data.get("selected_categories", [])]},
-                    "Top 3 Points": {"rich_text": [{"text": {"content": "\n".join([f"• {p}" for p in ai_data.get("top_3_points", [])])}}]},
-                    "Date Added": {"date": {"start": datetime.now().strftime("%Y-%m-%d")}}
-                }
-            )
-            
-            # Construct summary with buy link at the top if available
-            summary_content = ai_data.get("summary", "")
-            if ai_data.get("url"):
-                summary_content = f"[Buy this book]({ai_data.get('url')})\n\n" + summary_content
-
-            notion.blocks.children.append(
-                block_id=page_id,
-                children=markdown_to_notion_blocks(summary_content)
-            )
-            return (json.dumps({"status": "success"}), 200, headers)
-
-        return (json.dumps({"error": "Invalid source"}), 400, headers)
-
-    except Exception as e:
-        print(f"Centaur Error: {e}")
-        return (json.dumps({"error": str(e)}), 500, headers)
+if __name__ == "__main__":
+    import uvicorn
+    # Run the server natively
+    port = int(os.getenv("PORT", 8080))
+    uvicorn.run("main:app", host="127.0.0.1", port=port, reload=True)

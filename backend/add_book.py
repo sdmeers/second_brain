@@ -14,8 +14,8 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not OBSIDIAN_VAULT_PATH or not GEMINI_API_KEY:
     raise RuntimeError("CRITICAL: OBSIDIAN_VAULT_PATH or GEMINI_API_KEY missing from .env")
 
-INBOX_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "Inbox")
-os.makedirs(INBOX_PATH, exist_ok=True)
+SUMMARIES_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "Summaries")
+os.makedirs(SUMMARIES_PATH, exist_ok=True)
 
 client = genai.Client(api_key=GEMINI_API_KEY)
 
@@ -105,7 +105,7 @@ def add_book(title: str, author: str):
     
     markdown_content = generate_book_node(title, author)
     
-    node_path = os.path.join(INBOX_PATH, f"{safe_title}.md")
+    node_path = os.path.join(SUMMARIES_PATH, f"{safe_title}.md")
     with open(node_path, "w", encoding="utf-8") as f:
         f.write(markdown_content)
         

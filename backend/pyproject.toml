@@ -13,4 +13,5 @@ dependencies = [
     "python-dotenv>=1.2.2",
     "python-multipart>=0.0.22",
     "uvicorn>=0.42.0",
+    "yt-dlp>=2026.3.17",
 ]

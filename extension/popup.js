@@ -85,9 +85,17 @@ document.addEventListener('DOMContentLoaded', async () => {
               const track = tracks.sort((a, b) => {
                 const aCode = (a.languageCode || "").toLowerCase();
                 const bCode = (b.languageCode || "").toLowerCase();
-                if (aCode === "en") return -1;
-                if (bCode === "en") return 1;
-                return (aCode.startsWith("en") ? -1 : 1);
+                const aIsEn = aCode.startsWith("en");
+                const bIsEn = bCode.startsWith("en");
+                if (aIsEn && !bIsEn) return -1;
+                if (!aIsEn && bIsEn) return 1;
+                if (aIsEn && bIsEn) {
+                  const aIsAsr = a.kind === "asr";
+                  const bIsAsr = b.kind === "asr";
+                  if (!aIsAsr && bIsAsr) return -1;
+                  if (aIsAsr && !bIsAsr) return 1;
+                }
+                return 0;
               })[0];
               
               console.error("CENTAUR DEBUG: Selected track URL:", track.baseUrl);
@@ -138,15 +146,18 @@ document.addEventListener('DOMContentLoaded', async () => {
           markdownText = result.transcript;
         } else if (result.baseUrl) {
           // 2. Fetch via background script as a fallback
-          const ytResponse = await chrome.runtime.sendMessage({ 
-            action: "getYouTubeTranscript", 
-            baseUrl: result.baseUrl 
-          });
-          
-          if (ytResponse.error) throw new Error(ytResponse.error);
-          markdownText = ytResponse.transcript;
-        } else {
-          throw new Error("Could not find a valid transcript.");
+          try {
+            const ytResponse = await chrome.runtime.sendMessage({ 
+              action: "getYouTubeTranscript", 
+              baseUrl: result.baseUrl 
+            });
+            if (ytResponse.transcript) markdownText = ytResponse.transcript;
+            if (ytResponse.error) console.error("Background fetch error:", ytResponse.error);
+          } catch (e) { console.error("Background message error:", e); }
+        }
+        
+        if (!markdownText) {
+          console.warn("Could not find a valid transcript in extension, falling back to backend fetch.");
         }
       } else {
         statusMessage.textContent = "Extracting article text...";
@@ -185,7 +196,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || "API Error");
 
-      statusMessage.innerHTML = `<p style="color: #4ade80; font-weight: bold;">✓ Sent to Obsidian Inbox!</p>`;
+      statusMessage.innerHTML = `<p style="color: #4ade80; font-weight: bold;">✓ Sent to Obsidian Summaries!</p>`;
       setTimeout(() => window.close(), 2500);
 
     } catch (err) {

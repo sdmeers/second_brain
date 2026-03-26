@@ -1,7 +1,9 @@
 import os
 import io
 import re
+import json
 import httpx
+import yt_dlp
 import fitz  # PyMuPDF
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,19 +15,24 @@ from google import genai
 from google.genai import types
 
 # Load environment variables
-load_dotenv()
+dotenv_path = os.path.join(os.path.dirname(__file__), ".env")
+load_dotenv(dotenv_path=dotenv_path)
 
 # Configuration
 OBSIDIAN_VAULT_PATH = os.getenv("OBSIDIAN_VAULT_PATH")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-if not OBSIDIAN_VAULT_PATH or not GEMINI_API_KEY:
-    raise RuntimeError("CRITICAL: OBSIDIAN_VAULT_PATH or GEMINI_API_KEY missing from .env")
+if not GEMINI_API_KEY:
+    print(f"CRITICAL: GEMINI_API_KEY not found in {dotenv_path}")
+    raise RuntimeError(f"CRITICAL: GEMINI_API_KEY missing from {dotenv_path}")
+
+if not OBSIDIAN_VAULT_PATH:
+    raise RuntimeError("CRITICAL: OBSIDIAN_VAULT_PATH missing from .env")
 
 # Ensure Obsidian folders exist
-INBOX_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "Inbox")
+SUMMARIES_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "Summaries")
 SOURCES_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "Sources")
-os.makedirs(INBOX_PATH, exist_ok=True)
+os.makedirs(SUMMARIES_PATH, exist_ok=True)
 os.makedirs(SOURCES_PATH, exist_ok=True)
 
 # Initialize Gemini Client
@@ -150,45 +157,220 @@ tags: [brain, tag1, tag2]
         
     return output
 
+async def extract_youtube_transcript(url: str) -> str:
+    """Uses yt-dlp to extract the transcript from a YouTube video."""
+    print(f"Backend [Transcript]: Starting for {url}")
+    ydl_opts = {
+        'skip_download': True,
+        'writesubtitles': True,
+        'writeautomaticsub': True,
+        'quiet': True,
+        'no_warnings': True,
+        'socket_timeout': 10,
+    }
+
+    try:
+        # Run yt-dlp in a thread pool since it's synchronous
+        import asyncio
+        from functools import partial
+        
+        print("Backend [Transcript]: Extracting video info (yt-dlp)...")
+        loop = asyncio.get_event_loop()
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = await loop.run_in_executor(None, partial(ydl.extract_info, url, download=False))
+        print("Backend [Transcript]: Info extraction complete.")
+        
+        all_subs = info.get('subtitles', {})
+        all_auto_subs = info.get('automatic_captions', {})
+        target_url = None
+        
+        # Language selection strategy: 
+        # 1. Prefer manual 'en'
+        # 2. Prefer manual 'en-...'
+        # 3. Prefer auto 'en-orig' or 'en'
+        # 4. Fallback to any 'en' prefix
+        
+        candidates = []
+        # Gather all English candidates from manual and auto
+        for sub_type, sub_dict in [("manual", all_subs), ("auto", all_auto_subs)]:
+            for lang_code, formats in sub_dict.items():
+                if lang_code.startswith('en'):
+                    for f in formats:
+                        if f.get('ext') == 'json3':
+                            candidates.append({
+                                "type": sub_type,
+                                "code": lang_code,
+                                "url": f.get('url')
+                            })
+        
+        def score_lang(c):
+            # Manual is better than auto
+            score = 100 if c['type'] == 'manual' else 0
+            # Exact/Standard codes are better
+            if c['code'] in ['en', 'en-orig']: score += 50
+            elif c['code'].startswith('en-'): score += 25
+            return score
+
+        if candidates:
+            best = max(candidates, key=score_lang)
+            target_url = best['url']
+            print(f"Backend [Transcript]: Selected {best['type']} track ({best['code']})")
+        
+        if not target_url:
+            print("Backend [Transcript]: No English JSON3 transcript URL found.")
+            raise ValueError("No English transcript found for this video.")
+        
+        print(f"Backend [Transcript]: Fetching transcript content from YouTube API...")
+        async with httpx.AsyncClient() as client:
+            res = await client.get(target_url, timeout=30.0)
+            res.raise_for_status()
+            data = res.json()
+            
+        print("Backend [Transcript]: Parsing JSON3 format...")
+        text_parts = []
+        for event in data.get('events', []):
+            if 'segs' in event:
+                for seg in event['segs']:
+                    text_parts.append(seg.get('utf8', ''))
+        
+        transcript = " ".join(text_parts).replace("\n", " ").strip()
+        result = re.sub(r'\s+', ' ', transcript)
+        print(f"Backend [Transcript]: Success! Extracted {len(result)} characters.")
+        return result
+                
+    except Exception as e:
+        print(f"Backend [Transcript]: ERROR: {e}")
+        raise ValueError(f"Failed to extract transcript: {str(e)}")
+
+async def generate_brain_node(title_hint: str, author_hint: str, url: str, content: str) -> str:
+    """Calls Gemini to generate the Obsidian-formatted ontology node."""
+    print(f"Backend [Gemini]: Preparing prompt for content ({len(content)} chars)...")
+    system_instruction = """You are an expert knowledge architect building a 'Second Brain' in Obsidian. 
+Your goal is to analyze the provided text and extract a structured ontology.
+
+You must format your response entirely in valid Markdown, starting with a YAML frontmatter block.
+
+CRITICAL RULES:
+1. You must wrap key concepts, technologies, theories, or recurring themes in double brackets to create bi-directional links.
+2. WIKILINK FORMATTING: You MUST aggressively standardize your wikilinks to prevent graph duplication.
+   - ALWAYS use Title Case (e.g., [[Artificial Intelligence]], not [[artificial intelligence]]).
+   - ALWAYS use singular nouns where possible (e.g., [[Autonomous Weapon]], not [[Autonomous Weapons]]).
+   - ALWAYS spell out acronyms fully (e.g., [[Artificial General Intelligence]], not [[Artificial General Intelligence (AGI)]]).
+3. Be concise but highly analytical. Do not just summarize; extract the meaning and implications.
+4. If quoting directly from the text, use Markdown blockquotes (>).
+5. Do not output the raw text again. You are only generating the analysis/summary node.
+6. In the YAML frontmatter, provide an array of lowercase tags.
+
+OUTPUT FORMAT TEMPLATE:
+```yaml
+---
+title: "{Extract the true document title here}"
+author: "{Extract the Author}"
+url: "{URL}"
+date_processed: "{Date}"
+type: "{article | video | paper | book}"
+tags: [brain, tag1, tag2]
+---
+# [[{True Document Title}]]
+
+## tl;dr
+{A concise 2-sentence summary of the core message or contribution.}
+
+## Core Concepts
+* **[[Concept 1]]**: {Definition/context}
+* **[[Concept 2]]**: {Definition/context}
+
+## Key Takeaways
+* {Point 1}
+* {Point 2}
+
+## Emergent Themes & Connections
+{Where does this fit into the broader landscape? What are the implications?}
+```"""
+    
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    
+    prompt = (
+        f"Title Hint: {title_hint}\n"
+        f"Author Hint: {author_hint}\n"
+        f"Source: {url}\n"
+        f"Date: {date_str}\n"
+        f"Text to analyze: {content[:100000]}" # Limit context window just in case
+    )
+    
+    try:
+        print(f"Backend [Gemini]: Calling Gemini API (model: gemini-3.1-flash-lite-preview)...")
+        # Use the async client (aio)
+        response = await client.aio.models.generate_content(
+            model="gemini-3.1-flash-lite-preview",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                temperature=0.3
+            )
+        )
+        print("Backend [Gemini]: API call successful.")
+        
+        # Strip markdown block formatting if Gemini includes it
+        output = response.text.strip()
+        if output.startswith("```yaml"):
+            output = output[7:].strip()
+        elif output.startswith("yaml\n---"):
+            output = output[5:].strip()
+        if output.startswith("```markdown"):
+            output = output[11:].strip()
+        if output.endswith("```"):
+            output = output[:-3].strip()
+            
+        return output
+    except Exception as e:
+        print(f"Backend [Gemini]: ERROR: {e}")
+        raise
+
 @app.post("/process")
 async def process_capture(payload: CapturePayload):
     try:
-        print(f"Received capture request for: {payload.title}")
+        print(f"\n>>> Backend: Processing Request: {payload.title}")
         
         content_text = payload.markdownText
         clean_url = payload.url.lower().split('?')[0]
         is_pdf = clean_url.endswith('.pdf') or '/pdf/' in clean_url
+        is_youtube = "youtube.com/watch" in payload.url or "youtu.be/" in payload.url
         
         pdf_bytes = None
         
-        # 1. Handle PDF vs Text extraction
+        # 1. Handle PDF vs Text extraction vs YouTube Fallback
         if is_pdf:
-            print("Processing as PDF...")
+            print("Backend [Stage 1]: Processing as PDF...")
             content_text, pdf_bytes = extract_pdf_text(payload.url)
+        elif is_youtube and not content_text:
+            print("Backend [Stage 1]: Processing as YouTube (via backend fallback)...")
+            content_text = await extract_youtube_transcript(payload.url)
         else:
-            print("Processing as Text/Markdown...")
+            print(f"Backend [Stage 1]: Processing as Text ({len(content_text) if content_text else 0} chars)...")
             if not content_text:
-                raise HTTPException(status_code=400, detail="No markdown text provided for non-PDF source.")
+                raise HTTPException(status_code=400, detail="No markdown text provided.")
                 
-        # 2. Call Gemini for Analysis FIRST to get the true title
-        print("Calling Gemini to generate Brain Node...")
-        brain_node_markdown = generate_brain_node(
+        # 2. Call Gemini
+        print("Backend [Stage 2]: Generating Brain Node...")
+        brain_node_markdown = await generate_brain_node(
             title_hint=payload.title,
             author_hint=payload.authorHint,
             url=payload.url,
             content=content_text
         )
         
-        # 3. Parse true title from Gemini's output
+        # 3. Parse true title
+        print("Backend [Stage 3]: Finalizing and Saving...")
         real_title = payload.title
         match = re.search(r'^title:\s*"(.*?)"', brain_node_markdown, re.MULTILINE)
         if match:
             real_title = match.group(1)
             
         safe_title = sanitize_filename(real_title)
-        print(f"Determined true title: {safe_title}")
+        print(f"Backend [Stage 3]: Determined Title: {safe_title}")
         
-        # 4. Save Source file with true title
+        # 4. Save Source file
         source_link_name = ""
         if is_pdf:
             source_filename = f"{safe_title}.pdf"
@@ -203,16 +385,15 @@ async def process_capture(payload: CapturePayload):
             with open(source_path, "w", encoding="utf-8") as f:
                 f.write(f"# {real_title}\nSource: {payload.url}\n\n{content_text}")
                 
-        # 5. Inject the Source Material link
+        # 5. Save Brain Node
         source_injection = f"\n\n**Source Material:** [[{source_link_name}]]\n\n## tl;dr"
         brain_node_markdown = brain_node_markdown.replace("\n## tl;dr", source_injection, 1)
         
-        # 6. Save the Brain Node to Inbox
-        node_path = os.path.join(INBOX_PATH, f"{safe_title}.md")
+        node_path = os.path.join(SUMMARIES_PATH, f"{safe_title}.md")
         with open(node_path, "w", encoding="utf-8") as f:
             f.write(brain_node_markdown)
             
-        print(f"Successfully processed: {safe_title}")
+        print(f"<<< Backend: Request Complete: {safe_title}")
         return {"status": "success", "title": safe_title, "node_path": node_path}
         
     except httpx.HTTPStatusError as e:

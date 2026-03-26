@@ -92,14 +92,8 @@ tags: [brain, book]
     
     # Strip markdown block formatting if Gemini includes it
     output = response.text.strip()
-    if output.startswith("```yaml"):
-        output = output[7:].strip()
-    elif output.startswith("yaml\n---"):
-        output = output[5:].strip()
-    if output.startswith("```markdown"):
-        output = output[11:].strip()
-    if output.endswith("```"):
-        output = output[:-3].strip()
+    if not output.startswith("---"):
+        output = "---\n" + output
         
     return output
 

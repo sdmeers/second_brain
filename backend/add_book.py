@@ -38,7 +38,6 @@ CRITICAL RULES:
    - ALWAYS spell out acronyms fully (e.g., [[Artificial General Intelligence]], not [[AGI]] or [[Artificial General Intelligence (AGI)]]).
 3. Be concise but highly analytical. Extract the meaning, frameworks, and implications.
 4. In the YAML frontmatter, provide an array of lowercase tags.
-
 OUTPUT FORMAT TEMPLATE:
 ```yaml
 ---
@@ -47,11 +46,13 @@ author: "{Author}"
 url: "{Link to a major retailer or official page}"
 date_processed: "{Date}"
 type: "book"
+cover: "📖"
 tags: [brain, book, tag1, tag2]
 ---
-# [[{Official Book Title}]]
+# [[📖 {Official Book Title}]]
 
 ## tl;dr
+...
 {A concise 2-sentence summary of the core message or contribution.}
 
 ## Core Concepts
@@ -98,6 +99,30 @@ tags: [brain, book, tag1, tag2]
         
     return output
 
+def fetch_book_cover(title: str, author: str) -> str:
+    """Queries Google Books API for a cover image URL."""
+    try:
+        import httpx
+        query = f"intitle:{title}"
+        if author:
+            query += f"+inauthor:{author}"
+        
+        url = "https://www.googleapis.com/books/v1/volumes"
+        params = {"q": query, "maxResults": 1}
+        
+        with httpx.Client(timeout=10.0) as client:
+            response = client.get(url, params=params)
+            if response.status_code == 200:
+                data = response.json()
+                if "items" in data:
+                    volume_info = data["items"][0].get("volumeInfo", {})
+                    image_links = volume_info.get("imageLinks", {})
+                    # Prefer high res if available
+                    return image_links.get("extraLarge") or image_links.get("large") or image_links.get("thumbnail") or ""
+    except Exception as e:
+        print(f"Book Cover Fetch Error: {e}")
+    return ""
+
 def add_book(title: str, author: str):
     import re
     safe_title = re.sub(r'[\\/*?:"<>|]', "", title)
@@ -105,6 +130,15 @@ def add_book(title: str, author: str):
     
     markdown_content = generate_book_node(title, author)
     
+    # Fetch real cover
+    cover_url = fetch_book_cover(title, author)
+    if cover_url:
+        print(f"Found book cover: {cover_url}")
+        if 'cover: "' in markdown_content:
+            markdown_content = re.sub(r'cover: ".*?"', f'cover: "{cover_url}"', markdown_content)
+        else:
+            markdown_content = markdown_content.replace("type: \"book\"", f"cover: \"{cover_url}\"\ntype: \"book\"", 1)
+
     node_path = os.path.join(SUMMARIES_PATH, f"{safe_title}.md")
     with open(node_path, "w", encoding="utf-8") as f:
         f.write(markdown_content)

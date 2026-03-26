@@ -97,20 +97,23 @@ CRITICAL RULES:
 4. If quoting directly from the text, use Markdown blockquotes (>).
 5. Do not output the raw text again. You are only generating the analysis/summary node.
 6. In the YAML frontmatter, provide an array of lowercase tags.
-
 OUTPUT FORMAT TEMPLATE:
 ```yaml
 ---
-title: "{Extract the true document title here}"
+title: "{Extract Title with Emoji Prefix}"
 author: "{Extract the Author}"
 url: "{URL}"
 date_processed: "{Date}"
+date_captured: "{Date}"
+status: "🆕 new"
 type: "{article | video | paper | book}"
+cover: "{An icon/emoji representing the type, e.g., 📺, 📄, 📖, 🧪}"
 tags: [brain, tag1, tag2]
 ---
-# [[{True Document Title}]]
+# [[{Extract Title with Emoji Prefix}]]
 
 ## tl;dr
+...
 {A concise 2-sentence summary of the core message or contribution.}
 
 ## Core Concepts
@@ -260,20 +263,23 @@ CRITICAL RULES:
 4. If quoting directly from the text, use Markdown blockquotes (>).
 5. Do not output the raw text again. You are only generating the analysis/summary node.
 6. In the YAML frontmatter, provide an array of lowercase tags.
-
 OUTPUT FORMAT TEMPLATE:
 ```yaml
 ---
-title: "{Extract the true document title here}"
+title: "{Extract Title with Emoji Prefix}"
 author: "{Extract the Author}"
 url: "{URL}"
 date_processed: "{Date}"
+date_captured: "{Date}"
+status: "🆕 new"
 type: "{article | video | paper | book}"
+cover: "{An icon/emoji representing the type, e.g., 📺, 📄, 📖, 🧪}"
 tags: [brain, tag1, tag2]
 ---
-# [[{True Document Title}]]
+# [[{Extract Title with Emoji Prefix}]]
 
 ## tl;dr
+...
 {A concise 2-sentence summary of the core message or contribution.}
 
 ## Core Concepts
@@ -327,6 +333,34 @@ tags: [brain, tag1, tag2]
         print(f"Backend [Gemini]: ERROR: {e}")
         raise
 
+def fetch_cover(url: str, is_youtube: bool) -> str:
+    """Attempts to find a suitable cover image URL."""
+    if is_youtube:
+        video_id = None
+        if "v=" in url:
+            video_id = url.split("v=")[1].split("&")[0]
+        elif "youtu.be/" in url:
+            video_id = url.split("youtu.be/")[1].split("?")[0]
+        if video_id:
+            return f"https://i.ytimg.com/vi/{video_id}/maxresdefault.jpg"
+    
+    # Simple Open Graph fallback for articles
+    try:
+        headers = {"User-Agent": "Mozilla/5.0"}
+        with httpx.Client(follow_redirects=True, timeout=10.0, headers=headers) as c:
+            r = c.get(url)
+            if r.status_code == 200:
+                # Look for og:image meta tag
+                match = re.search(r'<meta [^>]*property=["'']og:image["''][^>]*content=["''](.*?)["'']', r.text)
+                if not match:
+                    match = re.search(r'<meta [^>]*content=["''](.*?)["''][^>]*property=["'']og:image["'']', r.text)
+                if match:
+                    return match.group(1)
+    except Exception as e:
+        print(f"Cover Fetch Error: {e}")
+    
+    return ""
+
 @app.post("/process")
 async def process_capture(payload: CapturePayload):
     try:
@@ -360,17 +394,28 @@ async def process_capture(payload: CapturePayload):
             content=content_text
         )
         
-        # 3. Parse true title
-        print("Backend [Stage 3]: Finalizing and Saving...")
+        # 3. Fetch Cover Image
+        print("Backend [Stage 3]: Fetching Cover Image...")
+        cover_url = fetch_cover(payload.url, is_youtube)
+        if cover_url:
+            print(f"Backend [Stage 3]: Found cover: {cover_url}")
+            # Inject cover into YAML frontmatter if gemini hasn't provided a better one
+            if 'cover: "' in brain_node_markdown:
+                brain_node_markdown = re.sub(r'cover: ".*?"', f'cover: "{cover_url}"', brain_node_markdown)
+            else:
+                brain_node_markdown = brain_node_markdown.replace("type:", f"cover: \"{cover_url}\"\ntype:", 1)
+        
+        # 4. Parse true title
+        print("Backend [Stage 4]: Finalizing and Saving...")
         real_title = payload.title
         match = re.search(r'^title:\s*"(.*?)"', brain_node_markdown, re.MULTILINE)
         if match:
             real_title = match.group(1)
             
         safe_title = sanitize_filename(real_title)
-        print(f"Backend [Stage 3]: Determined Title: {safe_title}")
+        print(f"Backend [Stage 4]: Determined Title: {safe_title}")
         
-        # 4. Save Source file
+        # 5. Save Source file
         source_link_name = ""
         if is_pdf:
             source_filename = f"{safe_title}.pdf"
@@ -385,7 +430,7 @@ async def process_capture(payload: CapturePayload):
             with open(source_path, "w", encoding="utf-8") as f:
                 f.write(f"# {real_title}\nSource: {payload.url}\n\n{content_text}")
                 
-        # 5. Save Brain Node
+        # 6. Save Brain Node
         source_injection = f"\n\n**Source Material:** [[{source_link_name}]]\n\n## tl;dr"
         brain_node_markdown = brain_node_markdown.replace("\n## tl;dr", source_injection, 1)
         

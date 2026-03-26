@@ -88,15 +88,19 @@ Your goal is to analyze the provided text and extract a structured ontology.
 You must format your response entirely in valid Markdown, starting with a YAML frontmatter block.
 
 CRITICAL RULES:
-1. You must wrap key concepts, technologies, theories, or recurring themes in double brackets to create bi-directional links.
-2. WIKILINK FORMATTING: You MUST aggressively standardize your wikilinks to prevent graph duplication.
-   - ALWAYS use Title Case (e.g., [[Artificial Intelligence]], not [[artificial intelligence]]).
-   - ALWAYS use singular nouns where possible (e.g., [[Autonomous Weapon]], not [[Autonomous Weapons]]).
-   - ALWAYS spell out acronyms fully (e.g., [[Artificial General Intelligence]], not [[AGI]] or [[Artificial General Intelligence (AGI)]]).
-3. Be concise but highly analytical. Do not just summarize; extract the meaning and implications.
-4. If quoting directly from the text, use Markdown blockquotes (>).
-5. Do not output the raw text again. You are only generating the analysis/summary node.
-6. In the YAML frontmatter, provide an array of lowercase tags.
+1. TOPICS AS WIKILINKS: Do NOT put topics, concepts, or themes in the 'tags' array. Tags are strictly for [brain, type].
+2. Use double brackets [[Topic]] ONLY for concepts.
+3. CANONICAL NAMING: You MUST aggressively standardize to these specific names to prevent graph duplication:
+   - Use [[Artificial Intelligence]] (Never AI, artificial-intelligence, or #ai)
+   - Use [[Artificial General Intelligence]] (Never AGI)
+   - Use [[Ethics]] (Never Ethical AI)
+   - Use [[Machine Learning]]
+   - Use [[Large Language Model]] (Never LLM)
+   - Use [[Geopolitics]]
+   - Use [[Cybersecurity]]
+4. ALWAYS use Title Case and Singular Nouns for wikilinks.
+5. In the YAML frontmatter, 'tags' should ONLY contain ['brain', '{type}'].
+
 OUTPUT FORMAT TEMPLATE:
 ```yaml
 ---
@@ -107,8 +111,8 @@ date_processed: "{Date}"
 date_captured: "{Date}"
 status: "🆕 new"
 type: "{article | video | paper | book}"
-cover: "{An icon/emoji representing the type, e.g., 📺, 📄, 📖, 🧪}"
-tags: [brain, tag1, tag2]
+cover: "{Image URL}"
+tags: [brain, {type}]
 ---
 # [[{Extract Title with Emoji Prefix}]]
 

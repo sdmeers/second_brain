@@ -29,15 +29,20 @@ You MUST use the provided Google Search tool to verify the book's core arguments
 Do not hallucinate facts; if you cannot find specific details, stick to the general themes you can verify.
 
 You must format your response entirely in valid Markdown, starting with a YAML frontmatter block.
-
 CRITICAL RULES:
-1. You must wrap key concepts, technologies, theories, or recurring themes in double brackets to create bi-directional links.
-2. WIKILINK FORMATTING: You MUST aggressively standardize your wikilinks to prevent graph duplication.
-   - ALWAYS use Title Case (e.g., [[Artificial Intelligence]], not [[artificial intelligence]]).
-   - ALWAYS use singular nouns where possible (e.g., [[Autonomous Weapon]], not [[Autonomous Weapons]]).
-   - ALWAYS spell out acronyms fully (e.g., [[Artificial General Intelligence]], not [[AGI]] or [[Artificial General Intelligence (AGI)]]).
-3. Be concise but highly analytical. Extract the meaning, frameworks, and implications.
-4. In the YAML frontmatter, provide an array of lowercase tags.
+1. TOPICS AS WIKILINKS: Do NOT put topics, concepts, or themes in the 'tags' array. Tags are strictly for [brain, book].
+2. Use double brackets [[Topic]] ONLY for concepts.
+3. CANONICAL NAMING: You MUST aggressively standardize to these specific names to prevent graph duplication:
+   - Use [[Artificial Intelligence]] (Never AI, artificial-intelligence, or #ai)
+   - Use [[Artificial General Intelligence]] (Never AGI)
+   - Use [[Ethics]] (Never Ethical AI)
+   - Use [[Machine Learning]]
+   - Use [[Large Language Model]] (Never LLM)
+   - Use [[Geopolitics]]
+   - Use [[Cybersecurity]]
+4. ALWAYS use Title Case and Singular Nouns for wikilinks.
+5. In the YAML frontmatter, 'tags' should ONLY contain ['brain', 'book'].
+
 OUTPUT FORMAT TEMPLATE:
 ```yaml
 ---
@@ -45,16 +50,16 @@ title: "{Official Book Title}"
 author: "{Author}"
 url: "{Link to a major retailer or official page}"
 date_processed: "{Date}"
+date_captured: "{Date}"
+status: "🆕 new"
 type: "book"
-cover: "📖"
-tags: [brain, book, tag1, tag2]
+cover: "{Image URL}"
+tags: [brain, book]
 ---
 # [[📖 {Official Book Title}]]
 
 ## tl;dr
 ...
-{A concise 2-sentence summary of the core message or contribution.}
-
 ## Core Concepts
 * **[[Concept 1]]**: {Definition/context}
 * **[[Concept 2]]**: {Definition/context}

@@ -180,7 +180,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
 
       // Send to Backend
-      statusMessage.textContent = "Generating Brain Node & Archiving...";
+      statusMessage.textContent = "Generating Brain Node...";
       const response = await fetch(`${API_BASE}/process`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

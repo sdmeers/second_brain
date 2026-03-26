@@ -56,7 +56,6 @@ type: "book"
 cover: "{Image URL}"
 tags: [brain, book]
 ---
-# [[📖 {Official Book Title}]]
 
 ## tl;dr
 ...

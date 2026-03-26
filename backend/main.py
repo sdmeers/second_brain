@@ -114,7 +114,6 @@ type: "{article | video | paper | book}"
 cover: "{Image URL}"
 tags: [brain, {type}]
 ---
-# [[{Extract Title with Emoji Prefix}]]
 
 ## tl;dr
 ...

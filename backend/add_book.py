@@ -1,5 +1,6 @@
 import os
 import argparse
+import re
 from datetime import datetime
 from dotenv import load_dotenv
 from google import genai
@@ -109,6 +110,12 @@ tags: [brain, book]
     
     # Strip markdown block formatting if Gemini includes it
     output = response.text.strip()
+    
+    # Remove markdown code blocks if present
+    output = re.sub(r'^```[a-z]*\n', '', output)
+    output = re.sub(r'\n```$', '', output)
+    output = output.strip()
+
     if not output.startswith("---"):
         output = "---\n" + output
         
@@ -139,7 +146,6 @@ def fetch_book_cover(title: str, author: str) -> str:
     return ""
 
 def add_book(title: str, author: str):
-    import re
     safe_title = re.sub(r'[\\/*?:"<>|]', "", title)
     safe_title = re.sub(r'\s+', " ", safe_title).strip()[:100]
     

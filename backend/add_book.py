@@ -80,15 +80,32 @@ tags: [brain, book]
         f"Date: {date_str}"
     )
     
-    response = client.models.generate_content(
-        model="gemini-3.1-flash-lite-preview",
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            system_instruction=system_instruction,
-            temperature=0.3,
-            tools=[types.Tool(google_search=types.GoogleSearch())]
+    try:
+        # Priority: Use gemini-2.5-flash with Google Search (has search quota)
+        print("  [Attempt 1] Using gemini-2.5-flash with Search Tool...")
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                temperature=0.3,
+                tools=[types.Tool(google_search=types.GoogleSearch())]
+            )
         )
-    )
+    except Exception as e:
+        if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+            print(f"  [FALLBACK] Search Quota Hit or Rate Limited. Retrying without search using gemini-3.1-flash-lite-preview...")
+            # Fallback: Use gemini-3.1-flash-lite-preview (high model quota, no search quota)
+            response = client.models.generate_content(
+                model="gemini-3.1-flash-lite-preview",
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_instruction,
+                    temperature=0.3
+                )
+            )
+        else:
+            raise e
     
     # Strip markdown block formatting if Gemini includes it
     output = response.text.strip()

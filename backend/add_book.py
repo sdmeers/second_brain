@@ -15,7 +15,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not OBSIDIAN_VAULT_PATH or not GEMINI_API_KEY:
     raise RuntimeError("CRITICAL: OBSIDIAN_VAULT_PATH or GEMINI_API_KEY missing from .env")
 
-SUMMARIES_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "Summaries")
+SUMMARIES_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "02 Summaries")
 os.makedirs(SUMMARIES_PATH, exist_ok=True)
 
 client = genai.Client(api_key=GEMINI_API_KEY)

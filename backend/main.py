@@ -30,8 +30,8 @@ if not OBSIDIAN_VAULT_PATH:
     raise RuntimeError("CRITICAL: OBSIDIAN_VAULT_PATH missing from .env")
 
 # Ensure Obsidian folders exist
-SUMMARIES_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "Summaries")
-SOURCES_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "Sources")
+SUMMARIES_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "02 Summaries")
+SOURCES_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "01 Sources")
 os.makedirs(SUMMARIES_PATH, exist_ok=True)
 os.makedirs(SOURCES_PATH, exist_ok=True)
 
@@ -252,21 +252,39 @@ async def generate_brain_node(title_hint: str, author_hint: str, url: str, conte
     """Calls Gemini to generate the Obsidian-formatted ontology node."""
     print(f"Backend [Gemini]: Preparing prompt for content ({len(content)} chars)...")
     system_instruction = """You are an expert knowledge architect building a 'Second Brain' in Obsidian. 
-Your goal is to analyze the provided text and extract a structured ontology.
+Your goal is to analyze the provided text and extract a structured ontology based on a 'Map of Content' (MOC) strategy.
 
 You must format your response entirely in valid Markdown, starting with a YAML frontmatter block.
 
 CRITICAL RULES:
-1. You must wrap key concepts, technologies, theories, or recurring themes in double brackets to create bi-directional links.
-2. WIKILINK FORMATTING: You MUST aggressively standardize your wikilinks to prevent graph duplication.
-   - ALWAYS use Title Case (e.g., [[Artificial Intelligence]], not [[artificial intelligence]]).
-   - ALWAYS use singular nouns where possible (e.g., [[Autonomous Weapon]], not [[Autonomous Weapons]]).
-   - ALWAYS spell out acronyms fully (e.g., [[Artificial General Intelligence]], not [[Artificial General Intelligence (AGI)]]).
-3. Be concise but highly analytical. Do not just summarize; extract the meaning and implications.
-4. If quoting directly from the text, use Markdown blockquotes (>).
-5. Do not output the raw text again. You are only generating the analysis/summary node.
-6. In the YAML frontmatter, provide an array of lowercase tags.
-OUTPUT FORMAT TEMPLATE:
+1. THEMES vs TAGS:
+    - THEMES: These are high-level Map of Content (MOC) categories. You MUST identify exactly ONE 'theme_primary' and zero or more 'theme_related' entries.
+    - Use double brackets [[Topic]] ONLY for themes (e.g., theme_primary: "[[Artificial Intelligence]]").
+    - TAGS: These are granular, specific keywords, sub-topics, or entities (e.g., #gpt-4, #bci, #alpha-fold). Use '#' for tags in the YAML frontmatter and anywhere in the body.
+    - DO NOT create wikilinks [[Topic]] for granular tags. Use them ONLY for Themes.
+
+2. NO CODE BLOCKS: Do NOT wrap your entire response in markdown code blocks (e.g., ```yaml or ```markdown). Start your response directly with the '---' of the YAML frontmatter.
+
+3. CANONICAL THEME LIST: You MUST aggressively standardize to these specific names:
+
+   - [[Artificial Intelligence]]
+   - [[Defence & National Security]]
+   - [[Geopolitics]]
+   - [[Neuroscience]]
+   - [[Technology]]
+   - [[Ethics]]
+   - [[Leadership]]
+   - [[Semiconductors]]
+   - [[Innovation]]
+
+3. AI SUB-THEMES (Related Themes):
+   - [[Artificial General Intelligence]]
+   - [[Large Language Model]]
+   - [[Agentic Artificial Intelligence]]
+   - [[Reinforcement Learning]]
+   - [[Artificial Narrow Intelligence]]
+
+4. OUTPUT FORMAT TEMPLATE:
 ```yaml
 ---
 title: "{Extract Title with Emoji Prefix}"
@@ -274,10 +292,12 @@ author: "{Extract the Author}"
 url: "{URL}"
 date_processed: "{Date}"
 date_captured: "{Date}"
-status: "🆕 new"
+status: "🟡 to-review"
+theme_primary: "[[{Select ONE from Canonical List}]]"
+theme_related: ["[[{Select 0+ from Canonical or Sub-Theme list}]]"]
 type: "{article | video | paper | book}"
-cover: "{An icon/emoji representing the type, e.g., 📺, 📄, 📖, 🧪}"
-tags: [brain, tag1, tag2]
+cover: "{Emoji representation of type, e.g. 📄, 🧪, 📺}"
+tags: [brain, "#tag1", "#tag2"]
 ---
 # [[{Extract Title with Emoji Prefix}]]
 
@@ -286,15 +306,15 @@ tags: [brain, tag1, tag2]
 {A concise 2-sentence summary of the core message or contribution.}
 
 ## Core Concepts
-* **[[Concept 1]]**: {Definition/context}
-* **[[Concept 2]]**: {Definition/context}
+* **#tag1**: {Brief context}
+* **#tag2**: {Brief context}
 
 ## Key Takeaways
 * {Point 1}
 * {Point 2}
 
 ## Emergent Themes & Connections
-{Where does this fit into the broader landscape? What are the implications?}
+{Analyze how this intersects with its themes and implications for the future.}
 ```"""
     
     date_str = datetime.now().strftime("%Y-%m-%d")
@@ -359,6 +379,31 @@ def fetch_cover(url: str, is_youtube: bool) -> str:
     
     return ""
 
+from bs4 import BeautifulSoup
+
+def extract_web_text(url: str) -> str:
+    """Fetches a URL and extracts readable text using BeautifulSoup."""
+    headers = {"User-Agent": "Mozilla/5.0"}
+    response = httpx.get(url, follow_redirects=True, timeout=30.0, headers=headers)
+    response.raise_for_status()
+    
+    soup = BeautifulSoup(response.text, "html.parser")
+    
+    # Remove script and style elements
+    for script in soup(["script", "style"]):
+        script.extract()
+        
+    text = soup.get_text()
+    
+    # Break into lines and remove leading and trailing whitespace
+    lines = (line.strip() for line in text.splitlines())
+    # Break multi-headlines into a line each
+    chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+    # Drop blank lines
+    text = '\n'.join(chunk for chunk in chunks if chunk)
+    
+    return text.strip()
+
 @app.post("/process")
 async def process_capture(payload: CapturePayload):
     try:
@@ -378,10 +423,11 @@ async def process_capture(payload: CapturePayload):
         elif is_youtube and not content_text:
             print("Backend [Stage 1]: Processing as YouTube (via backend fallback)...")
             content_text = await extract_youtube_transcript(payload.url)
+        elif not content_text:
+            print(f"Backend [Stage 1]: Scraping Web Content from {payload.url}...")
+            content_text = extract_web_text(payload.url)
         else:
             print(f"Backend [Stage 1]: Processing as Text ({len(content_text) if content_text else 0} chars)...")
-            if not content_text:
-                raise HTTPException(status_code=400, detail="No markdown text provided.")
                 
         # 2. Call Gemini
         print("Backend [Stage 2]: Generating Brain Node...")
@@ -391,9 +437,18 @@ async def process_capture(payload: CapturePayload):
             url=payload.url,
             content=content_text
         )
-        
-        # 3. Fetch Cover Image
+
+        # 3. Clean Gemini output (Strip markdown backticks if present)
+        brain_node_markdown = brain_node_markdown.strip()
+        # Remove ```yaml or ``` at start/end
+        import re
+        brain_node_markdown = re.sub(r'^```[a-z]*\n', '', brain_node_markdown)
+        brain_node_markdown = re.sub(r'\n```$', '', brain_node_markdown)
+        brain_node_markdown = brain_node_markdown.strip()
+
+        # 4. Fetch Cover Image
         print("Backend [Stage 3]: Fetching Cover Image...")
+
         cover_url = fetch_cover(payload.url, is_youtube)
         if cover_url:
             print(f"Backend [Stage 3]: Found cover: {cover_url}")

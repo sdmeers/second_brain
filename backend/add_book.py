@@ -52,25 +52,19 @@ author: "{Author}"
 url: "{Link to a major retailer or official page}"
 date_processed: "{Date}"
 date_captured: "{Date}"
-status: "🆕 new"
+status: "🟡 to-review"
+theme_primary: "[[{Select ONE from Canonical List}]]"
+theme_related: ["[[{Select 0+ from Canonical or Sub-Theme list}]]"]
 type: "book"
-cover: "{Image URL}"
+cover: "📖"
 tags: [brain, book]
 ---
+# [[📖 {Extract Title with Emoji Prefix}]]
 
-## tl;dr
+## 🧠 Brain Node: Summary & Analysis
 ...
-## Core Concepts
-* **[[Concept 1]]**: {Definition/context}
-* **[[Concept 2]]**: {Definition/context}
-
-## Key Takeaways
-* {Point 1}
-* {Point 2}
-
-## Emergent Themes & Connections
-{Where does this fit into the broader landscape? What are the implications?}
-```"""
+```
+"""
     
     date_str = datetime.now().strftime("%Y-%m-%d")
     

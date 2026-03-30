@@ -313,6 +313,10 @@ tags: [brain]
 * {Point 1}
 * {Point 2}
 
+## 🗺️ Context & MOC
+- **[[Theme Primary]]**: {One sentence on how this connects to the primary theme.}
+- **[[Theme Related 1]]**, **[[Theme Related 2]]**: {How it intersects with other themes.}
+
 ## Emergent Themes & Connections
 {Analyze how this intersects with its themes and implications for the future.}
 ```"""
@@ -491,6 +495,9 @@ async def process_capture(payload: CapturePayload):
         match = re.search(r'^title:\s*"(.*?)"', brain_node_markdown, re.MULTILINE)
         if match:
             real_title = match.group(1)
+            
+        # Strip browser notification counts like (1) or (1234) from the start
+        real_title = re.sub(r'^\(\d+\)\s*', '', real_title)
             
         safe_title = sanitize_filename(real_title)
         print(f"Backend [Stage 4]: Determined Title: {safe_title}")

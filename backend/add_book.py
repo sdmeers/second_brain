@@ -61,10 +61,25 @@ tags: [brain, book]
 ---
 # [[📖 {Extract Title with Emoji Prefix}]]
 
-## 🧠 Brain Node: Summary & Analysis
+## tl;dr
 ...
-```
-"""
+{A concise 2-sentence summary of the core message or contribution.}
+
+## Core Concepts
+* **[[Concept 1]]**: {Definition/context}
+* **[[Concept 2]]**: {Definition/context}
+
+## Key Takeaways
+* {Point 1}
+* {Point 2}
+
+## 🗺️ Context & MOC
+- **[[Theme Primary]]**: {One sentence on how this connects to the primary theme.}
+- **[[Theme Related 1]]**, **[[Theme Related 2]]**: {How it intersects with other themes.}
+
+## Emergent Themes & Connections
+{Where does this fit into the broader landscape? What are the implications?}
+```"""
     
     date_str = datetime.now().strftime("%Y-%m-%d")
     

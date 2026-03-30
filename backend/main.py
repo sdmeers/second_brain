@@ -293,11 +293,11 @@ url: "{URL}"
 date_processed: "{Date}"
 date_captured: "{Date}"
 status: "🟡 to-review"
-theme_primary: "[[{Select ONE from Canonical List}]]"
-theme_related: ["[[{Select 0+ from Canonical or Sub-Theme list}]]"]
+theme_primary: "[[Theme Name]]"
+theme_related: ["[[Theme 1]]", "[[Theme 2]]"]
 type: "{article | video | paper | book}"
 cover: "{Emoji representation of type, e.g. 📄, 🧪, 📺}"
-tags: [brain, "#tag1", "#tag2"]
+tags: [brain]
 ---
 # [[{Extract Title with Emoji Prefix}]]
 
@@ -445,8 +445,35 @@ async def process_capture(payload: CapturePayload):
         brain_node_markdown = re.sub(r'^```[a-z]*\n', '', brain_node_markdown)
         brain_node_markdown = re.sub(r'\n```$', '', brain_node_markdown)
         brain_node_markdown = brain_node_markdown.strip()
+        
+        # 4. Standardize YAML (Fix brackets)
+        def clean_yaml_brackets(content: str) -> str:
+            """Surgically fixes theme_primary: [[Topic]] and theme_related: [[Topic1], [Topic2]] issues."""
+            def fix_list(match):
+                val = match.group(1)
+                items = re.findall(r'\[+([^\[\]]+)\]+', val)
+                clean_items = []
+                for item in items:
+                    parts = [p.strip().strip('"').strip("'") for p in item.split(',')]
+                    clean_items.extend([p for p in parts if p])
+                formatted = ", ".join([f'"[[{t}]]"' for t in clean_items])
+                return f'theme_related: [{formatted}]'
 
-        # 4. Fetch Cover Image
+            def fix_primary(match):
+                val = match.group(1)
+                items = re.findall(r'\[+([^\[\]]+)\]+', val)
+                if items:
+                    t = items[0].strip().strip('"').strip("'")
+                    return f'theme_primary: "[[{t}]]"'
+                return match.group(0)
+
+            content = re.sub(r'theme_related:\s*(.*)', fix_list, content)
+            content = re.sub(r'theme_primary:\s*(.*)', fix_primary, content)
+            return content
+            
+        brain_node_markdown = clean_yaml_brackets(brain_node_markdown)
+
+        # 5. Fetch Cover Image
         print("Backend [Stage 3]: Fetching Cover Image...")
 
         cover_url = fetch_cover(payload.url, is_youtube)

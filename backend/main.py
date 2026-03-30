@@ -481,7 +481,7 @@ async def process_capture(payload: CapturePayload):
             source_link_name = f"{safe_title}_raw"
             source_path = os.path.join(SOURCES_PATH, source_filename)
             with open(source_path, "w", encoding="utf-8") as f:
-                f.write(f"# {real_title}\nSource: {payload.url}\n\n{content_text}")
+                f.write(f"Source: {payload.url}\n\n{content_text}")
                 
         # 6. Save Brain Node
         source_injection = f"\n\n**Source Material:** [[{source_link_name}]]\n\n## tl;dr"

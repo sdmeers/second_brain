@@ -135,23 +135,24 @@ tags: [brain, book]
     try:
         data = response.text
         
+        # Remove markdown code blocks if the model wrapped the JSON in them
+        clean_data = re.sub(r'^```[a-z]*\n', '', data)
+        clean_data = re.sub(r'\n```$', '', clean_data)
+        clean_data = clean_data.strip()
+        
         # If the response isn't pure JSON (e.g. from attempt 1), try to extract it manually or mock the Pydantic object
-        if "summary_markdown" not in data:
+        if "summary_markdown" not in clean_data:
             import json
-            # Remove markdown code blocks if present
-            clean_output = re.sub(r'^```[a-z]*\n', '', data)
-            clean_output = re.sub(r'\n```$', '', clean_output)
-            clean_output = clean_output.strip()
             
             # If the model ignored the schema instruction entirely (e.g. due to search tools), we construct the object manually
-            if not clean_output.startswith("{"):
+            if not clean_data.startswith("{"):
                 # Extract concepts from the markdown body
-                extracted_concepts = re.findall(r'\*\*\s*(\[\[.*?\]\])\s*\*\*', clean_output)
-                parsed = OntologyExtraction(summary_markdown=clean_output, concepts=extracted_concepts)
+                extracted_concepts = re.findall(r'\*\*\s*(\[\[.*?\]\])\s*\*\*', clean_data)
+                parsed = OntologyExtraction(summary_markdown=clean_data, concepts=extracted_concepts)
             else:
-                 parsed = OntologyExtraction.model_validate_json(clean_output)
+                 parsed = OntologyExtraction.model_validate_json(clean_data)
         else:
-            parsed = OntologyExtraction.model_validate_json(data)
+            parsed = OntologyExtraction.model_validate_json(clean_data)
         
         if not parsed.summary_markdown.strip().startswith("---"):
             parsed.summary_markdown = "---\n" + parsed.summary_markdown.strip()

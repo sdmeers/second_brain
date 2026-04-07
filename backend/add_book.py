@@ -87,10 +87,6 @@ tags: [brain, book]
 
 ## Emergent Themes & Connections
 {{Analyze how this intersects with its themes and implications for the future.}}
-
-6. JSON SCHEMA POPULATION: You must return a JSON object.
-   - The `summary_markdown` field must contain the full markdown text.
-   - The `concepts` field MUST be an array of strings containing the exact wikilinks you extracted in the Core Concepts section (e.g., ["[[Time Horizon]]", "[[Responsible Scaling Policy]]"]). If you do not populate this array, the concept pages will not be created.
 """
     
     date_str = datetime.now().strftime("%Y-%m-%d")
@@ -118,12 +114,18 @@ tags: [brain, book]
     except Exception as e:
         if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e) or "503" in str(e):
             print(f"  [FALLBACK] Search Quota Hit or Rate Limited ({str(e)[:3]}). Retrying without search using gemini-3.1-flash-lite-preview...")
+            
+            fallback_instruction = system_instruction + """
+6. JSON SCHEMA POPULATION: You must return a JSON object.
+   - The `summary_markdown` field must contain the full markdown text.
+   - The `concepts` field MUST be an array of strings containing the exact wikilinks you extracted in the Core Concepts section (e.g., ["[[Time Horizon]]", "[[Responsible Scaling Policy]]"]). If you do not populate this array, the concept pages will not be created.
+"""
             # Fallback: Use gemini-3.1-flash-lite-preview via the robust retry mechanism
             response = await call_gemini_with_retry(
                 model="gemini-3.1-flash-lite-preview",
                 contents=prompt,
                 config=types.GenerateContentConfig(
-                    system_instruction=system_instruction,
+                    system_instruction=fallback_instruction,
                     temperature=0.3,
                     response_mime_type="application/json",
                     response_schema=OntologyExtraction,

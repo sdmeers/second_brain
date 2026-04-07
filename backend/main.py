@@ -346,6 +346,7 @@ Please update the concept page to integrate any new information, note contradict
             updated_content = response.text.strip()
             with open(concept_path, "w", encoding="utf-8") as f:
                 f.write(updated_content)
+            log_action("Concept Updated", f'Updated [[{clean_concept}]] with context from "{source_title}"')
         except Exception as e:
             print(f"Backend [Concept]: Failed to update concept [[{clean_concept}]]: {e}")
     else:

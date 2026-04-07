@@ -7,12 +7,13 @@ import yt_dlp
 import fitz  # PyMuPDF
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import datetime
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
+from logger import log_action
 
 # Load environment variables
 dotenv_path = os.path.join(os.path.dirname(__file__), ".env")
@@ -32,11 +33,37 @@ if not OBSIDIAN_VAULT_PATH:
 # Ensure Obsidian folders exist
 SUMMARIES_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "02 Summaries")
 SOURCES_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "01 Sources")
+ATLAS_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "03 Atlas")
+CONCEPTS_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "04 Concepts")
 os.makedirs(SUMMARIES_PATH, exist_ok=True)
 os.makedirs(SOURCES_PATH, exist_ok=True)
+os.makedirs(ATLAS_PATH, exist_ok=True)
+os.makedirs(CONCEPTS_PATH, exist_ok=True)
+
+import asyncio
 
 # Initialize Gemini Client
 client = genai.Client(api_key=GEMINI_API_KEY)
+
+async def call_gemini_with_retry(model: str, contents: str, config: types.GenerateContentConfig = None, max_retries: int = 5):
+    """Wrapper to call Gemini API with exponential backoff for 429 and 503 errors."""
+    for attempt in range(max_retries):
+        try:
+            return await client.aio.models.generate_content(
+                model=model,
+                contents=contents,
+                config=config
+            )
+        except Exception as e:
+            error_str = str(e)
+            if "429" in error_str or "503" in error_str:
+                wait_time = (2 ** attempt) + 2  # 3s, 4s, 6s, 10s, 18s
+                print(f"Backend [Gemini]: Encountered {error_str[:3]} error. Retrying in {wait_time}s... (Attempt {attempt+1}/{max_retries})")
+                await asyncio.sleep(wait_time)
+                if attempt == max_retries - 1:
+                    raise RuntimeError(f"Failed after {max_retries} attempts: {error_str}")
+            else:
+                raise e
 
 # Initialize FastAPI App
 app = FastAPI(title="Centaur Brain API")
@@ -57,11 +84,26 @@ class CapturePayload(BaseModel):
     authorHint: Optional[str] = ""
     markdownText: Optional[str] = ""
 
+class OntologyExtraction(BaseModel):
+    summary_markdown: str = Field(description="The complete markdown formatted summary including YAML frontmatter.")
+    concepts: list[str] = Field(description="List of all wikilinks extracted in the Core Concepts section (e.g. ['[[Concept 1]]', '[[Concept 2]]']). MUST NOT BE EMPTY.")
+
 def sanitize_filename(filename: str) -> str:
     """Removes illegal characters and normalizes whitespace for filenames."""
     filename = re.sub(r'[\\/*?:"<>|]', "", filename)
     filename = re.sub(r'\s+', " ", filename)  # Collapse multiple spaces into one
     return filename.strip()[:100]  # Limit length
+
+def get_atlas_themes() -> list[str]:
+    """Reads the 03 Atlas folder and returns a list of themes as wikilinks."""
+    try:
+        if not os.path.exists(ATLAS_PATH):
+            return []
+        files = os.listdir(ATLAS_PATH)
+        return [f"[[{f[:-3]}]]" for f in files if f.endswith(".md")]
+    except Exception as e:
+        print(f"Error reading Atlas Themes: {e}")
+        return []
 
 def extract_pdf_text(url: str) -> tuple[str, bytes]:
     """Downloads PDF and extracts text."""
@@ -79,89 +121,6 @@ def extract_pdf_text(url: str) -> tuple[str, bytes]:
         text += doc[i].get_text()
         
     return text.strip(), pdf_bytes
-
-def generate_brain_node(title_hint: str, author_hint: str, url: str, content: str) -> str:
-    """Calls Gemini to generate the Obsidian-formatted ontology node."""
-    system_instruction = """You are an expert knowledge architect building a 'Second Brain' in Obsidian. 
-Your goal is to analyze the provided text and extract a structured ontology.
-
-You must format your response entirely in valid Markdown, starting with a YAML frontmatter block.
-
-CRITICAL RULES:
-1. TOPICS AS WIKILINKS: Do NOT put topics, concepts, or themes in the 'tags' array. Tags are strictly for [brain, type].
-2. Use double brackets [[Topic]] ONLY for concepts.
-3. CANONICAL NAMING: You MUST aggressively standardize to these specific names to prevent graph duplication:
-   - Use [[Artificial Intelligence]] (Never AI, artificial-intelligence, or #ai)
-   - Use [[Artificial General Intelligence]] (Never AGI)
-   - Use [[Ethics]] (Never Ethical AI)
-   - Use [[Machine Learning]]
-   - Use [[Large Language Model]] (Never LLM)
-   - Use [[Geopolitics]]
-   - Use [[Cybersecurity]]
-4. ALWAYS use Title Case and Singular Nouns for wikilinks.
-5. In the YAML frontmatter, 'tags' should ONLY contain ['brain', '{type}'].
-
-OUTPUT FORMAT TEMPLATE:
-```yaml
----
-title: "{Extract Title with Emoji Prefix}"
-author: "{Extract the Author}"
-url: "{URL}"
-date_processed: "{Date}"
-date_captured: "{Date}"
-status: "🆕 new"
-type: "{article | video | paper | book}"
-cover: "{Image URL}"
-tags: [brain, {type}]
----
-
-## tl;dr
-...
-{A concise 2-sentence summary of the core message or contribution.}
-
-## Core Concepts
-* **[[Concept 1]]**: {Definition/context}
-* **[[Concept 2]]**: {Definition/context}
-
-## Key Takeaways
-* {Point 1}
-* {Point 2}
-
-## Emergent Themes & Connections
-{Where does this fit into the broader landscape? What are the implications?}
-```"""
-    
-    date_str = datetime.now().strftime("%Y-%m-%d")
-    
-    prompt = (
-        f"Title Hint: {title_hint}\n"
-        f"Author Hint: {author_hint}\n"
-        f"Source: {url}\n"
-        f"Date: {date_str}\n"
-        f"Text to analyze: {content[:100000]}" # Limit context window just in case
-    )
-    
-    response = client.models.generate_content(
-        model="gemini-3.1-flash-lite-preview",
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            system_instruction=system_instruction,
-            temperature=0.3
-        )
-    )
-    
-    # Strip markdown block formatting if Gemini includes it
-    output = response.text.strip()
-    if output.startswith("```yaml"):
-        output = output[7:].strip()
-    elif output.startswith("yaml\n---"):
-        output = output[5:].strip()
-    if output.startswith("```markdown"):
-        output = output[11:].strip()
-    if output.endswith("```"):
-        output = output[:-3].strip()
-        
-    return output
 
 async def extract_youtube_transcript(url: str) -> str:
     """Uses yt-dlp to extract the transcript from a YouTube video."""
@@ -248,78 +207,76 @@ async def extract_youtube_transcript(url: str) -> str:
         print(f"Backend [Transcript]: ERROR: {e}")
         raise ValueError(f"Failed to extract transcript: {str(e)}")
 
-async def generate_brain_node(title_hint: str, author_hint: str, url: str, content: str) -> str:
-    """Calls Gemini to generate the Obsidian-formatted ontology node."""
+async def generate_brain_node(title_hint: str, author_hint: str, url: str, content: str, atlas_themes: list[str]) -> OntologyExtraction:
+    """Calls Gemini to generate the Obsidian-formatted ontology node and a list of concepts."""
     print(f"Backend [Gemini]: Preparing prompt for content ({len(content)} chars)...")
-    system_instruction = """You are an expert knowledge architect building a 'Second Brain' in Obsidian. 
+    
+    themes_str = "\n".join([f"   - {t}" for t in atlas_themes]) if atlas_themes else "   - (No established themes yet, you can invent some if needed)"
+    
+    system_instruction = f"""You are an expert knowledge architect building a 'Second Brain' in Obsidian.
 Your goal is to analyze the provided text and extract a structured ontology based on a 'Map of Content' (MOC) strategy.
 
-You must format your response entirely in valid Markdown, starting with a YAML frontmatter block.
-
 CRITICAL RULES:
-1. THEMES vs TAGS:
-    - THEMES: These are high-level Map of Content (MOC) categories. You MUST identify exactly ONE 'theme_primary' and zero or more 'theme_related' entries.
-    - Use double brackets [[Topic]] ONLY for themes (e.g., theme_primary: "[[Artificial Intelligence]]").
-    - TAGS: These are granular, specific keywords, sub-topics, or entities (e.g., #gpt-4, #bci, #alpha-fold). Use '#' for tags in the YAML frontmatter and anywhere in the body.
-    - DO NOT create wikilinks [[Topic]] for granular tags. Use them ONLY for Themes.
+1. THEMES vs CONCEPTS:
+    - THEMES: These are high-level Map of Content (MOC) categories from the user's established Atlas. You MUST identify ONE 'theme_primary' and zero or more 'theme_related' entries.
+    - Use double brackets [[Topic]] ONLY for themes and concepts.
+    - established ATLAS THEMES:
+{themes_str}
 
-2. NO CODE BLOCKS: Do NOT wrap your entire response in markdown code blocks (e.g., ```yaml or ```markdown). Start your response directly with the '---' of the YAML frontmatter.
+2. CONCEPTS: Extract highly specific, non-trivial concepts, frameworks, and entities as wikilinks (e.g., [[Time Horizon]], [[Responsible Scaling Policy]], [[Collective Action Problem]]).
+   - DO NOT extract generic, everyday business, tech, or academic words as new concepts (e.g., avoid creating concept pages for [[External Review]], [[Internal Accountability]], [[Industry-wide Safety]]).
+   - EXCEPTION FOR THEMES: If a broad term perfectly matches one of your established ATLAS THEMES (like [[Innovation]] or [[Technology]]), you MUST categorize it under THEMES (theme_primary or theme_related), NOT as a new CONCEPT.
+   - Target roughly 5 to 14 highly impactful concepts per document. Quality and specificity are far more important than quantity. Do not over-saturate with generic ideas.
 
-3. CANONICAL THEME LIST: You MUST aggressively standardize to these specific names:
+3. DETAILED SUMMARIES: Write comprehensive, highly detailed summaries that preserve nuance and specific arguments, rather than over-simplified high-level overviews. Err on the side of providing more detail.
 
-   - [[Artificial Intelligence]]
-   - [[Defence & National Security]]
-   - [[Geopolitics]]
-   - [[Neuroscience]]
-   - [[Technology]]
-   - [[Ethics]]
-   - [[Leadership]]
-   - [[Semiconductors]]
-   - [[Innovation]]
+4. TAGS: These are granular metadata tags for states and types (e.g., #article, #book). DO NOT use tags for topics.
 
-3. AI SUB-THEMES (Related Themes):
-   - [[Artificial General Intelligence]]
-   - [[Large Language Model]]
-   - [[Agentic Artificial Intelligence]]
-   - [[Reinforcement Learning]]
-   - [[Artificial Narrow Intelligence]]
+5. EMOJI PREFIXES: You must prefix the title with an emoji based on the content type:
+   - article: 📄
+   - video: 🎞️
+   - paper: 🏛️
+   - book: 📖
 
-4. OUTPUT FORMAT TEMPLATE:
-```yaml
+6. OUTPUT FORMAT TEMPLATE for summary_markdown:
 ---
-title: "{Extract Title with Emoji Prefix}"
-author: "{Extract the Author}"
-url: "{URL}"
-date_processed: "{Date}"
-date_captured: "{Date}"
+title: "{{Emoji}} {{Extract Title}}"
+author: "{{Extract the Author}}"
+url: "{{URL}}"
+date_processed: "{{Date}}"
+date_captured: "{{Date}}"
 status: "🟡 to-review"
 theme_primary: "[[Theme Name]]"
 theme_related: ["[[Theme 1]]", "[[Theme 2]]"]
-type: "{article | video | paper | book}"
-cover: "{Emoji representation of type, e.g. 📄, 🧪, 📺}"
+type: "{{article | video | paper | book}}"
+cover: "{{Emoji}}"
 tags: [brain]
 ---
-# [[{Extract Title with Emoji Prefix}]]
+# [[{{Emoji}} {{Extract Title}}]]
 
 ## tl;dr
 ...
-{A concise 2-sentence summary of the core message or contribution.}
+{{A comprehensive and nuanced summary of the core message or contribution.}}
 
 ## Core Concepts
-* **#tag1**: {Brief context}
-* **#tag2**: {Brief context}
+* **[[Concept 1]]**: {{Brief context}}
+* **[[Concept 2]]**: {{Brief context}}
 
 ## Key Takeaways
-* {Point 1}
-* {Point 2}
+* {{Point 1}}
+* {{Point 2}}
 
 ## 🗺️ Context & MOC
-- **[[Theme Primary]]**: {One sentence on how this connects to the primary theme.}
-- **[[Theme Related 1]]**, **[[Theme Related 2]]**: {How it intersects with other themes.}
+- **[[Theme Primary]]**: {{One sentence on how this connects to the primary theme.}}
+- **[[Theme Related 1]]**, **[[Theme Related 2]]**: {{How it intersects with other themes.}}
 
 ## Emergent Themes & Connections
-{Analyze how this intersects with its themes and implications for the future.}
-```"""
+{{Analyze how this intersects with its themes and implications for the future.}}
+
+7. JSON SCHEMA POPULATION: You must return a JSON object.
+   - The `summary_markdown` field must contain the full markdown text.
+   - The `concepts` field MUST be an array of strings containing the exact wikilinks you extracted in the Core Concepts section (e.g., ["[[Time Horizon]]", "[[Responsible Scaling Policy]]"]). If you do not populate this array, the concept pages will not be created.
+"""
     
     date_str = datetime.now().strftime("%Y-%m-%d")
     
@@ -334,26 +291,80 @@ tags: [brain]
     try:
         print(f"Backend [Gemini]: Calling Gemini API (model: gemini-3.1-flash-lite-preview)...")
         # Use the async client (aio)
-        response = await client.aio.models.generate_content(
+        response = await call_gemini_with_retry(
             model="gemini-3.1-flash-lite-preview",
             contents=prompt,
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,
-                temperature=0.3
+                temperature=0.3,
+                response_mime_type="application/json",
+                response_schema=OntologyExtraction,
             )
         )
         print("Backend [Gemini]: API call successful.")
         
-        # Strip markdown block formatting if Gemini includes it
-        output = response.text.strip()
-        # Ensure it starts with ---
-        if not output.startswith("---"):
-            output = "---\n" + output
+        try:
+            data = response.text
+            parsed = OntologyExtraction.model_validate_json(data)
             
-        return output
+            # Ensure markdown starts with ---
+            if not parsed.summary_markdown.strip().startswith("---"):
+                parsed.summary_markdown = "---\n" + parsed.summary_markdown.strip()
+                
+            return parsed
+        except Exception as parse_e:
+            print(f"Backend [Gemini]: JSON Parsing Error: {parse_e}")
+            print(f"Raw Output: {response.text}")
+            raise
     except Exception as e:
         print(f"Backend [Gemini]: ERROR: {e}")
         raise
+
+async def update_concept_page(concept_name: str, new_summary: str, source_title: str):
+    """Updates an existing concept page or creates a new one."""
+    clean_concept = sanitize_filename(concept_name.replace('[[', '').replace(']]', ''))
+    concept_path = os.path.join(CONCEPTS_PATH, f"{clean_concept}.md")
+    
+    if os.path.exists(concept_path):
+        print(f"Backend [Concept]: Updating existing concept [[{clean_concept}]]")
+        with open(concept_path, "r", encoding="utf-8") as f:
+            existing_content = f.read()
+            
+        prompt = f"""Here is the existing concept page for '{clean_concept}':
+{existing_content}
+
+Here is a new source summary that references it:
+{new_summary}
+
+Please update the concept page to integrate any new information, note contradictions, and add a backlink to the new source ([[{source_title}]]). Return the updated Markdown.
+"""
+        try:
+            response = await call_gemini_with_retry(
+                model="gemini-3.1-flash-lite-preview",
+                contents=prompt,
+            )
+            updated_content = response.text.strip()
+            with open(concept_path, "w", encoding="utf-8") as f:
+                f.write(updated_content)
+        except Exception as e:
+            print(f"Backend [Concept]: Failed to update concept [[{clean_concept}]]: {e}")
+    else:
+        print(f"Backend [Concept]: Creating new concept [[{clean_concept}]]")
+        prompt = f"""Generate a baseline definition and concept page for '{clean_concept}' based on its usage in this new source summary:
+{new_summary}
+
+Please include a backlink to the source: [[{source_title}]]. Return the Markdown.
+"""
+        try:
+            response = await call_gemini_with_retry(
+                model="gemini-3.1-flash-lite-preview",
+                contents=prompt,
+            )
+            new_content = response.text.strip()
+            with open(concept_path, "w", encoding="utf-8") as f:
+                f.write(new_content)
+        except Exception as e:
+            print(f"Backend [Concept]: Failed to create concept [[{clean_concept}]]: {e}")
 
 def fetch_cover(url: str, is_youtube: bool) -> str:
     """Attempts to find a suitable cover image URL."""
@@ -373,9 +384,9 @@ def fetch_cover(url: str, is_youtube: bool) -> str:
             r = c.get(url)
             if r.status_code == 200:
                 # Look for og:image meta tag
-                match = re.search(r'<meta [^>]*property=["'']og:image["''][^>]*content=["''](.*?)["'']', r.text)
+                match = re.search(r'<meta [^>]*property=["\']og:image["\'][^>]*content=["\'](.*?)["\']', r.text)
                 if not match:
-                    match = re.search(r'<meta [^>]*content=["''](.*?)["''][^>]*property=["'']og:image["'']', r.text)
+                    match = re.search(r'<meta [^>]*content=["\'](.*?)["\'][^>]*property=["\']og:image["\']', r.text)
                 if match:
                     return match.group(1)
     except Exception as e:
@@ -435,17 +446,18 @@ async def process_capture(payload: CapturePayload):
                 
         # 2. Call Gemini
         print("Backend [Stage 2]: Generating Brain Node...")
-        brain_node_markdown = await generate_brain_node(
+        atlas_themes = get_atlas_themes()
+        brain_node_result = await generate_brain_node(
             title_hint=payload.title,
             author_hint=payload.authorHint,
             url=payload.url,
-            content=content_text
+            content=content_text,
+            atlas_themes=atlas_themes
         )
 
         # 3. Clean Gemini output (Strip markdown backticks if present)
-        brain_node_markdown = brain_node_markdown.strip()
+        brain_node_markdown = brain_node_result.summary_markdown.strip()
         # Remove ```yaml or ``` at start/end
-        import re
         brain_node_markdown = re.sub(r'^```[a-z]*\n', '', brain_node_markdown)
         brain_node_markdown = re.sub(r'\n```$', '', brain_node_markdown)
         brain_node_markdown = brain_node_markdown.strip()
@@ -524,6 +536,27 @@ async def process_capture(payload: CapturePayload):
         node_path = os.path.join(SUMMARIES_PATH, f"{safe_title}.md")
         with open(node_path, "w", encoding="utf-8") as f:
             f.write(brain_node_markdown)
+            
+        # 7. Process Concepts (Entity Update Loop)
+        if brain_node_result.concepts:
+            print(f"Backend [Stage 5]: Processing {len(brain_node_result.concepts)} concepts...")
+            for concept in brain_node_result.concepts:
+                await update_concept_page(concept, brain_node_markdown, safe_title)
+        else:
+            print(f"Backend [Stage 5]: WARNING - 0 concepts were extracted by Gemini.")
+            
+        # Log the ingestion
+        themes = []
+        primary_match = re.search(r'theme_primary:\s*"(.*?)"', brain_node_markdown)
+        if primary_match:
+            themes.append(primary_match.group(1))
+            
+        related_match = re.search(r'theme_related:\s*\[(.*?)\]', brain_node_markdown)
+        if related_match:
+            related_themes = [t.strip().strip('"').strip("'") for t in related_match.group(1).split(',')]
+            themes.extend([t for t in related_themes if t])
+            
+        log_action("Ingested", f'Source: "{safe_title}"', concepts=themes)
             
         print(f"<<< Backend: Request Complete: {safe_title}")
         return {"status": "success", "title": safe_title, "node_path": node_path}

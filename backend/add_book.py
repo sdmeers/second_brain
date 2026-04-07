@@ -181,11 +181,38 @@ def fetch_book_cover(title: str, author: str) -> str:
         print(f"Book Cover Fetch Error: {e}")
     return ""
 
-def add_book(title: str, author: str):
-    safe_title = re.sub(r'[\\/*?:"<>|]', "", title)
-    safe_title = re.sub(r'\s+', " ", safe_title).strip()[:100]
+async def add_book(title: str, author: str):
+    safe_title = sanitize_filename(title)
     
-    markdown_content = generate_book_node(title, author)
+    atlas_themes = get_atlas_themes()
+    brain_node_result = await generate_book_node(title, author, atlas_themes)
+    markdown_content = brain_node_result.summary_markdown.strip()
+    
+    # Standardize YAML (Fix brackets)
+    def clean_yaml_brackets(content: str) -> str:
+        def fix_list(match):
+            val = match.group(1)
+            items = re.findall(r'\[+([^\[\]]+)\]+', val)
+            clean_items = []
+            for item in items:
+                parts = [p.strip().strip('"').strip("'") for p in item.split(',')]
+                clean_items.extend([p for p in parts if p])
+            formatted = ", ".join([f'"[[{t}]]"' for t in clean_items])
+            return f'theme_related: [{formatted}]'
+
+        def fix_primary(match):
+            val = match.group(1)
+            items = re.findall(r'\[+([^\[\]]+)\]+', val)
+            if items:
+                t = items[0].strip().strip('"').strip("'")
+                return f'theme_primary: "[[{t}]]"'
+            return match.group(0)
+
+        content = re.sub(r'theme_related:\s*(.*)', fix_list, content)
+        content = re.sub(r'theme_primary:\s*(.*)', fix_primary, content)
+        return content
+        
+    markdown_content = clean_yaml_brackets(markdown_content)
     
     # Fetch real cover
     cover_url = fetch_book_cover(title, author)
@@ -196,9 +223,36 @@ def add_book(title: str, author: str):
         else:
             markdown_content = markdown_content.replace("type: \"book\"", f"cover: \"{cover_url}\"\ntype: \"book\"", 1)
 
+    # Re-extract the true safe title from the generated Markdown
+    match = re.search(r'^title:\s*"(.*?)"', markdown_content, re.MULTILINE)
+    if match:
+        extracted_title = match.group(1)
+        safe_title = sanitize_filename(extracted_title)
+
     node_path = os.path.join(SUMMARIES_PATH, f"{safe_title}.md")
     with open(node_path, "w", encoding="utf-8") as f:
         f.write(markdown_content)
+        
+    # Process Concepts (Entity Update Loop)
+    if brain_node_result.concepts:
+        print(f"\n[Stage 2]: Processing {len(brain_node_result.concepts)} concepts...")
+        for concept in brain_node_result.concepts:
+            await update_concept_page(concept, markdown_content, safe_title)
+    else:
+        print(f"\n[Stage 2]: WARNING - 0 concepts were extracted by Gemini.")
+        
+    # Log the ingestion
+    themes = []
+    primary_match = re.search(r'theme_primary:\s*"(.*?)"', markdown_content)
+    if primary_match:
+        themes.append(primary_match.group(1))
+        
+    related_match = re.search(r'theme_related:\s*\[(.*?)\]', markdown_content)
+    if related_match:
+        related_themes = [t.strip().strip('"').strip("'") for t in related_match.group(1).split(',')]
+        themes.extend([t for t in related_themes if t])
+        
+    log_action("Book Ingested", f'Added book: "{safe_title}"', concepts=themes)
         
     print(f"\nSuccess! Book summary saved to: {node_path}")
 
@@ -208,4 +262,4 @@ if __name__ == "__main__":
     parser.add_argument("--author", default="", help="Optional author to improve AI accuracy.")
     args = parser.parse_args()
     
-    add_book(args.title, args.author)
+    asyncio.run(add_book(args.title, args.author))

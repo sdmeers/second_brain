@@ -22,7 +22,9 @@ def log_action(action_type: str, details: str, concepts: list[str] = None):
     
     concepts_str = ""
     if concepts:
-        concepts_str = f" | Concepts: {', '.join(concepts)}"
+        # Clean up the concepts string to ensure it renders correctly on a single line
+        clean_concepts = [str(c).replace('\n', '').strip() for c in concepts]
+        concepts_str = f" | Concepts: {', '.join(clean_concepts)}"
         
     log_entry = f"## [{timestamp}] {action_type} | {details}{concepts_str}\n"
     

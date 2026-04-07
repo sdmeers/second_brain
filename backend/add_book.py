@@ -112,9 +112,7 @@ tags: [brain, book]
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,
                 temperature=0.3,
-                tools=[types.Tool(google_search=types.GoogleSearch())],
-                response_mime_type="application/json",
-                response_schema=OntologyExtraction,
+                tools=[types.Tool(google_search=types.GoogleSearch())]
             )
         )
     except Exception as e:
@@ -136,7 +134,24 @@ tags: [brain, book]
             
     try:
         data = response.text
-        parsed = OntologyExtraction.model_validate_json(data)
+        
+        # If the response isn't pure JSON (e.g. from attempt 1), try to extract it manually or mock the Pydantic object
+        if "summary_markdown" not in data:
+            import json
+            # Remove markdown code blocks if present
+            clean_output = re.sub(r'^```[a-z]*\n', '', data)
+            clean_output = re.sub(r'\n```$', '', clean_output)
+            clean_output = clean_output.strip()
+            
+            # If the model ignored the schema instruction entirely (e.g. due to search tools), we construct the object manually
+            if not clean_output.startswith("{"):
+                # Extract concepts from the markdown body
+                extracted_concepts = re.findall(r'\*\*\s*(\[\[.*?\]\])\s*\*\*', clean_output)
+                parsed = OntologyExtraction(summary_markdown=clean_output, concepts=extracted_concepts)
+            else:
+                 parsed = OntologyExtraction.model_validate_json(clean_output)
+        else:
+            parsed = OntologyExtraction.model_validate_json(data)
         
         if not parsed.summary_markdown.strip().startswith("---"):
             parsed.summary_markdown = "---\n" + parsed.summary_markdown.strip()
@@ -144,6 +159,7 @@ tags: [brain, book]
         return parsed
     except Exception as parse_e:
         print(f"Backend [Gemini]: JSON Parsing Error: {parse_e}")
+        print(f"Raw Output: {response.text}")
         raise
 
 def fetch_book_cover(title: str, author: str) -> str:

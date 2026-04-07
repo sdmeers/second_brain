@@ -1,6 +1,7 @@
 import os
 import argparse
 import re
+import asyncio
 from datetime import datetime
 from dotenv import load_dotenv
 from google import genai

@@ -6,6 +6,11 @@ from datetime import datetime
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
+from pydantic import BaseModel, Field
+
+# Local imports
+from main import call_gemini_with_retry, update_concept_page, get_atlas_themes, OntologyExtraction, sanitize_filename
+from logger import log_action
 
 load_dotenv()
 
@@ -21,38 +26,40 @@ os.makedirs(SUMMARIES_PATH, exist_ok=True)
 
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-def generate_book_node(title: str, author: str) -> str:
+async def generate_book_node(title: str, author: str, atlas_themes: list[str]) -> OntologyExtraction:
     print(f"Researching book: '{title}' by {author or 'Unknown Author'}...")
     
-    system_instruction = """You are an expert knowledge architect building a 'Second Brain' in Obsidian. 
+    themes_str = "\n".join([f"   - {t}" for t in atlas_themes]) if atlas_themes else "   - (No established themes yet, you can invent some if needed)"
+    
+    system_instruction = f"""You are an expert knowledge architect building a 'Second Brain' in Obsidian. 
 Your goal is to summarize a book based on your internal knowledge and research, extracting a structured ontology.
 
 You MUST use the provided Google Search tool to verify the book's core arguments, specific terminology, and key frameworks.
 Do not hallucinate facts; if you cannot find specific details, stick to the general themes you can verify.
 
-You must format your response entirely in valid Markdown, starting with a YAML frontmatter block.
 CRITICAL RULES:
-1. TOPICS AS WIKILINKS: Do NOT put topics, concepts, or themes in the 'tags' array. Tags are strictly for [brain, book].
-2. Use double brackets [[Topic]] ONLY for concepts.
-3. CANONICAL NAMING: You MUST aggressively standardize to these specific names to prevent graph duplication:
-   - Use [[Artificial Intelligence]] (Never AI, artificial-intelligence, or #ai)
-   - Use [[Artificial General Intelligence]] (Never AGI)
-   - Use [[Ethics]] (Never Ethical AI)
-   - Use [[Machine Learning]]
-   - Use [[Large Language Model]] (Never LLM)
-   - Use [[Geopolitics]]
-   - Use [[Cybersecurity]]
-4. ALWAYS use Title Case and Singular Nouns for wikilinks.
-5. In the YAML frontmatter, 'tags' should ONLY contain ['brain', 'book'].
+1. THEMES vs CONCEPTS:
+    - THEMES: These are high-level Map of Content (MOC) categories from the user's established Atlas. You MUST identify ONE 'theme_primary' and zero or more 'theme_related' entries.
+    - Use double brackets [[Topic]] ONLY for themes and concepts.
+    - established ATLAS THEMES:
+{themes_str}
 
-OUTPUT FORMAT TEMPLATE:
-```yaml
+2. CONCEPTS: Extract highly specific, non-trivial concepts, frameworks, and entities as wikilinks (e.g., [[Time Horizon]], [[Responsible Scaling Policy]], [[Collective Action Problem]]).
+   - DO NOT extract generic, everyday business, tech, or academic words as new concepts.
+   - EXCEPTION FOR THEMES: If a broad term perfectly matches one of your established ATLAS THEMES, you MUST categorize it under THEMES, NOT as a new CONCEPT.
+   - Target roughly 5 to 14 highly impactful concepts per book. Quality and specificity are far more important than quantity.
+
+3. DETAILED SUMMARIES: Write comprehensive, highly detailed summaries that preserve nuance and specific arguments. Err on the side of providing more detail.
+
+4. TAGS: These are granular metadata tags for states and types. DO NOT use tags for topics.
+
+5. OUTPUT FORMAT TEMPLATE for summary_markdown:
 ---
-title: "{Official Book Title}"
-author: "{Author}"
-url: "{Link to a major retailer or official page}"
-date_processed: "{Date}"
-date_captured: "{Date}"
+title: "📖 {{Official Book Title}}"
+author: "{{Author}}"
+url: "{{Link to a major retailer or official page}}"
+date_processed: "{{Date}}"
+date_captured: "{{Date}}"
 status: "🟡 to-review"
 theme_primary: "[[Theme Name]]"
 theme_related: ["[[Theme 1]]", "[[Theme 2]]"]
@@ -60,27 +67,31 @@ type: "book"
 cover: "📖"
 tags: [brain, book]
 ---
-# [[📖 {Extract Title with Emoji Prefix}]]
+# [[📖 {{Official Book Title}}]]
 
 ## tl;dr
 ...
-{A concise 2-sentence summary of the core message or contribution.}
+{{A comprehensive and nuanced summary of the core message or contribution.}}
 
 ## Core Concepts
-* **[[Concept 1]]**: {Definition/context}
-* **[[Concept 2]]**: {Definition/context}
+* **[[Concept 1]]**: {{Definition/context}}
+* **[[Concept 2]]**: {{Definition/context}}
 
 ## Key Takeaways
-* {Point 1}
-* {Point 2}
+* {{Point 1}}
+* {{Point 2}}
 
 ## 🗺️ Context & MOC
-- **[[Theme Primary]]**: {One sentence on how this connects to the primary theme.}
-- **[[Theme Related 1]]**, **[[Theme Related 2]]**: {How it intersects with other themes.}
+- **[[Theme Primary]]**: {{One sentence on how this connects to the primary theme.}}
+- **[[Theme Related 1]]**, **[[Theme Related 2]]**: {{How it intersects with other themes.}}
 
 ## Emergent Themes & Connections
-{Where does this fit into the broader landscape? What are the implications?}
-```"""
+{{Analyze how this intersects with its themes and implications for the future.}}
+
+6. JSON SCHEMA POPULATION: You must return a JSON object.
+   - The `summary_markdown` field must contain the full markdown text.
+   - The `concepts` field MUST be an array of strings containing the exact wikilinks you extracted in the Core Concepts section (e.g., ["[[Time Horizon]]", "[[Responsible Scaling Policy]]"]). If you do not populate this array, the concept pages will not be created.
+"""
     
     date_str = datetime.now().strftime("%Y-%m-%d")
     
@@ -94,69 +105,46 @@ tags: [brain, book]
     try:
         # Priority: Use gemini-2.5-flash with Google Search (has search quota)
         print("  [Attempt 1] Using gemini-2.5-flash with Search Tool...")
-        response = client.models.generate_content(
+        # Note: We do not use `call_gemini_with_retry` here because it uses a different client interface with Tools
+        response = await client.aio.models.generate_content(
             model="gemini-2.5-flash",
             contents=prompt,
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,
                 temperature=0.3,
-                tools=[types.Tool(google_search=types.GoogleSearch())]
+                tools=[types.Tool(google_search=types.GoogleSearch())],
+                response_mime_type="application/json",
+                response_schema=OntologyExtraction,
             )
         )
     except Exception as e:
-        if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-            print(f"  [FALLBACK] Search Quota Hit or Rate Limited. Retrying without search using gemini-3.1-flash-lite-preview...")
-            # Fallback: Use gemini-3.1-flash-lite-preview (high model quota, no search quota)
-            response = client.models.generate_content(
+        if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e) or "503" in str(e):
+            print(f"  [FALLBACK] Search Quota Hit or Rate Limited ({str(e)[:3]}). Retrying without search using gemini-3.1-flash-lite-preview...")
+            # Fallback: Use gemini-3.1-flash-lite-preview via the robust retry mechanism
+            response = await call_gemini_with_retry(
                 model="gemini-3.1-flash-lite-preview",
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     system_instruction=system_instruction,
-                    temperature=0.3
+                    temperature=0.3,
+                    response_mime_type="application/json",
+                    response_schema=OntologyExtraction,
                 )
             )
         else:
             raise e
-    
-    # Strip markdown block formatting if Gemini includes it
-    output = response.text.strip()
-    
-    # Remove markdown code blocks if present
-    output = re.sub(r'^```[a-z]*\n', '', output)
-    output = re.sub(r'\n```$', '', output)
-    output = output.strip()
-
-    # Standardize YAML (Fix brackets)
-    def clean_yaml_brackets(content: str) -> str:
-        """Surgically fixes theme_primary: [[Topic]] and theme_related: [[Topic1], [Topic2]] issues."""
-        def fix_list(match):
-            val = match.group(1)
-            items = re.findall(r'\[+([^\[\]]+)\]+', val)
-            clean_items = []
-            for item in items:
-                parts = [p.strip().strip('"').strip("'") for p in item.split(',')]
-                clean_items.extend([p for p in parts if p])
-            formatted = ", ".join([f'"[[{t}]]"' for t in clean_items])
-            return f'theme_related: [{formatted}]'
-
-        def fix_primary(match):
-            val = match.group(1)
-            items = re.findall(r'\[+([^\[\]]+)\]+', val)
-            if items:
-                t = items[0].strip().strip('"').strip("'")
-                return f'theme_primary: "[[{t}]]"'
-            return match.group(0)
-
-        content = re.sub(r'theme_related:\s*(.*)', fix_list, content)
-        content = re.sub(r'theme_primary:\s*(.*)', fix_primary, content)
-        return content
+            
+    try:
+        data = response.text
+        parsed = OntologyExtraction.model_validate_json(data)
         
-    output = clean_yaml_brackets(output)
-
-    if not output.startswith("---"):
-        output = "---\n" + output
-        
-    return output
+        if not parsed.summary_markdown.strip().startswith("---"):
+            parsed.summary_markdown = "---\n" + parsed.summary_markdown.strip()
+            
+        return parsed
+    except Exception as parse_e:
+        print(f"Backend [Gemini]: JSON Parsing Error: {parse_e}")
+        raise
 
 def fetch_book_cover(title: str, author: str) -> str:
     """Queries Google Books API for a cover image URL."""
@@ -169,8 +157,8 @@ def fetch_book_cover(title: str, author: str) -> str:
         url = "https://www.googleapis.com/books/v1/volumes"
         params = {"q": query, "maxResults": 1}
         
-        with httpx.Client(timeout=10.0) as client:
-            response = client.get(url, params=params)
+        with httpx.Client(timeout=10.0) as client_http:
+            response = client_http.get(url, params=params)
             if response.status_code == 200:
                 data = response.json()
                 if "items" in data:

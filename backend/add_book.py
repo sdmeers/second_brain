@@ -100,38 +100,61 @@ tags: [brain, book]
     )
     
     try:
-        # Priority: Use gemini-2.5-flash with Google Search (has search quota)
+        # Attempt 1: Use gemini-2.5-flash (legacy search)
         print("  [Attempt 1] Using gemini-2.5-flash with Search Tool...")
-        # Note: We do not use `call_gemini_with_retry` here because it uses a different client interface with Tools
-        response = await client.aio.models.generate_content(
+        # Reduced max_retries to 2 to fail faster and reach fallback during high demand (503)
+        response = await call_gemini_with_retry(
             model="gemini-2.5-flash",
             contents=prompt,
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,
                 temperature=0.3,
-                tools=[types.Tool(google_search=types.GoogleSearch())]
-            )
+                tools=[types.Tool(google_search=types.GoogleSearch())],
+                safety_settings=[
+                    types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="BLOCK_NONE"),
+                    types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="BLOCK_NONE"),
+                    types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="BLOCK_NONE"),
+                    types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="BLOCK_NONE"),
+                ]
+            ),
+            max_retries=5
         )
+        
+        if not response or not response.text or len(response.text.strip()) < 50:
+            raise ValueError(f"Empty or truncated response from 2.5-flash (Finish Reason: {getattr(response.candidates[0], 'finish_reason', 'Unknown')})")
+
     except Exception as e:
-        if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e) or "503" in str(e):
-            print(f"  [FALLBACK] Search Quota Hit or Rate Limited ({str(e)[:3]}). Retrying without search using gemini-3.1-flash-lite-preview...")
+        # Fallback if 2.5-flash is 503/429 or search tool is limited
+        if any(err in str(e).upper() for err in ["EMPTY", "429", "RESOURCE_EXHAUSTED", "503"]):
+            print(f"  [Attempt 2] Primary search failed or was empty ({str(e)[:30]}...). Trying gemini-3.1-flash-lite-preview for stability...")
             
-            fallback_instruction = system_instruction + """
-6. JSON SCHEMA POPULATION: You must return a JSON object.
-   - The `summary_markdown` field must contain the full markdown text.
-   - The `concepts` field MUST be an array of strings containing the exact wikilinks you extracted in the Core Concepts section (e.g., ["[[Time Horizon]]", "[[Responsible Scaling Policy]]"]). If you do not populate this array, the concept pages will not be created.
-"""
-            # Fallback: Use gemini-3.1-flash-lite-preview via the robust retry mechanism
-            response = await call_gemini_with_retry(
-                model="gemini-3.1-flash-lite-preview",
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    system_instruction=fallback_instruction,
-                    temperature=0.3,
-                    response_mime_type="application/json",
-                    response_schema=OntologyExtraction,
+            try:
+                # Use gemini-3.1-flash-lite-preview as a high-speed, more available model
+                # We try without search first as search often triggers 429 on free tier previews
+                response = await call_gemini_with_retry(
+                    model="gemini-3.1-flash-lite-preview",
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_instruction + "\n\n7. JSON SCHEMA POPULATION: Return a JSON object following the OntologyExtraction schema.",
+                        temperature=0.3,
+                        response_mime_type="application/json",
+                        response_schema=OntologyExtraction,
+                    ),
+                    max_retries=2
                 )
-            )
+                if not response or not response.text:
+                    raise ValueError("3.1-flash-lite also failed.")
+            except Exception as pro_e:
+                print(f"  [FALLBACK] 3.1-flash-lite also failed: {str(pro_e)[:50]}. Retrying one last time with gemini-2.0-flash...")
+                
+                response = await call_gemini_with_retry(
+                    model="gemini-2.0-flash",
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_instruction,
+                        temperature=0.3,
+                    )
+                )
         else:
             raise e
             

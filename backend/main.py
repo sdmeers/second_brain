@@ -116,9 +116,8 @@ def extract_pdf_text(url: str) -> tuple[str, bytes]:
     doc = fitz.open(stream=pdf_stream, filetype="pdf")
     
     text = ""
-    max_pages = min(20, len(doc)) # Extract up to 20 pages to save tokens
-    for i in range(max_pages):
-        text += doc[i].get_text()
+    for page in doc:
+        text += page.get_text()
         
     return text.strip(), pdf_bytes
 
@@ -227,7 +226,7 @@ CRITICAL RULES:
    - DO NOT extract generic, everyday business, tech, or academic words as new concepts (e.g., avoid creating concept pages for [[External Review]], [[Internal Accountability]], [[Industry-wide Safety]]).
    - EXCEPTION FOR THEMES: If a broad term perfectly matches one of your established ATLAS THEMES (like [[Innovation]] or [[Technology]]), you MUST categorize it under THEMES (theme_primary or theme_related), NOT as a new CONCEPT.
    - Target roughly 5 to 14 highly impactful concepts per document. Quality and specificity are far more important than quantity. Do not over-saturate with generic ideas.
-
+   - NEVER include the title of the document itself or other referenced documents (e.g. things starting with 🎞️, 🏛️, 📄, 📖) in the 'concepts' array. Those are source nodes, not concept nodes.
 3. DETAILED SUMMARIES: Write comprehensive, highly detailed summaries that preserve nuance and specific arguments, rather than over-simplified high-level overviews. Err on the side of providing more detail.
 
 4. TAGS: These are granular metadata tags for states and types (e.g., #article, #book). DO NOT use tags for topics.
@@ -540,9 +539,10 @@ async def process_capture(payload: CapturePayload):
             
         # 7. Process Concepts (Entity Update Loop)
         if brain_node_result.concepts:
-            print(f"Backend [Stage 5]: Processing {len(brain_node_result.concepts)} concepts...")
+            print(f"Backend [Stage 5]: Processing {len(brain_node_result.concepts)} concepts with throttling...")
             for concept in brain_node_result.concepts:
                 await update_concept_page(concept, brain_node_markdown, safe_title)
+                await asyncio.sleep(4)  # Stay under 15 RPM limit
         else:
             print(f"Backend [Stage 5]: WARNING - 0 concepts were extracted by Gemini.")
             

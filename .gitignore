@@ -25,6 +25,9 @@ backend/.janitor_state.json
 *plan.md
 gemini.md
 OBSIDIAN_GEMINI.md
+reindex_all.py
+backend/rebuild_vault.py
+backend/resume_rebuild.py
 
 # Personal data
 sources_all.txt

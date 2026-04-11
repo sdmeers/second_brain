@@ -19,5 +19,13 @@ emulator_data/
 # Environment variables
 .env
 
+# Local State & Personal Notes
+backend/.janitor_state.json
+*refactor*.md
+*plan.md
+gemini.md
+OBSIDIAN_GEMINI.md
+centaur_notes_icon.jpg
+
 # Personal data
 sources_all.txt

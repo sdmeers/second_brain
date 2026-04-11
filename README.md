@@ -1,6 +1,6 @@
 # 🧠 Centaur Brain
 
-![Centaur Brain Logo](centaur_brain_icon.jpg)
+<img src="centaur_brain_icon.jpg" width="120" alt="Centaur Brain Logo">
 
 Centaur Brain is an agentic "Second Brain" system designed to bridge the gap between high-velocity information consumption (web, YouTube, PDFs) and permanent, structured knowledge in **Obsidian**.
 

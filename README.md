@@ -4,7 +4,7 @@
 
 Centaur Brain is an agentic "Second Brain" system designed to bridge the gap between high-velocity information consumption (web, YouTube, PDFs) and permanent, structured knowledge in **Obsidian**.
 
-Inspired by Andrej Karpathy's vision of agentic workflows, it moves beyond simple "web clipping" to provide a multi-layered ontology extraction using the **Gemini 3.1 Flash Lite** model.
+Similar to Andrej Karpathy's vision of agentic workflows, it moves beyond simple "web clipping" to provide a multi-layered ontology extraction using the **Gemini 3.1 Flash Lite** model.
 
 ## 🖼️ Visual Showcase
 
@@ -34,7 +34,7 @@ The solution consists of three primary components:
 
 ## 🚀 Key Features
 
-*   **Full PDF Ingestion:** Unlike most tools, the backend processes every page of a document, ensuring deep analysis of long-form reports.
+*   **Full PDF Ingestion:** The backend processes every page of a document, ensuring deep analysis of long-form reports.
 *   **Agentic Concept Mapping:** For every source ingested, the system identifies 5-15 highly specific concepts and automatically updates their dedicated pages in your vault with backlinks and contextual snippets.
 *   **Auto-Healing Janitor:** A maintenance script (`janitor_clean.py`) that periodically scans your vault to:
     *   **Deduplicate & Merge:** Intelligently synthesizes overlapping concepts (e.g., "AI" vs "Artificial Intelligence") into single canonical pages while healing all links vault-wide.

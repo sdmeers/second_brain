@@ -1,0 +1,15 @@
+[Unit]
+Description=Centaur Brain Backend Service
+After=network.target
+
+[Service]
+Type=simple
+# EDIT THIS: Absolute path to your centaur_brain/backend directory
+WorkingDirectory=/home/sdmeers/OneDrive/Steve/Code/centaur_brain/backend
+# EDIT THIS: Absolute path to your uv binary (find with 'which uv')
+ExecStart=/home/sdmeers/.local/bin/uv run main.py
+Restart=always
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target

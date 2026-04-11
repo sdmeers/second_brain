@@ -1,6 +1,6 @@
 # 🧠 Centaur Brain
 
-<img src="centaur_brain_icon.jpg" width="120" alt="Centaur Brain Logo">
+<img src="centaur_brain_icon.jpg" width="140" align="right" style="margin-left: 20px; border-radius: 20px;" alt="Centaur Brain Logo">
 
 Centaur Brain is an agentic "Second Brain" system designed to bridge the gap between high-velocity information consumption (web, YouTube, PDFs) and permanent, structured knowledge in **Obsidian**.
 
@@ -65,8 +65,12 @@ uv run main.py
 ### 4. Background Service (Linux/Fedora)
 To run the backend automatically on login:
 ```bash
-# Copy the service template or create it at:
-# ~/.config/systemd/user/centaur-brain.service
+# 1. Edit centaur-brain.service to match your absolute paths (CWD & uv)
+# 2. Copy it to your user systemd directory:
+mkdir -p ~/.config/systemd/user/
+cp centaur-brain.service ~/.config/systemd/user/
+# 3. Enable and start the service
+systemctl --user daemon-reload
 systemctl --user enable centaur-brain.service
 systemctl --user start centaur-brain.service
 ```

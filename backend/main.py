@@ -105,6 +105,17 @@ def get_atlas_themes() -> list[str]:
         print(f"Error reading Atlas Themes: {e}")
         return []
 
+def get_existing_concepts() -> list[str]:
+    """Reads the 04 Concepts folder and returns a list of concepts as wikilinks."""
+    try:
+        if not os.path.exists(CONCEPTS_PATH):
+            return []
+        files = os.listdir(CONCEPTS_PATH)
+        return [f"[[{f[:-3]}]]" for f in files if f.endswith(".md")]
+    except Exception as e:
+        print(f"Error reading Existing Concepts: {e}")
+        return []
+
 def extract_pdf_text(url: str) -> tuple[str, bytes]:
     """Downloads PDF and extracts text."""
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -212,6 +223,9 @@ async def generate_brain_node(title_hint: str, author_hint: str, url: str, conte
     
     themes_str = "\n".join([f"   - {t}" for t in atlas_themes]) if atlas_themes else "   - (No established themes yet, you can invent some if needed)"
     
+    existing_concepts = get_existing_concepts()
+    concepts_str = ", ".join(existing_concepts) if existing_concepts else "(No established concepts yet)"
+    
     system_instruction = f"""You are an expert knowledge architect building a 'Second Brain' in Obsidian.
 Your goal is to analyze the provided text and extract a structured ontology based on a 'Map of Content' (MOC) strategy.
 
@@ -227,17 +241,26 @@ CRITICAL RULES:
    - EXCEPTION FOR THEMES: If a broad term perfectly matches one of your established ATLAS THEMES (like [[Innovation]] or [[Technology]]), you MUST categorize it under THEMES (theme_primary or theme_related), NOT as a new CONCEPT.
    - Target roughly 5 to 14 highly impactful concepts per document. Quality and specificity are far more important than quantity. Do not over-saturate with generic ideas.
    - NEVER include the title of the document itself or other referenced documents (e.g. things starting with 🎞️, 🏛️, 📄, 📖) in the 'concepts' array. Those are source nodes, not concept nodes.
-3. DETAILED SUMMARIES: Write comprehensive, highly detailed summaries that preserve nuance and specific arguments, rather than over-simplified high-level overviews. Err on the side of providing more detail.
 
-4. TAGS: These are granular metadata tags for states and types (e.g., #article, #book). DO NOT use tags for topics.
+3. FORMATTING & NAMING GUARDRAILS FOR CONCEPTS:
+   - Here is a list of existing concepts in the vault: {concepts_str}
+   - If a concept you identify is highly similar, synonymous, or an acronym of an existing concept, DO NOT create a new name. You MUST use the exact existing concept name from the list for your wikilinks.
+   - When generating truly new concept titles, adhere strictly to these rules:
+     a) Always use singular nouns (e.g., 'Agent', not 'Agents').
+     b) Always use the full term, omitting parenthetical acronyms in titles (e.g., 'Minimum Viable Product', never 'Minimum Viable Product (MVP)').
+     c) Remove hyphens from compound concepts unless grammatically strictly required (e.g., 'Hyperwar', never 'Hyper-war').
 
-5. EMOJI PREFIXES: You must prefix the title with an emoji based on the content type:
+4. DETAILED SUMMARIES: Write comprehensive, highly detailed summaries that preserve nuance and specific arguments, rather than over-simplified high-level overviews. Err on the side of providing more detail.
+
+5. TAGS: These are granular metadata tags for states and types (e.g., #article, #book). DO NOT use tags for topics.
+
+6. EMOJI PREFIXES: You must prefix the title with an emoji based on the content type:
    - article: 📄
    - video: 🎞️
    - paper: 🏛️
    - book: 📖
 
-6. OUTPUT FORMAT TEMPLATE for summary_markdown:
+7. OUTPUT FORMAT TEMPLATE for summary_markdown:
 ---
 title: "{{Emoji}} {{Extract Title}}"
 author: "{{Extract the Author}}"
@@ -272,7 +295,7 @@ tags: [brain]
 ## Emergent Themes & Connections
 {{Analyze how this intersects with its themes and implications for the future.}}
 
-7. JSON SCHEMA POPULATION: You must return a JSON object.
+8. JSON SCHEMA POPULATION: You must return a JSON object.
    - The `summary_markdown` field must contain the full markdown text.
    - The `concepts` field MUST be an array of strings containing the exact wikilinks you extracted in the Core Concepts section (e.g., ["[[Time Horizon]]", "[[Responsible Scaling Policy]]"]). If you do not populate this array, the concept pages will not be created.
 """

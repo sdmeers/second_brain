@@ -9,7 +9,7 @@ from google.genai import types
 from pydantic import BaseModel, Field
 
 # Local imports
-from main import call_gemini_with_retry, update_concept_page, get_atlas_themes, OntologyExtraction, sanitize_filename
+from main import call_gemini_with_retry, update_concept_page, get_atlas_themes, OntologyExtraction, sanitize_filename, get_existing_concepts
 from logger import log_action
 
 dotenv_path = os.path.join(os.path.dirname(__file__), ".env")
@@ -32,6 +32,9 @@ async def generate_book_node(title: str, author: str, atlas_themes: list[str]) -
     
     themes_str = "\n".join([f"   - {t}" for t in atlas_themes]) if atlas_themes else "   - (No established themes yet, you can invent some if needed)"
     
+    existing_concepts = get_existing_concepts()
+    concepts_str = ", ".join(existing_concepts) if existing_concepts else "(No established concepts yet)"
+    
     system_instruction = f"""You are an expert knowledge architect building a 'Second Brain' in Obsidian. 
 Your goal is to summarize a book based on your internal knowledge and research, extracting a structured ontology.
 
@@ -50,11 +53,19 @@ CRITICAL RULES:
    - EXCEPTION FOR THEMES: If a broad term perfectly matches one of your established ATLAS THEMES, you MUST categorize it under THEMES, NOT as a new CONCEPT.
    - Target roughly 5 to 14 highly impactful concepts per book. Quality and specificity are far more important than quantity.
 
-3. DETAILED SUMMARIES: Write comprehensive, highly detailed summaries that preserve nuance and specific arguments. Err on the side of providing more detail.
+3. FORMATTING & NAMING GUARDRAILS FOR CONCEPTS:
+   - Here is a list of existing concepts in the vault: {concepts_str}
+   - If a concept you identify is highly similar, synonymous, or an acronym of an existing concept, DO NOT create a new name. You MUST use the exact existing concept name from the list for your wikilinks.
+   - When generating truly new concept titles, adhere strictly to these rules:
+     a) Always use singular nouns (e.g., 'Agent', not 'Agents').
+     b) Always use the full term, omitting parenthetical acronyms in titles (e.g., 'Minimum Viable Product', never 'Minimum Viable Product (MVP)').
+     c) Remove hyphens from compound concepts unless grammatically strictly required (e.g., 'Hyperwar', never 'Hyper-war').
 
-4. TAGS: These are granular metadata tags for states and types. DO NOT use tags for topics.
+4. DETAILED SUMMARIES: Write comprehensive, highly detailed summaries that preserve nuance and specific arguments. Err on the side of providing more detail.
 
-5. OUTPUT FORMAT TEMPLATE for summary_markdown:
+5. TAGS: These are granular metadata tags for states and types. DO NOT use tags for topics.
+
+6. OUTPUT FORMAT TEMPLATE for summary_markdown:
 ---
 title: "📖 {{Official Book Title}}"
 author: "{{Author}}"

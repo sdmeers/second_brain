@@ -4,6 +4,20 @@ Centaur Brain is an agentic "Second Brain" system designed to bridge the gap bet
 
 Inspired by Andrej Karpathy's vision of agentic workflows, it moves beyond simple "web clipping" to provide a multi-layered ontology extraction using the **Gemini 3.1 Flash Lite** model.
 
+## 🖼️ Visual Showcase
+
+### 🗺️ Knowledge Graph
+The system automatically builds a dense, interconnected graph of high-value concepts.
+![Graph Overview](screenshots/centaur_brain_graph_example.png)
+
+### 🔍 Concept Synthesis
+Detailed, LLM-curated concept pages that synthesize insights from multiple sources while preserving nuance.
+![Concept Example](screenshots/centaur_brain_concept_example.png)
+
+### 📄 Source Summaries
+Richly formatted summaries with metadata, primary/related themes, and core takeaways.
+![Summary Example](screenshots/centaur_brain_summary_example.png)
+
 ## 🏗️ Architecture
 
 The solution consists of three primary components:
@@ -12,8 +26,8 @@ The solution consists of three primary components:
 2.  **FastAPI Backend:** A Python service that orchestrates the heavy lifting:
     *   Full-text extraction from multi-page PDFs.
     *   Strategic summarization using the Gemini API.
-    *   Agentic concept extraction (automatically creating/updating concept nodes in your vault).
-    *   API Throttling to respect free-tier limits.
+    *   **Proactive Deduplication:** Uses RAG (Retrieval-Augmented Generation) by injecting your existing concept dictionary into the prompt to prevent creating redundant synonyms during ingestion.
+    *   API Throttling & Quota Management to respect free-tier limits.
 3.  **Obsidian Vault:** The destination for all captured knowledge, structured into `Summaries`, `Atlas` (themes), and `Concepts`.
 
 ## 🚀 Key Features
@@ -21,9 +35,9 @@ The solution consists of three primary components:
 *   **Full PDF Ingestion:** Unlike most tools, the backend processes every page of a document, ensuring deep analysis of long-form reports.
 *   **Agentic Concept Mapping:** For every source ingested, the system identifies 5-15 highly specific concepts and automatically updates their dedicated pages in your vault with backlinks and contextual snippets.
 *   **Auto-Healing Janitor:** A maintenance script (`janitor_clean.py`) that periodically scans your vault to:
-    *   Detect and "heal" broken wikilinks.
-    *   Refactor large, disorganized concept pages.
-    *   Identify orphaned concepts for manual cleanup.
+    *   **Deduplicate & Merge:** Intelligently synthesizes overlapping concepts (e.g., "AI" vs "Artificial Intelligence") into single canonical pages while healing all links vault-wide.
+    *   **Link Healing:** Automatically updates wikilinks and detects "orphaned" mentions to generate new concept pages.
+    *   **Hash-based State Tracking:** Prevents redundant refactoring and "semantic smoothing" by only re-processing files that have actually changed since the last pass.
 *   **Background Automation:** Includes a systemd user service for Linux (Fedora) users to keep the intelligence layer running persistently.
 
 ## 🛠️ Installation
@@ -60,6 +74,7 @@ systemctl --user start centaur-brain.service
 Run the Janitor pass to keep your graph clean and your concepts synthesized:
 ```bash
 cd backend
+# Runs deduplication, link healing, and refactoring with quota safety
 uv run janitor_clean.py
 ```
 

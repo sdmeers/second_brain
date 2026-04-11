@@ -1,5 +1,7 @@
 # 🧠 Centaur Brain
 
+![Centaur Brain Logo](centaur_brain_icon.jpg)
+
 Centaur Brain is an agentic "Second Brain" system designed to bridge the gap between high-velocity information consumption (web, YouTube, PDFs) and permanent, structured knowledge in **Obsidian**.
 
 Inspired by Andrej Karpathy's vision of agentic workflows, it moves beyond simple "web clipping" to provide a multi-layered ontology extraction using the **Gemini 3.1 Flash Lite** model.

@@ -36,7 +36,7 @@ The solution consists of three primary components:
 
 *   **Full PDF Ingestion:** The backend processes every page of a document, ensuring deep analysis of long-form reports.
 *   **Agentic Concept Mapping:** For every source ingested, the system identifies 5-15 highly specific concepts and automatically updates their dedicated pages in your vault with backlinks and contextual snippets.
-*   **Auto-Healing Janitor:** A maintenance script (`janitor_clean.py`) that periodically scans your vault to:
+*   **Auto-Healing Brain Cleaner:** A maintenance script (`brain_cleaner.py`) that periodically scans your vault to:
     *   **Deduplicate & Merge:** Intelligently synthesizes overlapping concepts (e.g., "AI" vs "Artificial Intelligence") into single canonical pages while healing all links vault-wide.
     *   **Link Healing:** Automatically updates wikilinks and detects "orphaned" mentions to generate new concept pages.
     *   **Hash-based State Tracking:** Prevents redundant refactoring and "semantic smoothing" by only re-processing files that have actually changed since the last pass.
@@ -77,11 +77,11 @@ systemctl --user start centaur-brain.service
 
 ## 🧹 Maintenance
 
-Run the Janitor pass to keep your graph clean and your concepts synthesized:
+Run the Brain Cleaner pass to keep your graph clean and your concepts synthesized:
 ```bash
 cd backend
 # Runs deduplication, link healing, and refactoring with quota safety
-uv run janitor_clean.py
+uv run brain_cleaner.py
 ```
 
 ## 🛡️ Privacy & Security

@@ -75,14 +75,22 @@ systemctl --user enable centaur-brain.service
 systemctl --user start centaur-brain.service
 ```
 
-## 🧹 Maintenance
+## 🧹 Maintenance & Utilities
 
-Run the Brain Cleaner pass to keep your graph clean and your concepts synthesized:
+### Brain Cleaner
+Keep your graph clean and your concepts synthesized:
 ```bash
 cd backend
 # Runs deduplication, link healing, and refactoring with quota safety
 uv run brain_cleaner.py
 ```
+
+### Other Utilities
+These scripts are available in the `backend/` directory for specific tasks:
+*   **`add_book.py`**: Interactively add book metadata and a summary to your vault.
+*   **`rebuild_vault.py`**: Triggers a full reconstruction of your vault using the `sources_all.txt` manifest.
+*   **`resume_rebuild.py`**: Resumes a vault rebuild if it was interrupted (e.g., by API rate limits).
+*   **`reindex_covers.py`**: Scans all source materials and attempts to fetch or update their cover images.
 
 ## 🛡️ Privacy & Security
 

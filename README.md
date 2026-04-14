@@ -88,8 +88,6 @@ uv run brain_cleaner.py
 ### Other Utilities
 These scripts are available in the `backend/` directory for specific tasks:
 *   **`add_book.py`**: Interactively add book metadata and a summary to your vault.
-*   **`rebuild_vault.py`**: Triggers a full reconstruction of your vault using the `sources_all.txt` manifest.
-*   **`resume_rebuild.py`**: Resumes a vault rebuild if it was interrupted (e.g., by API rate limits).
 *   **`reindex_covers.py`**: Scans all source materials and attempts to fetch or update their cover images.
 
 ## 🛡️ Privacy & Security

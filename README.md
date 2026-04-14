@@ -96,4 +96,5 @@ These scripts are available in the `backend/` directory for specific tasks:
 *   `.env` files and local source lists (`sources_all.txt`) are ignored by Git to prevent credential leakage.
 
 ## 📜 License
-MIT
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

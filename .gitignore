@@ -20,7 +20,7 @@ emulator_data/
 .env
 
 # Local State & Personal Notes
-backend/.janitor_state.json
+backend/.brain_cleaner_state.json
 *refactor*.md
 *plan.md
 gemini.md

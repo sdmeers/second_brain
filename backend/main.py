@@ -2,6 +2,7 @@ import os
 import io
 import re
 import json
+import shutil
 import httpx
 import yt_dlp
 import fitz  # PyMuPDF
@@ -35,10 +36,14 @@ SUMMARIES_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "02 Summaries")
 SOURCES_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "01 Sources")
 ATLAS_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "03 Atlas")
 CONCEPTS_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "04 Concepts")
+INBOX_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "00 Inbox")
+INBOX_FAILED_PATH = os.path.join(INBOX_PATH, "Failed")
 os.makedirs(SUMMARIES_PATH, exist_ok=True)
 os.makedirs(SOURCES_PATH, exist_ok=True)
 os.makedirs(ATLAS_PATH, exist_ok=True)
 os.makedirs(CONCEPTS_PATH, exist_ok=True)
+os.makedirs(INBOX_PATH, exist_ok=True)
+os.makedirs(INBOX_FAILED_PATH, exist_ok=True)
 
 import asyncio
 
@@ -459,28 +464,32 @@ def extract_web_text(url: str) -> str:
     
     return text.strip()
 
-@app.post("/process")
-async def process_capture(payload: CapturePayload):
+async def process_capture_core(
+    url: str,
+    title: str = "Untitled Capture",
+    author_hint: str = "",
+    markdown_text: str = ""
+) -> dict:
     try:
-        print(f"\n>>> Backend: Processing Request: {payload.title}")
+        print(f"\n>>> Backend: Processing Request: {title}")
         
-        content_text = payload.markdownText
-        clean_url = payload.url.lower().split('?')[0]
+        content_text = markdown_text
+        clean_url = url.lower().split('?')[0]
         is_pdf = clean_url.endswith('.pdf') or '/pdf/' in clean_url
-        is_youtube = "youtube.com/watch" in payload.url or "youtu.be/" in payload.url
+        is_youtube = "youtube.com/watch" in url or "youtu.be/" in url
         
         pdf_bytes = None
         
         # 1. Handle PDF vs Text extraction vs YouTube Fallback
         if is_pdf:
             print("Backend [Stage 1]: Processing as PDF...")
-            content_text, pdf_bytes = extract_pdf_text(payload.url)
+            content_text, pdf_bytes = extract_pdf_text(url)
         elif is_youtube and not content_text:
             print("Backend [Stage 1]: Processing as YouTube (via backend fallback)...")
-            content_text = await extract_youtube_transcript(payload.url)
+            content_text = await extract_youtube_transcript(url)
         elif not content_text:
-            print(f"Backend [Stage 1]: Scraping Web Content from {payload.url}...")
-            content_text = extract_web_text(payload.url)
+            print(f"Backend [Stage 1]: Scraping Web Content from {url}...")
+            content_text = extract_web_text(url)
         else:
             print(f"Backend [Stage 1]: Processing as Text ({len(content_text) if content_text else 0} chars)...")
                 
@@ -488,9 +497,9 @@ async def process_capture(payload: CapturePayload):
         print("Backend [Stage 2]: Generating Brain Node...")
         atlas_themes = get_atlas_themes()
         brain_node_result = await generate_brain_node(
-            title_hint=payload.title,
-            author_hint=payload.authorHint,
-            url=payload.url,
+            title_hint=title,
+            author_hint=author_hint,
+            url=url,
             content=content_text,
             atlas_themes=atlas_themes
         )
@@ -532,7 +541,7 @@ async def process_capture(payload: CapturePayload):
         # 5. Fetch Cover Image
         print("Backend [Stage 3]: Fetching Cover Image...")
 
-        cover_url = fetch_cover(payload.url, is_youtube)
+        cover_url = fetch_cover(url, is_youtube)
         if cover_url:
             print(f"Backend [Stage 3]: Found cover: {cover_url}")
             # Inject cover into YAML frontmatter if gemini hasn't provided a better one
@@ -543,7 +552,7 @@ async def process_capture(payload: CapturePayload):
         
         # 4. Parse true title
         print("Backend [Stage 4]: Finalizing and Saving...")
-        real_title = payload.title
+        real_title = title
         match = re.search(r'^title:\s*"(.*?)"', brain_node_markdown, re.MULTILINE)
         if match:
             real_title = match.group(1)
@@ -567,7 +576,7 @@ async def process_capture(payload: CapturePayload):
             source_link_name = f"{safe_title}_raw"
             source_path = os.path.join(SOURCES_PATH, source_filename)
             with open(source_path, "w", encoding="utf-8") as f:
-                f.write(f"Source: {payload.url}\n\n{content_text}")
+                f.write(f"Source: {url}\n\n{content_text}")
                 
         # 6. Save Brain Node
         source_injection = f"\n\n**Source Material:** [[{source_link_name}]]\n\n## tl;dr"
@@ -603,11 +612,112 @@ async def process_capture(payload: CapturePayload):
         return {"status": "success", "title": safe_title, "node_path": node_path}
         
     except httpx.HTTPStatusError as e:
-        print(f"HTTP Error: {e}")
-        raise HTTPException(status_code=400, detail="Failed to download source URL")
+        print(f"HTTP Error during capture: {e}")
+        raise RuntimeError("Failed to download source URL")
     except Exception as e:
-        print(f"Internal Server Error: {e}")
+        print(f"Error in core capture processing: {e}")
+        raise e
+
+@app.post("/process")
+async def process_capture(payload: CapturePayload):
+    try:
+        result = await process_capture_core(
+            url=payload.url,
+            title=payload.title,
+            author_hint=payload.authorHint,
+            markdown_text=payload.markdownText
+        )
+        return result
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+async def scan_and_process_inbox():
+    """Scans INBOX_PATH for any .md files, parses the first URL,
+    processes it, and handles cleanup or failure moves."""
+    if not os.path.exists(INBOX_PATH):
+        return
+        
+    # Get all markdown files in the inbox folder (non-recursively, skipping directories)
+    files = [f for f in os.listdir(INBOX_PATH) if f.lower().endswith(".md") and os.path.isfile(os.path.join(INBOX_PATH, f))]
+    
+    if not files:
+        return
+        
+    print(f"Backend [Watcher]: Found {len(files)} potential captures in inbox.")
+    
+    for filename in files:
+        file_path = os.path.join(INBOX_PATH, filename)
+        print(f"Backend [Watcher]: Processing file: {filename}")
+        
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                content = f.read()
+                
+            # 1. Parse URL using regex
+            url_match = re.search(r'(https?://[^\s)\]\n]+)', content)
+            if not url_match:
+                print(f"Backend [Watcher]: No URL found in {filename}. Moving to Failed/...")
+                failed_dest = os.path.join(INBOX_FAILED_PATH, f"[No URL] - {filename}")
+                shutil.move(file_path, failed_dest)
+                continue
+                
+            url = url_match.group(1)
+            
+            # 2. Extract title hint from filename (strip "Capture - " prefixes and .md extension)
+            title_hint, _ = os.path.splitext(filename)
+            title_hint = re.sub(r'^(Capture|capture)\s*-\s*', '', title_hint).strip()
+            if not title_hint or title_hint.lower() == "capture" or title_hint.lower() == "untitled":
+                title_hint = "Untitled Mobile Capture"
+                
+            # 3. Extract remaining body text as markdown_text (if any)
+            # Remove the URL line from content to avoid processing it as body text
+            markdown_text = content.replace(url, "").strip()
+            
+            print(f"Backend [Watcher]: Triggering ingestion for URL: {url} (Title Hint: {title_hint})")
+            
+            # 4. Process capture natively using our extracted core logic!
+            await process_capture_core(
+                url=url,
+                title=title_hint,
+                markdown_text=markdown_text
+            )
+            
+            # 5. On success, delete the processed inbox note
+            print(f"Backend [Watcher]: Successfully processed {filename}. Deleting from inbox...")
+            os.remove(file_path)
+            
+        except Exception as e:
+            print(f"Backend [Watcher]: Failed to process file {filename}: {e}")
+            try:
+                # To prevent infinite looping on rate limits or API issues, move file to Failed
+                failed_name = f"[Failed] - {filename}"
+                failed_dest = os.path.join(INBOX_FAILED_PATH, failed_name)
+                # Overwrite if already exists in Failed
+                if os.path.exists(failed_dest):
+                    os.remove(failed_dest)
+                shutil.move(file_path, failed_dest)
+                print(f"Backend [Watcher]: Moved failed capture to {failed_dest}")
+            except Exception as move_err:
+                print(f"Backend [Watcher]: CRITICAL - Could not move failed file: {move_err}")
+
+async def watch_inbox_loop():
+    """Background polling loop that scans the inbox directory every 15 seconds."""
+    print("Backend [Watcher]: Starting 00 Inbox watcher loop...")
+    while True:
+        try:
+            await scan_and_process_inbox()
+        except Exception as e:
+            print(f"Backend [Watcher]: Error in watch loop iteration: {e}")
+        # Wait 15 seconds before scanning again
+        await asyncio.sleep(15)
+
+@app.on_event("startup")
+async def startup_event():
+    """Starts the background inbox watcher loop when the FastAPI server initializes."""
+    print("Backend [Startup]: Registering background watch_inbox_loop task.")
+    asyncio.create_task(watch_inbox_loop())
 
 if __name__ == "__main__":
     import uvicorn

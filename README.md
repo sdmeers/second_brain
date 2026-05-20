@@ -36,7 +36,7 @@ The solution consists of three primary components:
 
 *   **Full PDF Ingestion:** The backend processes every page of a document, ensuring deep analysis of long-form reports.
 *   **Agentic Concept Mapping:** For every source ingested, the system identifies 5-15 highly specific concepts and automatically updates their dedicated pages in your vault with backlinks and contextual snippets.
-*   **Mobile Ingestion Queue (Offline-Friendly):** Background watcher polls the `00 Inbox/` directory in your Obsidian vault. Using tools like Obsidian's *Remotely Save* plugin, you can save markdown files with URLs from your mobile browser or note-taker, and the backend will asynchronously ingest them on your laptop, scrape the targets, and link concepts without any manual input.
+*   **Mobile Ingestion Queue (Offline-Friendly):** Background watcher polls the `00 System/Inbox/` directory in your Obsidian vault. Using tools like Obsidian's *Remotely Save* plugin, you can save markdown files with URLs from your mobile browser or note-taker, and the backend will asynchronously ingest them on your laptop, scrape the targets, and link concepts without any manual input.
 *   **Auto-Healing Brain Cleaner:** A maintenance script (`brain_cleaner.py`) that periodically scans your vault to:
     *   **Deduplicate & Merge:** Intelligently synthesizes overlapping concepts (e.g., "AI" vs "Artificial Intelligence") into single canonical pages while healing all links vault-wide.
     *   **Link Healing:** Automatically updates wikilinks and detects "orphaned" mentions to generate new concept pages.
@@ -48,11 +48,11 @@ The solution consists of three primary components:
 You can capture content on your mobile phone and sync it back to your vault using standard community plugins (e.g., **Remotely Save**).
 
 ### How it Works:
-1. When you share a URL on your phone (e.g., via Obsidian Mobile or by creating a note directly), create a new Markdown note in the `00 Inbox/` directory of your vault.
+1. When you share a URL on your phone (e.g., via Obsidian Mobile or by creating a note directly), create a new Markdown note in the `00 System/Inbox/` directory of your vault.
 2. In the note content, simply include the URL (e.g., `https://example.com/some-article`). You can also include additional text or notes in the file, and name the file descriptively (e.g., `Capture - Super Interesting Article.md`).
-3. The backend scans `00 Inbox/` every 15 seconds:
+3. The backend scans `00 System/Inbox/` every 15 seconds:
    - **Success:** Extracts the URL, scrapes and processes the content (including YouTube transcripts, PDFs, or standard pages), builds a structured summary in `02 Summaries/`, synthesizes concepts in `04 Concepts/`, and deletes the inbox file automatically.
-   - **Failure:** If ingestion fails (e.g., network error, DNS resolution failure), the file is moved to `00 Inbox/Failed/[Failed] - Original Name.md` with an error prefix to prevent infinite processing loops.
+   - **Failure:** If ingestion fails (e.g., network error, DNS resolution failure), the file is moved to `00 System/Inbox/Failed/[Failed] - Original Name.md` with an error prefix to prevent infinite processing loops.
 
 ## 🛠️ Installation
 

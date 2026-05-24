@@ -36,23 +36,22 @@ The solution consists of three primary components:
 
 *   **Full PDF Ingestion:** The backend processes every page of a document, ensuring deep analysis of long-form reports.
 *   **Agentic Concept Mapping:** For every source ingested, the system identifies 5-15 highly specific concepts and automatically updates their dedicated pages in your vault with backlinks and contextual snippets.
-*   **Mobile Ingestion Queue (Offline-Friendly):** Background watcher polls the `00 System/Inbox/` directory in your Obsidian vault. Using tools like Obsidian's *Remotely Save* plugin, you can save markdown files with URLs from your mobile browser or note-taker, and the backend will asynchronously ingest them on your laptop, scrape the targets, and link concepts without any manual input.
+*   **Mobile Ingestion Queue (Offline-Friendly):** Background watcher polls the `00 System/Import/Inbox.md` file in your Obsidian vault. Using tools like Obsidian's *Remotely Save* plugin, you can append URLs and notes to this single file from your mobile browser or note-taker, and the backend will asynchronously ingest them on your laptop, scrape the targets, link concepts, and log them under `Completed.md` or `Failed.md` automatically.
 *   **Auto-Healing Brain Cleaner:** A maintenance script (`brain_cleaner.py`) that periodically scans your vault to:
     *   **Deduplicate & Merge:** Intelligently synthesizes overlapping concepts (e.g., "AI" vs "Artificial Intelligence") into single canonical pages while healing all links vault-wide.
     *   **Link Healing:** Automatically updates wikilinks and detects "orphaned" mentions to generate new concept pages.
     *   **Hash-based State Tracking:** Prevents redundant refactoring and "semantic smoothing" by only re-processing files that have actually changed since the last pass.
 *   **Background Automation:** Includes a systemd user service for Linux (Fedora) users to keep the intelligence layer running persistently.
 
-## 📱 Mobile Capture (Offline-Friendly Queue)
+## 📱 Mobile Capture (Consolidated Import Queue)
 
 You can capture content on your mobile phone and sync it back to your vault using standard community plugins (e.g., **Remotely Save**).
 
 ### How it Works:
-1. When you share a URL on your phone (e.g., via Obsidian Mobile or by creating a note directly), create a new Markdown note in the `00 System/Inbox/` directory of your vault.
-2. In the note content, simply include the URL (e.g., `https://example.com/some-article`). You can also include additional text or notes in the file, and name the file descriptively (e.g., `Capture - Super Interesting Article.md`).
-3. The backend scans `00 System/Inbox/` every 15 seconds:
-   - **Success:** Extracts the URL, scrapes and processes the content (including YouTube transcripts, PDFs, or standard pages), builds a structured summary in `02 Summaries/`, synthesizes concepts in `04 Concepts/`, and deletes the inbox file automatically.
-   - **Failure:** If ingestion fails (e.g., network error, DNS resolution failure), the file is moved to `00 System/Inbox/Failed/[Failed] - Original Name.md` with an error prefix to prevent infinite processing loops.
+1. Append any URL you want to capture to the `00 System/Import/Inbox.md` file in your vault. You can write your own notes or comments directly on the lines under the URL as well.
+2. The backend scans the file every 15 seconds:
+   - **Success:** Extracts the URL and notes, scrapes and processes the content (including YouTube transcripts, PDFs, or standard pages), builds a structured summary in `02 Summaries/`, synthesizes concepts in `04 Concepts/`, removes the URL block from `Inbox.md`, and appends a confirmation with a wikilink (e.g., `- [[Emoji Title]] - URL`) to `Completed.md`.
+   - **Failure:** If ingestion fails (e.g., network error), the URL and your notes are removed from `Inbox.md` and safely appended to `Failed.md` with failure details so your inputs are never lost.
 
 ## 🛠️ Installation
 

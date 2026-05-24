@@ -38,12 +38,30 @@ ATLAS_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "03 Atlas")
 CONCEPTS_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "04 Concepts")
 INBOX_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "00 System", "Inbox")
 INBOX_FAILED_PATH = os.path.join(INBOX_PATH, "Failed")
+
+# New Import System Paths
+IMPORT_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "00 System", "Import")
+INBOX_MD_FILE = os.path.join(IMPORT_PATH, "Inbox.md")
+COMPLETED_MD_FILE = os.path.join(IMPORT_PATH, "Completed.md")
+FAILED_MD_FILE = os.path.join(IMPORT_PATH, "Failed.md")
+
 os.makedirs(SUMMARIES_PATH, exist_ok=True)
 os.makedirs(SOURCES_PATH, exist_ok=True)
 os.makedirs(ATLAS_PATH, exist_ok=True)
 os.makedirs(CONCEPTS_PATH, exist_ok=True)
 os.makedirs(INBOX_PATH, exist_ok=True)
 os.makedirs(INBOX_FAILED_PATH, exist_ok=True)
+os.makedirs(IMPORT_PATH, exist_ok=True)
+
+# Initialize import files if they do not exist
+for filepath in [INBOX_MD_FILE, COMPLETED_MD_FILE, FAILED_MD_FILE]:
+    if not os.path.exists(filepath):
+        try:
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write("")
+        except Exception as e:
+            print(f"Backend [Startup]: Error creating initialization file {filepath}: {e}")
+
 
 import asyncio
 
@@ -633,6 +651,89 @@ async def process_capture(payload: CapturePayload):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+async def scan_and_process_import():
+    """Scans the consolidated Import/Inbox.md for any URLs,
+    processes them one by one, and updates Inbox.md, Completed.md, and Failed.md."""
+    if not os.path.exists(INBOX_MD_FILE):
+        return
+
+    while True:
+        try:
+            with open(INBOX_MD_FILE, "r", encoding="utf-8") as f:
+                content = f.read()
+        except Exception as e:
+            print(f"Backend [Watcher]: Error reading {INBOX_MD_FILE}: {e}")
+            break
+
+        # Find all URLs in Inbox.md
+        matches = list(re.finditer(r'(https?://[^\s)\]\n]+)', content))
+        if not matches:
+            break
+
+        # Process the first URL match
+        m = matches[0]
+        url = m.group(1)
+        
+        # Determine the boundaries of this URL's block (including notes)
+        block_end = matches[1].start() if len(matches) > 1 else len(content)
+        notes = content[m.end():block_end].strip()
+        
+        # Prepare title hint and trigger processing
+        title_hint = "Untitled Mobile Import"
+        print(f"Backend [Watcher]: Processing URL from Import Inbox: {url}")
+        
+        success = False
+        error_msg = ""
+        result = None
+        
+        try:
+            result = await process_capture_core(
+                url=url,
+                title=title_hint,
+                markdown_text=notes
+            )
+            success = True
+        except Exception as e:
+            error_msg = str(e)
+            print(f"Backend [Watcher]: Failed to process URL {url}: {e}")
+            
+        # Update Inbox.md immediately to remove the processed URL block
+        new_content = content[:m.start()] + content[block_end:]
+        
+        try:
+            with open(INBOX_MD_FILE, "w", encoding="utf-8") as f:
+                f.write(new_content)
+        except Exception as e:
+            print(f"Backend [Watcher]: CRITICAL - Could not write back to {INBOX_MD_FILE}: {e}")
+            # Break to avoid infinite loops if disk is full / read-only
+            break
+            
+        # Append to Completed.md or Failed.md
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        if success:
+            safe_title = result.get("title", "Untitled")
+            completed_entry = f"- [[{safe_title}]] - {url} (Processed on {timestamp})\n"
+            try:
+                with open(COMPLETED_MD_FILE, "a", encoding="utf-8") as f:
+                    f.write(completed_entry)
+                print(f"Backend [Watcher]: Successfully processed {url} -> Added to {COMPLETED_MD_FILE}")
+            except Exception as e:
+                print(f"Backend [Watcher]: Error writing to {COMPLETED_MD_FILE}: {e}")
+        else:
+            failed_entry = f"- {url} - Failed on {timestamp}: {error_msg}\n"
+            if notes:
+                indented_notes = "\n".join([f"  {line}" for line in notes.splitlines()])
+                failed_entry += f"  Notes:\n{indented_notes}\n"
+            try:
+                with open(FAILED_MD_FILE, "a", encoding="utf-8") as f:
+                    f.write(failed_entry)
+                print(f"Backend [Watcher]: Failed to process {url} -> Added to {FAILED_MD_FILE}")
+            except Exception as e:
+                print(f"Backend [Watcher]: Error writing to {FAILED_MD_FILE}: {e}")
+                
+        # Add a small delay between multiple items in the same batch
+        await asyncio.sleep(1)
+
 async def scan_and_process_inbox():
     """Scans INBOX_PATH for any .md files, parses the first URL,
     processes it, and handles cleanup or failure moves."""
@@ -703,10 +804,11 @@ async def scan_and_process_inbox():
                 print(f"Backend [Watcher]: CRITICAL - Could not move failed file: {move_err}")
 
 async def watch_inbox_loop():
-    """Background polling loop that scans the inbox directory every 15 seconds."""
-    print("Backend [Watcher]: Starting 00 Inbox watcher loop...")
+    """Background polling loop that scans the import Inbox.md and the old inbox directory every 15 seconds."""
+    print("Backend [Watcher]: Starting Import and Inbox watcher loop...")
     while True:
         try:
+            await scan_and_process_import()
             await scan_and_process_inbox()
         except Exception as e:
             print(f"Backend [Watcher]: Error in watch loop iteration: {e}")

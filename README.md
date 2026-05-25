@@ -1,6 +1,6 @@
 # 🧠 Centaur Brain
 
-<img src="centaur_brain_icon.jpg" width="140" align="right" style="margin-left: 20px; border-radius: 20px;" alt="Centaur Brain Logo">
+<img src="docs/centaur_brain_icon.jpg" width="140" align="right" style="margin-left: 20px; border-radius: 20px;" alt="Centaur Brain Logo">
 
 Centaur Brain is an agentic "Second Brain" system designed to bridge the gap between high-velocity information consumption (web, YouTube, PDFs) and permanent, structured knowledge in **Obsidian**.
 
@@ -10,15 +10,15 @@ Similar to Andrej Karpathy's vision of agentic workflows, it moves beyond simple
 
 ### 🗺️ Knowledge Graph
 The system automatically builds a dense, interconnected graph of high-value concepts.
-![Graph Overview](screenshots/centaur_brain_graph_example.png)
+![Graph Overview](docs/screenshots/centaur_brain_graph_example.png)
 
 ### 🔍 Concept Synthesis
 Detailed, LLM-curated concept pages that synthesize insights from multiple sources while preserving nuance.
-![Concept Example](screenshots/centaur_brain_concept_example.png)
+![Concept Example](docs/screenshots/centaur_brain_concept_example.png)
 
 ### 📄 Source Summaries
 Richly formatted summaries with metadata, primary/related themes, and core takeaways.
-![Summary Example](screenshots/centaur_brain_summary_example.png)
+![Summary Example](docs/screenshots/centaur_brain_summary_example.png)
 
 ## 🏗️ Architecture
 
@@ -76,10 +76,10 @@ uv run main.py
 ### 4. Background Service (Linux/Fedora)
 To run the backend automatically on login:
 ```bash
-# 1. Edit centaur-brain.service to match your absolute paths (CWD & uv)
+# 1. Edit docs/centaur-brain.service to match your absolute paths (CWD & uv)
 # 2. Copy it to your user systemd directory:
 mkdir -p ~/.config/systemd/user/
-cp centaur-brain.service ~/.config/systemd/user/
+cp docs/centaur-brain.service ~/.config/systemd/user/
 # 3. Enable and start the service
 systemctl --user daemon-reload
 systemctl --user enable centaur-brain.service

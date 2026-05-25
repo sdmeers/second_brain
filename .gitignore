@@ -33,3 +33,6 @@ backend/resume_rebuild.py
 
 # Personal data
 sources_all.txt
+
+# Archive folder
+docs/archive/

@@ -15,6 +15,7 @@ dotenv_path = os.path.join(os.path.dirname(__file__), ".env")
 load_dotenv(dotenv_path=dotenv_path)
 VAULT_PATH = os.getenv("OBSIDIAN_VAULT_PATH")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
 
 if not VAULT_PATH or not GEMINI_API_KEY:
     raise RuntimeError("Missing OBSIDIAN_VAULT_PATH or GEMINI_API_KEY in .env")
@@ -189,7 +190,7 @@ Here are the concept pages to merge:
 """
             try:
                 response = call_gemini_with_retry(
-                    model="gemini-3.1-flash-lite-preview",
+                    model=GEMINI_MODEL,
                     contents=prompt
                 )
                 api_calls += 1
@@ -330,7 +331,7 @@ Please return the content formatted as Markdown. Include a definition, and synth
             
             try:
                 response = call_gemini_with_retry(
-                    model="gemini-3.1-flash-lite-preview",
+                    model=GEMINI_MODEL,
                     contents=prompt
                 )
                 api_calls += 1
@@ -375,7 +376,7 @@ Here is the concept page content:
 """
             try:
                 response = call_gemini_with_retry(
-                    model="gemini-3.1-flash-lite-preview",
+                    model=GEMINI_MODEL,
                     contents=prompt
                 )
                 api_calls += 1

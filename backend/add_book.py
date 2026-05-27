@@ -9,7 +9,7 @@ from google.genai import types
 from pydantic import BaseModel, Field
 
 # Local imports
-from main import call_gemini_with_retry, update_concept_page, get_atlas_themes, OntologyExtraction, sanitize_filename, get_existing_concepts
+from main import call_gemini_with_retry, update_concept_page, get_atlas_themes, OntologyExtraction, sanitize_filename, get_existing_concepts, GEMINI_MODEL
 from logger import log_action
 
 dotenv_path = os.path.join(os.path.dirname(__file__), ".env")
@@ -137,13 +137,13 @@ tags: [brain, book]
     except Exception as e:
         # Fallback if 2.5-flash is 503/429 or search tool is limited
         if any(err in str(e).upper() for err in ["EMPTY", "429", "RESOURCE_EXHAUSTED", "503"]):
-            print(f"  [Attempt 2] Primary search failed or was empty ({str(e)[:30]}...). Trying gemini-3.1-flash-lite-preview for stability...")
+            print(f"  [Attempt 2] Primary search failed or was empty ({str(e)[:30]}...). Trying {GEMINI_MODEL} for stability...")
             
             try:
-                # Use gemini-3.1-flash-lite-preview as a high-speed, more available model
+                # Use GEMINI_MODEL as a high-speed, more available model
                 # We try without search first as search often triggers 429 on free tier previews
                 response = await call_gemini_with_retry(
-                    model="gemini-3.1-flash-lite-preview",
+                    model=GEMINI_MODEL,
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         system_instruction=system_instruction + "\n\n7. JSON SCHEMA POPULATION: Return a JSON object following the OntologyExtraction schema.",
@@ -290,7 +290,7 @@ async def add_book(title: str, author: str):
     if primary_match:
         themes.append(primary_match.group(1))
         
-    related_match = re.search(r'theme_related:\s*\[(.*?)\]', markdown_content)
+    related_match = re.search(r'theme_related:\s*\[(.*)\]', markdown_content)
     if related_match:
         related_themes = [t.strip().strip('"').strip("'") for t in related_match.group(1).split(',')]
         themes.extend([t for t in related_themes if t])

@@ -23,6 +23,7 @@ load_dotenv(dotenv_path=dotenv_path)
 # Configuration
 OBSIDIAN_VAULT_PATH = os.getenv("OBSIDIAN_VAULT_PATH")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
 
 if not GEMINI_API_KEY:
     print(f"CRITICAL: GEMINI_API_KEY not found in {dotenv_path}")
@@ -334,10 +335,10 @@ tags: [brain]
     )
     
     try:
-        print(f"Backend [Gemini]: Calling Gemini API (model: gemini-3.1-flash-lite-preview)...")
+        print(f"Backend [Gemini]: Calling Gemini API (model: {GEMINI_MODEL})...")
         # Use the async client (aio)
         response = await call_gemini_with_retry(
-            model="gemini-3.1-flash-lite-preview",
+            model=GEMINI_MODEL,
             contents=prompt,
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,
@@ -393,7 +394,7 @@ Please update the page to integrate any new information, note contradictions, an
 """
         try:
             response = await call_gemini_with_retry(
-                model="gemini-3.1-flash-lite-preview",
+                model=GEMINI_MODEL,
                 contents=prompt,
             )
             updated_content = response.text.strip()
@@ -420,7 +421,7 @@ Please include a backlink to the source: [[{source_title}]]. Return the Markdown
 """
         try:
             response = await call_gemini_with_retry(
-                model="gemini-3.1-flash-lite-preview",
+                model=GEMINI_MODEL,
                 contents=prompt,
             )
             new_content = response.text.strip()
@@ -619,7 +620,7 @@ async def process_capture_core(
         if primary_match:
             themes.append(primary_match.group(1))
             
-        related_match = re.search(r'theme_related:\s*\[(.*?)\]', brain_node_markdown)
+        related_match = re.search(r'theme_related:\s*\[(.*)\]', brain_node_markdown)
         if related_match:
             related_themes = [t.strip().strip('"').strip("'") for t in related_match.group(1).split(',')]
             themes.extend([t for t in related_themes if t])

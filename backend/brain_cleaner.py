@@ -15,7 +15,7 @@ dotenv_path = os.path.join(os.path.dirname(__file__), ".env")
 load_dotenv(dotenv_path=dotenv_path)
 VAULT_PATH = os.getenv("OBSIDIAN_VAULT_PATH")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
+GEMINI_MODEL = os.getenv("CLEANER_GEMINI_MODEL", os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite"))
 
 if not VAULT_PATH or not GEMINI_API_KEY:
     raise RuntimeError("Missing OBSIDIAN_VAULT_PATH or GEMINI_API_KEY in .env")

@@ -9,7 +9,7 @@ from google.genai import types
 from pydantic import BaseModel, Field
 
 # Local imports
-from main import call_gemini_with_retry, update_concept_page, get_atlas_themes, OntologyExtraction, sanitize_filename, get_existing_concepts, GEMINI_MODEL
+from main import call_gemini_with_retry, update_concept_page, get_atlas_themes, OntologyExtraction, sanitize_filename, get_existing_concepts, GEMINI_MODEL, get_or_create_context_cache
 from logger import log_action
 
 dotenv_path = os.path.join(os.path.dirname(__file__), ".env")
@@ -142,15 +142,28 @@ tags: [brain, book]
             try:
                 # Use GEMINI_MODEL as a high-speed, more available model
                 # We try without search first as search often triggers 429 on free tier previews
-                response = await call_gemini_with_retry(
-                    model=GEMINI_MODEL,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        system_instruction=system_instruction + "\n\n7. JSON SCHEMA POPULATION: Return a JSON object following the OntologyExtraction schema.",
+                sys_instr_with_schema = system_instruction + "\n\n7. JSON SCHEMA POPULATION: Return a JSON object following the OntologyExtraction schema."
+                cache_name = await get_or_create_context_cache(GEMINI_MODEL, sys_instr_with_schema)
+                
+                if cache_name:
+                    config = types.GenerateContentConfig(
+                        cached_content=cache_name,
                         temperature=0.3,
                         response_mime_type="application/json",
                         response_schema=OntologyExtraction,
-                    ),
+                    )
+                else:
+                    config = types.GenerateContentConfig(
+                        system_instruction=sys_instr_with_schema,
+                        temperature=0.3,
+                        response_mime_type="application/json",
+                        response_schema=OntologyExtraction,
+                    )
+                
+                response = await call_gemini_with_retry(
+                    model=GEMINI_MODEL,
+                    contents=prompt,
+                    config=config,
                     max_retries=2
                 )
                 if not response or not response.text:

@@ -6,6 +6,9 @@ import shutil
 import httpx
 import yt_dlp
 import fitz  # PyMuPDF
+import imaplib
+import email
+from email.header import decode_header
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -69,7 +72,7 @@ import asyncio
 # Initialize Gemini Client
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-async def call_gemini_with_retry(model: str, contents: str, config: types.GenerateContentConfig = None, max_retries: int = 5):
+async def call_gemini_with_retry(model: str, contents, config: types.GenerateContentConfig = None, max_retries: int = 5):
     """Wrapper to call Gemini API with exponential backoff for 429 and 503 errors."""
     for attempt in range(max_retries):
         try:
@@ -88,6 +91,154 @@ async def call_gemini_with_retry(model: str, contents: str, config: types.Genera
                     raise RuntimeError(f"Failed after {max_retries} attempts: {error_str}")
             else:
                 raise e
+
+import hashlib
+import time
+
+CACHE_METADATA_FILE = os.path.join(os.path.dirname(__file__), ".cache_metadata.json")
+
+def load_cache_metadata():
+    if os.path.exists(CACHE_METADATA_FILE):
+        try:
+            with open(CACHE_METADATA_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+def save_cache_metadata(metadata):
+    try:
+        with open(CACHE_METADATA_FILE, "w") as f:
+            json.dump(metadata, f, indent=2)
+    except Exception as e:
+        print(f"Error saving cache metadata: {e}")
+
+async def get_or_create_context_cache(model: str, system_instruction: str) -> Optional[str]:
+    """
+    Checks if there's an active context cache for this system_instruction.
+    If not, and the instruction meets the minimum token size (4,096 tokens),
+    it creates a new cache.
+    Returns the cache name or None.
+    """
+    try:
+        token_res = await client.aio.models.count_tokens(
+            model=model,
+            contents=system_instruction
+        )
+        total_tokens = token_res.total_tokens
+        print(f"Backend [Cache]: System instruction token count is {total_tokens}.")
+        if total_tokens < 4096:
+            print("Backend [Cache]: Token count is below 4,096. Caching is not recommended or supported.")
+            return None
+    except Exception as e:
+        print(f"Backend [Cache]: Error counting tokens for caching: {e}")
+        return None
+
+    instr_hash = hashlib.md5(system_instruction.encode("utf-8")).hexdigest()
+    metadata = load_cache_metadata()
+    cached_info = metadata.get(model)
+    current_time = time.time()
+    
+    if cached_info:
+        cached_name = cached_info.get("name")
+        cached_hash = cached_info.get("hash")
+        expire_time = cached_info.get("expire_time", 0)
+        
+        if cached_hash == instr_hash and expire_time > current_time + 300:
+            print(f"Backend [Cache]: Reusing active context cache: {cached_name}")
+            return cached_name
+            
+        if cached_name:
+            print(f"Backend [Cache]: Cleaning up old or expired cache: {cached_name}")
+            try:
+                await client.aio.caches.delete(name=cached_name)
+            except Exception as e:
+                print(f"Backend [Cache]: Error deleting old cache: {e}")
+    
+    print("Backend [Cache]: Creating new context cache for system instruction...")
+    try:
+        cache = await client.aio.caches.create(
+            model=model,
+            config=types.CreateCachedContentConfig(
+                display_name=f"centaur_brain_sys_instr_{model.replace('-', '_')}",
+                system_instruction=system_instruction,
+                ttl="3600s"
+            )
+        )
+        
+        expire_timestamp = current_time + 3600
+        expire_time_attr = getattr(cache, "expire_time", None)
+        if expire_time_attr:
+            if isinstance(expire_time_attr, datetime):
+                expire_timestamp = expire_time_attr.timestamp()
+            else:
+                try:
+                    dt_str = str(expire_time_attr).replace("Z", "+00:00")
+                    expire_timestamp = datetime.fromisoformat(dt_str).timestamp()
+                except Exception as dt_e:
+                    print(f"Backend [Cache]: Error parsing expire_time: {dt_e}")
+                    
+        metadata[model] = {
+            "name": cache.name,
+            "hash": instr_hash,
+            "expire_time": expire_timestamp
+        }
+        save_cache_metadata(metadata)
+        print(f"Backend [Cache]: Successfully created context cache: {cache.name}")
+        return cache.name
+    except Exception as e:
+        print(f"Backend [Cache]: Failed to create context cache: {e}. Falling back.")
+        return None
+
+
+class DuplicateURLError(Exception):
+    def __init__(self, message: str, existing_title: str):
+        super().__init__(message)
+        self.existing_title = existing_title
+
+def is_url_already_ingested(url: str) -> Optional[str]:
+    """
+    Checks if the URL is already present in any of the existing summaries.
+    Returns the title of the existing summary if found, else None.
+    """
+    if not os.path.exists(SUMMARIES_PATH):
+        return None
+        
+    def clean_u(u: str) -> str:
+        u = u.strip().lower()
+        if u.startswith("http://") or u.startswith("https://"):
+            u = u.split("?")[0].split("#")[0].rstrip("/")
+        return u
+        
+    target_url = clean_u(url)
+    
+    try:
+        for filename in os.listdir(SUMMARIES_PATH):
+            if not filename.endswith(".md"):
+                continue
+            file_path = os.path.join(SUMMARIES_PATH, filename)
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    frontmatter_lines = []
+                    for _ in range(30):
+                        line = f.readline()
+                        if not line:
+                            break
+                        frontmatter_lines.append(line)
+                    
+                    frontmatter_text = "".join(frontmatter_lines)
+                    match = re.search(r'^url:\s*["\']?(.*?)["\']?\s*$', frontmatter_text, re.MULTILINE)
+                    if match:
+                        existing_url = clean_u(match.group(1))
+                        if existing_url == target_url:
+                            return filename[:-3]  # Return title without .md
+            except Exception as e:
+                print(f"Error reading {file_path} for duplicate check: {e}")
+    except Exception as e:
+        print(f"Error listing summaries directory: {e}")
+        
+    return None
+
 
 # Initialize FastAPI App
 app = FastAPI(title="Centaur Brain API")
@@ -334,18 +485,32 @@ tags: [brain]
         f"Text to analyze: {content[:100000]}" # Limit context window just in case
     )
     
+    # Try to reuse or create a context cache for the system prompt
+    cache_name = await get_or_create_context_cache(GEMINI_MODEL, system_instruction)
+    
     try:
         print(f"Backend [Gemini]: Calling Gemini API (model: {GEMINI_MODEL})...")
-        # Use the async client (aio)
-        response = await call_gemini_with_retry(
-            model=GEMINI_MODEL,
-            contents=prompt,
-            config=types.GenerateContentConfig(
+        
+        if cache_name:
+            config = types.GenerateContentConfig(
+                cached_content=cache_name,
+                temperature=0.3,
+                response_mime_type="application/json",
+                response_schema=OntologyExtraction,
+            )
+        else:
+            config = types.GenerateContentConfig(
                 system_instruction=system_instruction,
                 temperature=0.3,
                 response_mime_type="application/json",
                 response_schema=OntologyExtraction,
             )
+            
+        # Use the async client (aio)
+        response = await call_gemini_with_retry(
+            model=GEMINI_MODEL,
+            contents=prompt,
+            config=config
         )
         print("Backend [Gemini]: API call successful.")
         
@@ -487,22 +652,30 @@ async def process_capture_core(
     url: str,
     title: str = "Untitled Capture",
     author_hint: str = "",
-    markdown_text: str = ""
+    markdown_text: str = "",
+    pdf_bytes: Optional[bytes] = None
 ) -> dict:
     try:
         print(f"\n>>> Backend: Processing Request: {title}")
+        
+        # Check for duplicates before executing stage 1 (saves bandwidth and API queries)
+        existing_title = is_url_already_ingested(url)
+        if existing_title:
+            print(f"Backend: URL already ingested: {url} (Title: {existing_title})")
+            raise DuplicateURLError(f"This URL has already been ingested as '{existing_title}'.", existing_title)
         
         content_text = markdown_text
         clean_url = url.lower().split('?')[0]
         is_pdf = clean_url.endswith('.pdf') or '/pdf/' in clean_url
         is_youtube = "youtube.com/watch" in url or "youtu.be/" in url
         
-        pdf_bytes = None
-        
         # 1. Handle PDF vs Text extraction vs YouTube Fallback
         if is_pdf:
             print("Backend [Stage 1]: Processing as PDF...")
-            content_text, pdf_bytes = extract_pdf_text(url)
+            if pdf_bytes:
+                content_text = extract_pdf_text_from_bytes(pdf_bytes)
+            else:
+                content_text, pdf_bytes = extract_pdf_text(url)
         elif is_youtube and not content_text:
             print("Backend [Stage 1]: Processing as YouTube (via backend fallback)...")
             content_text = await extract_youtube_transcript(url)
@@ -647,6 +820,8 @@ async def process_capture(payload: CapturePayload):
             markdown_text=payload.markdownText
         )
         return result
+    except DuplicateURLError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -687,6 +862,7 @@ async def scan_and_process_import():
         error_msg = ""
         result = None
         
+        is_duplicate = False
         try:
             result = await process_capture_core(
                 url=url,
@@ -694,6 +870,10 @@ async def scan_and_process_import():
                 markdown_text=notes
             )
             success = True
+        except DuplicateURLError as e:
+            is_duplicate = True
+            success = True
+            result = {"title": e.existing_title}
         except Exception as e:
             error_msg = str(e)
             print(f"Backend [Watcher]: Failed to process URL {url}: {e}")
@@ -713,7 +893,8 @@ async def scan_and_process_import():
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         if success:
             safe_title = result.get("title", "Untitled")
-            completed_entry = f"- [[{safe_title}]] - {url} (Processed on {timestamp})\n"
+            entry_suffix = " (Duplicate - Already Ingested)" if is_duplicate else ""
+            completed_entry = f"- [[{safe_title}]] - {url} (Processed on {timestamp}){entry_suffix}\n"
             try:
                 with open(COMPLETED_MD_FILE, "a", encoding="utf-8") as f:
                     f.write(completed_entry)
@@ -790,6 +971,12 @@ async def scan_and_process_inbox():
             print(f"Backend [Watcher]: Successfully processed {filename}. Deleting from inbox...")
             os.remove(file_path)
             
+        except DuplicateURLError as e:
+            print(f"Backend [Watcher]: File {filename} is a duplicate (already ingested as '{e.existing_title}'). Deleting from inbox...")
+            try:
+                os.remove(file_path)
+            except Exception as del_err:
+                print(f"Backend [Watcher]: Error deleting duplicate file: {del_err}")
         except Exception as e:
             print(f"Backend [Watcher]: Failed to process file {filename}: {e}")
             try:
@@ -804,16 +991,429 @@ async def scan_and_process_inbox():
             except Exception as move_err:
                 print(f"Backend [Watcher]: CRITICAL - Could not move failed file: {move_err}")
 
+def extract_pdf_text_from_bytes(pdf_bytes: bytes) -> str:
+    pdf_stream = io.BytesIO(pdf_bytes)
+    doc = fitz.open(stream=pdf_stream, filetype="pdf")
+    text = ""
+    for page in doc:
+        text += page.get_text()
+    return text.strip()
+
+async def transcribe_audio_via_gemini(file_bytes: bytes, mime_type: str) -> str:
+    prompt = "Transcribe this audio file accurately. If it is a personal voice memo or dictation, preserve all details, clean up filler words (um, ah), and format it nicely in Markdown with bullet points or paragraphs where appropriate. Output only the transcription."
+    response = await call_gemini_with_retry(
+        model=GEMINI_MODEL,
+        contents=[
+            types.Part.from_bytes(data=file_bytes, mime_type=mime_type),
+            prompt
+        ]
+    )
+    return response.text.strip()
+
+async def analyze_image_via_gemini(file_bytes: bytes, caption: str) -> str:
+    prompt = "You are an assistant for a personal second brain. Analyze this image. If it contains text (like a document, page, or whiteboard), extract and transcribe all readable text accurately. If it is a picture, describe it in detail. Format your response as clean Markdown notes."
+    if caption:
+        prompt += f"\nContext/Notes provided by user: {caption}"
+    
+    response = await call_gemini_with_retry(
+        model=GEMINI_MODEL,
+        contents=[
+            types.Part.from_bytes(data=file_bytes, mime_type="image/jpeg"),
+            prompt
+        ]
+    )
+    return response.text.strip()
+
+async def generate_title_from_text(text: str) -> str:
+    prompt = "Create a brief, clean title (3 to 6 words) summarizing the following text. Do not use special characters or quotes. Output ONLY the title text."
+    try:
+        response = await call_gemini_with_retry(
+            model=GEMINI_MODEL,
+            contents=f"{prompt}\n\nText: {text[:1000]}"
+        )
+        title = response.text.strip().strip('"').strip("'")
+        return title or "Quick Thought"
+    except Exception:
+        words = text.split()
+        return " ".join(words[:4]) + "..." if len(words) > 4 else text
+
+async def download_telegram_file(file_id: str, token: str, http_client: httpx.AsyncClient) -> bytes:
+    file_info_url = f"https://api.telegram.org/bot{token}/getFile"
+    response = await http_client.get(file_info_url, params={"file_id": file_id})
+    response.raise_for_status()
+    file_path = response.json()["result"]["file_path"]
+    
+    file_download_url = f"https://api.telegram.org/file/bot{token}/{file_path}"
+    download_res = await http_client.get(file_download_url)
+    download_res.raise_for_status()
+    return download_res.content
+
+async def log_import_result(result: dict, source_url: str, chat_id: int, token: str, http_client: httpx.AsyncClient):
+    safe_title = result.get("title", "Untitled")
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    completed_entry = f"- [[{safe_title}]] - {source_url} (Processed via Telegram on {timestamp})\n"
+    with open(COMPLETED_MD_FILE, "a", encoding="utf-8") as f:
+        f.write(completed_entry)
+        
+    await http_client.post(
+        f"https://api.telegram.org/bot{token}/sendMessage",
+        json={"chat_id": chat_id, "text": f"✅ Successfully Ingested: [[{safe_title}]]"}
+    )
+
+async def process_telegram_message(message: dict, token: str, http_client: httpx.AsyncClient):
+    chat_id = message["chat"]["id"]
+    text = message.get("text") or message.get("caption") or ""
+    
+    voice = message.get("voice")
+    audio = message.get("audio")
+    photo = message.get("photo")
+    document = message.get("document")
+
+    await http_client.post(
+        f"https://api.telegram.org/bot{token}/sendMessage",
+        json={"chat_id": chat_id, "text": "🧠 Centaur Brain: Processing capture request..."}
+    )
+
+    try:
+        if voice or audio:
+            voice_obj = voice or audio
+            file_id = voice_obj["file_id"]
+            mime_type = voice_obj.get("mime_type", "audio/ogg")
+            file_bytes = await download_telegram_file(file_id, token, http_client)
+            transcribed_text = await transcribe_audio_via_gemini(file_bytes, mime_type)
+            
+            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            result = await process_capture_core(
+                url=f"https://local.brain/voice/{timestamp}",
+                title=f"Voice Note {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                markdown_text=transcribed_text
+            )
+            await log_import_result(result, f"https://local.brain/voice/{timestamp}", chat_id, token, http_client)
+            
+        elif photo:
+            photo_obj = photo[-1]
+            file_id = photo_obj["file_id"]
+            file_bytes = await download_telegram_file(file_id, token, http_client)
+            extracted_text = await analyze_image_via_gemini(file_bytes, text)
+            
+            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            result = await process_capture_core(
+                url=f"https://local.brain/photo/{timestamp}",
+                title=f"Image Capture {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                markdown_text=extracted_text
+            )
+            await log_import_result(result, f"https://local.brain/photo/{timestamp}", chat_id, token, http_client)
+
+        elif document and document.get("mime_type") == "application/pdf":
+            file_id = document["file_id"]
+            file_name = document.get("file_name", "document.pdf")
+            file_bytes = await download_telegram_file(file_id, token, http_client)
+            
+            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            result = await process_capture_core(
+                url=f"https://local.brain/document/{timestamp}/{file_name}",
+                title=file_name.rsplit(".", 1)[0],
+                pdf_bytes=file_bytes
+            )
+            await log_import_result(result, f"https://local.brain/document/{timestamp}/{file_name}", chat_id, token, http_client)
+
+        else:
+            urls = re.findall(r'(https?://[^\s)\]\n]+)', text)
+            if urls:
+                url = urls[0]
+                notes = text.replace(url, "").strip()
+                result = await process_capture_core(
+                    url=url,
+                    title="Telegram Link Import",
+                    markdown_text=notes
+                )
+                await log_import_result(result, url, chat_id, token, http_client)
+            elif text:
+                timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+                title_hint = await generate_title_from_text(text)
+                result = await process_capture_core(
+                    url=f"https://local.brain/thought/{timestamp}",
+                    title=title_hint,
+                    markdown_text=text
+                )
+                await log_import_result(result, f"https://local.brain/thought/{timestamp}", chat_id, token, http_client)
+            else:
+                await http_client.post(
+                    f"https://api.telegram.org/bot{token}/sendMessage",
+                    json={"chat_id": chat_id, "text": "⚠️ Could not determine the content format. Please send a link, text, photo, voice note, or PDF."}
+                )
+
+    except DuplicateURLError as e:
+        dup_title = e.existing_title
+        await http_client.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": f"ℹ️ Already Ingested: This is a duplicate of [[{dup_title}]]."}
+        )
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        completed_entry = f"- [[{dup_title}]] - (Duplicate via Telegram) (Processed on {timestamp})\n"
+        with open(COMPLETED_MD_FILE, "a", encoding="utf-8") as f:
+            f.write(completed_entry)
+            
+    except Exception as e:
+        print(f"Backend [Telegram Watcher]: Error processing capture: {e}")
+        await http_client.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": f"❌ Error processing capture request: {e}"}
+        )
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        failed_entry = f"- Telegram Message - Failed on {timestamp}: {e}\n"
+        if text:
+            indented_text = "\n".join([f"  {line}" for line in text.splitlines()])
+            failed_entry += f"  Content:\n{indented_text}\n"
+        with open(FAILED_MD_FILE, "a", encoding="utf-8") as f:
+            f.write(failed_entry)
+
+async def poll_telegram():
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    if not token:
+        return
+
+    allowed_chat_ids = []
+    allowed_chat_ids_str = os.getenv("TELEGRAM_ALLOWED_CHAT_IDS")
+    if allowed_chat_ids_str:
+        allowed_chat_ids = [int(x.strip()) for x in allowed_chat_ids_str.split(",") if x.strip()]
+
+    offset_file = os.path.join(os.path.dirname(__file__), ".telegram_offset")
+    offset = 0
+    if os.path.exists(offset_file):
+        try:
+            with open(offset_file, "r") as f:
+                offset = int(f.read().strip())
+        except Exception:
+            pass
+
+    async with httpx.AsyncClient() as client:
+        url = f"https://api.telegram.org/bot{token}/getUpdates"
+        params = {"timeout": 5}
+        if offset > 0:
+            params["offset"] = offset
+
+        try:
+            response = await client.get(url, params=params, timeout=10.0)
+            if response.status_code != 200:
+                print(f"Backend [Telegram Watcher]: Error getting updates: {response.status_code}")
+                return
+
+            data = response.json()
+            if not data.get("ok"):
+                print(f"Backend [Telegram Watcher]: API returned error: {data}")
+                return
+
+            updates = data.get("result", [])
+            for update in updates:
+                new_offset = update["update_id"] + 1
+                if new_offset > offset:
+                    offset = new_offset
+                    with open(offset_file, "w") as f:
+                        f.write(str(offset))
+
+                message = update.get("message")
+                if not message:
+                    continue
+
+                chat_id = message["chat"]["id"]
+                if allowed_chat_ids and chat_id not in allowed_chat_ids:
+                    print(f"Backend [Telegram Watcher]: Ignored message from unauthorized chat: {chat_id}")
+                    await client.post(
+                        f"https://api.telegram.org/bot{token}/sendMessage",
+                        json={"chat_id": chat_id, "text": f"Unauthorized chat ID ({chat_id}). Please add it to TELEGRAM_ALLOWED_CHAT_IDS in .env."}
+                    )
+                    continue
+
+                await process_telegram_message(message, token, client)
+
+        except Exception as e:
+            print(f"Backend [Telegram Watcher]: Error polling Telegram: {e}")
+
+async def _ingest_email(subject: str, body: str, attachments: list):
+    print(f"Backend [Gmail Watcher]: Processing unread email: '{subject}'")
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    try:
+        pdf_attachment = None
+        for att in attachments:
+            if att["content_type"] == "application/pdf" or att["filename"].lower().endswith(".pdf"):
+                pdf_attachment = att
+                break
+                
+        if pdf_attachment:
+            safe_filename = sanitize_filename(pdf_attachment["filename"].rsplit(".", 1)[0])
+            result = await process_capture_core(
+                url=f"https://local.brain/email-attachment/{safe_filename}",
+                title=safe_filename,
+                pdf_bytes=pdf_attachment["bytes"]
+            )
+            safe_title = result.get("title", "Untitled")
+            completed_entry = f"- [[{safe_title}]] - Email Attachment: {pdf_attachment['filename']} (Processed on {timestamp})\n"
+            with open(COMPLETED_MD_FILE, "a", encoding="utf-8") as f:
+                f.write(completed_entry)
+            print(f"Backend [Gmail Watcher]: Successfully processed email attachment: [[{safe_title}]]")
+            
+        else:
+            urls = re.findall(r'(https?://[^\s)\]\n]+)', f"{subject}\n{body}")
+            if urls:
+                for url in urls:
+                    try:
+                        notes = body.replace(url, "").strip()
+                        result = await process_capture_core(
+                            url=url,
+                            title=subject or "Email Import",
+                            markdown_text=notes
+                        )
+                        safe_title = result.get("title", "Untitled")
+                        completed_entry = f"- [[{safe_title}]] - {url} (Processed from email on {timestamp})\n"
+                        with open(COMPLETED_MD_FILE, "a", encoding="utf-8") as f:
+                            f.write(completed_entry)
+                        print(f"Backend [Gmail Watcher]: Successfully processed url from email: [[{safe_title}]]")
+                    except DuplicateURLError as e:
+                        completed_entry = f"- [[{e.existing_title}]] - {url} (Duplicate from email on {timestamp})\n"
+                        with open(COMPLETED_MD_FILE, "a", encoding="utf-8") as f:
+                            f.write(completed_entry)
+            elif body.strip():
+                timestamp_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+                title_hint = subject if subject.strip() else await generate_title_from_text(body)
+                result = await process_capture_core(
+                    url=f"https://local.brain/email/{timestamp_str}",
+                    title=title_hint,
+                    markdown_text=body
+                )
+                safe_title = result.get("title", "Untitled")
+                completed_entry = f"- [[{safe_title}]] - Email Body: {title_hint} (Processed on {timestamp})\n"
+                with open(COMPLETED_MD_FILE, "a", encoding="utf-8") as f:
+                    f.write(completed_entry)
+                print(f"Backend [Gmail Watcher]: Successfully processed email body: [[{safe_title}]]")
+
+    except DuplicateURLError as e:
+        completed_entry = f"- [[{e.existing_title}]] - Email duplicate on {timestamp}\n"
+        with open(COMPLETED_MD_FILE, "a", encoding="utf-8") as f:
+            f.write(completed_entry)
+            
+    except Exception as e:
+        print(f"Backend [Gmail Watcher]: Error ingesting email '{subject}': {e}")
+        failed_entry = f"- Email: '{subject}' - Failed on {timestamp}: {e}\n"
+        if body:
+            indented_body = "\n".join([f"  {line}" for line in body.splitlines()])
+            failed_entry += f"  Body:\n{indented_body}\n"
+        with open(FAILED_MD_FILE, "a", encoding="utf-8") as f:
+            f.write(failed_entry)
+
+def _process_gmail_emails(gmail_email, gmail_app_password, loop):
+    import imaplib
+    import email
+    from email.header import decode_header
+    
+    mail = imaplib.IMAP4_SSL("imap.gmail.com")
+    mail.login(gmail_email, gmail_app_password)
+    
+    try:
+        mail.select("CentaurBrain")
+    except Exception:
+        mail.select("INBOX")
+        
+    status, messages = mail.search(None, '(UNSEEN TO "stevenmeers+brain")')
+    if status != 'OK' or not messages[0]:
+        status, messages = mail.search(None, 'UNSEEN')
+        if status != 'OK' or not messages[0]:
+            mail.logout()
+            return
+            
+    mail_ids = messages[0].split()
+    print(f"Backend [Gmail Watcher]: Found {len(mail_ids)} unread email(s) to process.")
+    
+    for mail_id in mail_ids:
+        try:
+            status, data = mail.fetch(mail_id, '(RFC822)')
+            if status != 'OK':
+                continue
+            
+            raw_email = data[0][1]
+            msg = email.message_from_bytes(raw_email)
+            
+            subject, encoding = decode_header(msg["Subject"])[0]
+            if isinstance(subject, bytes):
+                subject = subject.decode(encoding or "utf-8", errors="ignore")
+            
+            body = ""
+            attachments = []
+            if msg.is_multipart():
+                for part in msg.walk():
+                    content_type = part.get_content_type()
+                    content_disposition = str(part.get("Content-Disposition"))
+                    
+                    if content_type == "text/plain" and "attachment" not in content_disposition:
+                        payload = part.get_payload(decode=True)
+                        body += payload.decode(part.get_content_charset() or "utf-8", errors="ignore")
+                    elif "attachment" in content_disposition:
+                        file_name = part.get_filename()
+                        if file_name:
+                            attachments.append({
+                                "filename": file_name,
+                                "content_type": content_type,
+                                "bytes": part.get_payload(decode=True)
+                            })
+            else:
+                content_type = msg.get_content_type()
+                if content_type == "text/plain":
+                    payload = msg.get_payload(decode=True)
+                    body = payload.decode(msg.get_content_charset() or "utf-8", errors="ignore")
+            
+            asyncio.run_coroutine_threadsafe(
+                _ingest_email(subject, body, attachments),
+                loop
+            )
+            
+            mail.store(mail_id, '+FLAGS', '\\Seen')
+            
+        except Exception as e:
+            print(f"Backend [Gmail Watcher]: Error processing email ID {mail_id}: {e}")
+            
+    mail.logout()
+
+async def poll_gmail():
+    gmail_email = os.getenv("GMAIL_EMAIL")
+    gmail_app_password = os.getenv("GMAIL_APP_PASSWORD")
+    if not gmail_email or not gmail_app_password:
+        return
+
+    try:
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, _process_gmail_emails, gmail_email, gmail_app_password, loop)
+    except Exception as e:
+        print(f"Backend [Gmail Watcher]: Error polling Gmail: {e}")
+
 async def watch_inbox_loop():
-    """Background polling loop that scans the import Inbox.md and the old inbox directory every 15 seconds."""
-    print("Backend [Watcher]: Starting Import and Inbox watcher loop...")
+    """Background polling loop that scans Telegram, Gmail, and/or the old Obsidian Import/Inbox.md paths."""
+    print("Backend [Watcher]: Starting background watcher loop...")
+    
+    enable_obsidian = os.getenv("ENABLE_OBSIDIAN_INBOX_POLLING", "false").lower() == "true"
+    enable_telegram = os.getenv("ENABLE_TELEGRAM_BOT", "false").lower() == "true"
+    enable_gmail = os.getenv("ENABLE_GMAIL_POLLING", "false").lower() == "true"
+
+    print(f"Backend [Watcher]: Settings -> Obsidian polling: {enable_obsidian}, Telegram polling: {enable_telegram}, Gmail polling: {enable_gmail}")
+
+    counter = 0
     while True:
         try:
-            await scan_and_process_import()
-            await scan_and_process_inbox()
+            if enable_obsidian:
+                await scan_and_process_import()
+                await scan_and_process_inbox()
+            
+            if enable_telegram:
+                await poll_telegram()
+                
+            if enable_gmail and (counter % 4 == 0):
+                await poll_gmail()
+                
         except Exception as e:
             print(f"Backend [Watcher]: Error in watch loop iteration: {e}")
-        # Wait 15 seconds before scanning again
+            
+        counter += 1
         await asyncio.sleep(15)
 
 @app.on_event("startup")

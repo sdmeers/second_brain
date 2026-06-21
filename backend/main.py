@@ -1229,7 +1229,7 @@ async def poll_telegram():
                 await process_telegram_message(message, token, client)
 
         except Exception as e:
-            print(f"Backend [Telegram Watcher]: Error polling Telegram: {e}")
+            print(f"Backend [Telegram Watcher]: Error polling Telegram: {type(e).__name__} - {e}")
 
 async def _ingest_email(subject: str, body: str, attachments: list):
     print(f"Backend [Gmail Watcher]: Processing unread email: '{subject}'")
@@ -1311,11 +1311,13 @@ def _process_gmail_emails(gmail_email, gmail_app_password, loop):
     mail = imaplib.IMAP4_SSL("imap.gmail.com")
     mail.login(gmail_email, gmail_app_password)
     
-    try:
-        mail.select("CentaurBrain")
-    except Exception:
-        mail.select("INBOX")
-        
+    status, _ = mail.select("CentaurBrain")
+    if status != 'OK':
+        status, _ = mail.select("INBOX")
+        if status != 'OK':
+            mail.logout()
+            return
+            
     status, messages = mail.search(None, '(UNSEEN TO "stevenmeers+brain")')
     if status != 'OK' or not messages[0]:
         status, messages = mail.search(None, 'UNSEEN')

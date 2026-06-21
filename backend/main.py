@@ -1206,6 +1206,8 @@ async def poll_telegram():
                 return
 
             updates = data.get("result", [])
+            if updates:
+                print(f"Backend [Telegram Watcher]: Fetched {len(updates)} update(s) from Telegram.")
             for update in updates:
                 new_offset = update["update_id"] + 1
                 if new_offset > offset:
@@ -1213,7 +1215,7 @@ async def poll_telegram():
                     with open(offset_file, "w") as f:
                         f.write(str(offset))
 
-                message = update.get("message")
+                message = update.get("message") or update.get("channel_post")
                 if not message:
                     continue
 
@@ -1398,6 +1400,12 @@ async def watch_inbox_loop():
     enable_gmail = os.getenv("ENABLE_GMAIL_POLLING", "false").lower() == "true"
 
     print(f"Backend [Watcher]: Settings -> Obsidian polling: {enable_obsidian}, Telegram polling: {enable_telegram}, Gmail polling: {enable_gmail}")
+
+    # Validate configuration on startup
+    if enable_telegram and not os.getenv("TELEGRAM_BOT_TOKEN"):
+        print("Backend [Watcher]: WARNING - Telegram Bot is enabled but TELEGRAM_BOT_TOKEN is missing or empty in .env.")
+    if enable_gmail and (not os.getenv("GMAIL_EMAIL") or not os.getenv("GMAIL_APP_PASSWORD")):
+        print("Backend [Watcher]: WARNING - Gmail polling is enabled but GMAIL_EMAIL or GMAIL_APP_PASSWORD is missing or empty in .env.")
 
     counter = 0
     while True:

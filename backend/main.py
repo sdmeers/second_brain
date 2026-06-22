@@ -1233,6 +1233,25 @@ async def poll_telegram():
         except Exception as e:
             print(f"Backend [Telegram Watcher]: Error polling Telegram: {type(e).__name__} - {e}")
 
+async def notify_via_telegram(message: str):
+    """Send a notification message to the Telegram bot chat if configured."""
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    allowed_ids = os.getenv("TELEGRAM_ALLOWED_CHAT_IDS", "")
+    if not token or not allowed_ids:
+        return
+    # Send to the first allowed chat ID (the user's primary chat)
+    chat_id = allowed_ids.split(",")[0].strip()
+    if not chat_id:
+        return
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                json={"chat_id": chat_id, "text": message}
+            )
+    except Exception as e:
+        print(f"Backend [Notify]: Failed to send Telegram notification: {e}")
+
 async def _ingest_email(subject: str, body: str, attachments: list):
     print(f"Backend [Gmail Watcher]: Processing unread email: '{subject}'")
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1256,6 +1275,7 @@ async def _ingest_email(subject: str, body: str, attachments: list):
             with open(COMPLETED_MD_FILE, "a", encoding="utf-8") as f:
                 f.write(completed_entry)
             print(f"Backend [Gmail Watcher]: Successfully processed email attachment: [[{safe_title}]]")
+            await notify_via_telegram(f"📧✅ Gmail Import: [[{safe_title}]]")
             
         else:
             urls = re.findall(r'(https?://[^\s)\]\n]+)', f"{subject}\n{body}")
@@ -1273,6 +1293,7 @@ async def _ingest_email(subject: str, body: str, attachments: list):
                         with open(COMPLETED_MD_FILE, "a", encoding="utf-8") as f:
                             f.write(completed_entry)
                         print(f"Backend [Gmail Watcher]: Successfully processed url from email: [[{safe_title}]]")
+                        await notify_via_telegram(f"📧✅ Gmail Import: [[{safe_title}]]")
                     except DuplicateURLError as e:
                         completed_entry = f"- [[{e.existing_title}]] - {url} (Duplicate from email on {timestamp})\n"
                         with open(COMPLETED_MD_FILE, "a", encoding="utf-8") as f:
@@ -1290,6 +1311,7 @@ async def _ingest_email(subject: str, body: str, attachments: list):
                 with open(COMPLETED_MD_FILE, "a", encoding="utf-8") as f:
                     f.write(completed_entry)
                 print(f"Backend [Gmail Watcher]: Successfully processed email body: [[{safe_title}]]")
+                await notify_via_telegram(f"📧✅ Gmail Import: [[{safe_title}]]")
 
     except DuplicateURLError as e:
         completed_entry = f"- [[{e.existing_title}]] - Email duplicate on {timestamp}\n"
@@ -1304,6 +1326,7 @@ async def _ingest_email(subject: str, body: str, attachments: list):
             failed_entry += f"  Body:\n{indented_body}\n"
         with open(FAILED_MD_FILE, "a", encoding="utf-8") as f:
             f.write(failed_entry)
+        await notify_via_telegram(f"📧❌ Gmail Import Failed: '{subject}'")
 
 def _process_gmail_emails(gmail_email, gmail_app_password, loop):
     import imaplib

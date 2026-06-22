@@ -53,8 +53,9 @@ os.makedirs(SUMMARIES_PATH, exist_ok=True)
 os.makedirs(SOURCES_PATH, exist_ok=True)
 os.makedirs(ATLAS_PATH, exist_ok=True)
 os.makedirs(CONCEPTS_PATH, exist_ok=True)
-os.makedirs(INBOX_PATH, exist_ok=True)
-os.makedirs(INBOX_FAILED_PATH, exist_ok=True)
+if os.getenv("ENABLE_OBSIDIAN_INBOX_POLLING", "false").lower() == "true":
+    os.makedirs(INBOX_PATH, exist_ok=True)
+    os.makedirs(INBOX_FAILED_PATH, exist_ok=True)
 os.makedirs(IMPORT_PATH, exist_ok=True)
 
 # Initialize import files if they do not exist

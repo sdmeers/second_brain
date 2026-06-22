@@ -1333,7 +1333,9 @@ def _process_gmail_emails(gmail_email, gmail_app_password, loop):
     import email
     from email.header import decode_header
     
-    BRAIN_TAG = "stevenmeers+brain"
+    # Extract the username portion of the email to support subaddressing (e.g. user+brain@gmail.com)
+    email_user = gmail_email.split('@')[0] if '@' in gmail_email else "stevenmeers"
+    BRAIN_TAG = f"{email_user}+brain"
     
     mail = imaplib.IMAP4_SSL("imap.gmail.com")
     mail.login(gmail_email, gmail_app_password)

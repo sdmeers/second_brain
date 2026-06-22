@@ -1310,25 +1310,28 @@ def _process_gmail_emails(gmail_email, gmail_app_password, loop):
     import email
     from email.header import decode_header
     
+    BRAIN_TAG = "stevenmeers+brain"
+    
     mail = imaplib.IMAP4_SSL("imap.gmail.com")
     mail.login(gmail_email, gmail_app_password)
     
+    # Try the dedicated CentaurBrain label first, fall back to INBOX
     status, _ = mail.select("CentaurBrain")
     if status != 'OK':
         status, _ = mail.select("INBOX")
         if status != 'OK':
             mail.logout()
             return
-            
-    status, messages = mail.search(None, '(UNSEEN TO "stevenmeers+brain")')
+    
+    # STRICT: Only search for unread emails addressed to the +brain subaddress.
+    # NEVER fall back to all UNSEEN — that would ingest every email in the account.
+    status, messages = mail.search(None, f'(UNSEEN TO "{BRAIN_TAG}")')
     if status != 'OK' or not messages[0]:
-        status, messages = mail.search(None, 'UNSEEN')
-        if status != 'OK' or not messages[0]:
-            mail.logout()
-            return
+        mail.logout()
+        return
             
     mail_ids = messages[0].split()
-    print(f"Backend [Gmail Watcher]: Found {len(mail_ids)} unread email(s) to process.")
+    print(f"Backend [Gmail Watcher]: Found {len(mail_ids)} unread email(s) matching '{BRAIN_TAG}'.")
     
     for mail_id in mail_ids:
         try:
@@ -1338,6 +1341,19 @@ def _process_gmail_emails(gmail_email, gmail_app_password, loop):
             
             raw_email = data[0][1]
             msg = email.message_from_bytes(raw_email)
+            
+            # Secondary safety check: verify the +brain tag appears in the email headers.
+            # Check To, Delivered-To, Envelope-To, and X-Original-To headers.
+            headers_to_check = []
+            for header_name in ["To", "Delivered-To", "Envelope-To", "X-Original-To", "Cc"]:
+                header_val = msg.get(header_name, "")
+                if header_val:
+                    headers_to_check.append(header_val.lower())
+            
+            combined_headers = " ".join(headers_to_check)
+            if "+brain" not in combined_headers:
+                print(f"Backend [Gmail Watcher]: Skipping email (no +brain in headers): {msg.get('Subject', '(no subject)')}")
+                continue
             
             subject, encoding = decode_header(msg["Subject"])[0]
             if isinstance(subject, bytes):

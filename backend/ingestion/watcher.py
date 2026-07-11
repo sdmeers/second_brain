@@ -28,6 +28,12 @@ from backend.processing.capture import process_capture_core, DuplicateURLError
 from backend.ingestion.telegram import poll_telegram, notify_via_telegram
 from backend.ingestion.gmail import poll_gmail
 
+# Specific Ingestion Handlers
+from backend.ingestion.handlers.task import process_task_item
+from backend.ingestion.handlers.project import process_project_item
+from backend.ingestion.handlers.voice import process_voice_dump_item
+
+
 async def scan_and_process_import():
     """Scans the consolidated Import/Inbox.md file,
     extracts URLs and notes, queues them in SQLite, and cleans Inbox.md."""
@@ -176,7 +182,8 @@ async def process_queue_worker():
         urls = re.findall(r'(https?://[^\s)\]\n]+)', classification_input)
         url = urls[0] if urls else None
         
-        # Stubs for different workflows (Phase 4 Tasks/Notes will extend these)
+        source_label = f"{source_type.title()} Input"
+        
         if classification.category == "deep_research" or (file_path and file_path.lower().endswith(".pdf")):
             # Full Centaur Brain Deep Research workflow
             target_url = url or f"https://local.brain/deep-research/{item_id}"
@@ -197,6 +204,66 @@ async def process_queue_worker():
             )
             result_title = result.get("title", target_title)
             success = True
+            
+        elif classification.category == "task":
+            # Task Handler: extract check-items and append to Tasks.md
+            msg = await process_task_item(classification_input, source_label)
+            result_title = "Appended Task(s)"
+            success = True
+            
+        elif classification.category == "voice_dump":
+            # Voice Splitter Handler: split multi-topic dump and re-queue items
+            msg = await process_voice_dump_item(classification_input, source_label)
+            result_title = "Split Voice Dump"
+            success = True
+            
+        elif classification.category in ["meeting_transcript", "project_note"]:
+            # Project Handler: save note in matching 02_Projects folder
+            result = await process_project_item(classification_input, source_label)
+            result_title = f"Project Note: {result.get('title')}"
+            success = True
+            
+        elif classification.category in ["quick_note", "idea"]:
+            # Quick Note/Idea: check if it matches an active project folder
+            # If yes: saves inside project. If no: matches to 'None' and we save as lightweight summary
+            from backend.config import OBSIDIAN_VAULT_PATH, GEMINI_MODEL
+            from google.genai import types
+            from backend.utils.gemini import call_gemini_with_retry
+            projects_dir = os.path.join(OBSIDIAN_VAULT_PATH, "02_Projects")
+            active_projects = []
+            if os.path.exists(projects_dir):
+                active_projects = [d for d in os.listdir(projects_dir) if os.path.isdir(os.path.join(projects_dir, d)) and not d.startswith(".")]
+            
+            # Map using project match helper
+            from backend.ingestion.handlers.project import ProjectMatchResult
+            system_instruction = f"Analyze note and map to exactly ONE of the active projects: {active_projects}. Return 'None' if it does not fit."
+            try:
+                config = types.GenerateContentConfig(system_instruction=system_instruction, temperature=0.1, response_mime_type="application/json", response_schema=ProjectMatchResult)
+                response = await call_gemini_with_retry(model=GEMINI_MODEL, contents=f"Map this to project:\n\n{classification_input}", config=config)
+                match = ProjectMatchResult.model_validate_json(response.text.strip())
+            except Exception:
+                match = ProjectMatchResult(matched_project="None", note_title="Quick Capture", reasoning="Error")
+                
+            if match.matched_project in active_projects:
+                # Save inside the matched project folder!
+                result = await process_project_item(classification_input, source_label)
+                result_title = f"Project Note: {result.get('title')} ({match.matched_project})"
+                success = True
+            else:
+                # Save as standard lightweight summary in Summaries/ (no concepts updated)
+                target_url = url or f"https://local.brain/bookmark/{item_id}"
+                target_title = raw_payload.get("title") or match.note_title or "Bookmark Capture"
+                notes = classification_input.replace(target_url, "").strip() if target_url in classification_input else classification_input
+                
+                result = await process_capture_core(
+                    url=target_url,
+                    title=target_title,
+                    markdown_text=notes,
+                    deep_extraction=False
+                )
+                result_title = result.get("title", target_title)
+                success = True
+            
         elif classification.category == "url_capture" or url:
             # Lightweight URL Capture (without concept updates)
             target_url = url or f"https://local.brain/bookmark/{item_id}"
@@ -211,12 +278,11 @@ async def process_queue_worker():
             )
             result_title = result.get("title", target_title)
             success = True
-        else:
-            # Stubs for quick_note, task, meeting_transcript, voice_dump, idea
-            # Process as lightweight notes for now (no concept updates)
-            target_url = f"https://local.brain/{classification.category}/{item_id}"
-            target_title = f"{classification.category.title()} {datetime.now().strftime('%Y-%m-%d %H:%M')}"
             
+        else:
+            # Standard fallback (lightweight summary, no concept updates)
+            target_url = f"https://local.brain/fallback/{item_id}"
+            target_title = f"Capture {datetime.now().strftime('%Y-%m-%d %H:%M')}"
             result = await process_capture_core(
                 url=target_url,
                 title=target_title,

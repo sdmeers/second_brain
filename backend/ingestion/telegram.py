@@ -70,6 +70,8 @@ async def notify_via_telegram(message: str):
     except Exception as e:
         print(f"Backend [Notify]: Failed to send Telegram notification: {e}")
 
+from backend.ingestion.queue import add_to_queue
+
 async def process_telegram_message(message: dict, token: str, http_client: httpx.AsyncClient):
     chat_id = message["chat"]["id"]
     text = message.get("text") or message.get("caption") or ""
@@ -79,104 +81,108 @@ async def process_telegram_message(message: dict, token: str, http_client: httpx
     photo = message.get("photo")
     document = message.get("document")
 
-    await http_client.post(
-        f"https://api.telegram.org/bot{token}/sendMessage",
-        json={"chat_id": chat_id, "text": "🧠 Centaur Brain: Processing capture request..."}
-    )
+    # Staging path in vault for incoming files
+    from backend.config import INBOX_PATH
+    os.makedirs(INBOX_PATH, exist_ok=True)
 
     try:
         if voice or audio:
             voice_obj = voice or audio
             file_id = voice_obj["file_id"]
             mime_type = voice_obj.get("mime_type", "audio/ogg")
-            file_bytes = await download_telegram_file(file_id, token, http_client)
-            transcribed_text = await transcribe_audio_via_gemini(file_bytes, mime_type)
+            ext = "ogg" if "ogg" in mime_type else "mp3"
             
+            file_bytes = await download_telegram_file(file_id, token, http_client)
             timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            result = await process_capture_core(
-                url=f"https://local.brain/voice/{timestamp}",
-                title=f"Voice Note {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-                markdown_text=transcribed_text
+            filename = f"telegram_voice_{timestamp}.{ext}"
+            file_path = os.path.join(INBOX_PATH, filename)
+            
+            with open(file_path, "wb") as f:
+                f.write(file_bytes)
+                
+            payload = {
+                "chat_id": chat_id,
+                "type": "voice",
+                "mime_type": mime_type,
+                "filename": filename
+            }
+            add_to_queue(source_type="telegram", raw_payload=payload, file_path=file_path)
+            
+            await http_client.post(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                json={"chat_id": chat_id, "text": "🧠 Voice note queued. Local transcriber will process it shortly."}
             )
-            await log_import_result(result, f"https://local.brain/voice/{timestamp}", chat_id, token, http_client)
             
         elif photo:
             photo_obj = photo[-1]
             file_id = photo_obj["file_id"]
             file_bytes = await download_telegram_file(file_id, token, http_client)
-            extracted_text = await analyze_image_via_gemini(file_bytes, text)
             
             timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            result = await process_capture_core(
-                url=f"https://local.brain/photo/{timestamp}",
-                title=f"Image Capture {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-                markdown_text=extracted_text
+            filename = f"telegram_photo_{timestamp}.jpg"
+            file_path = os.path.join(INBOX_PATH, filename)
+            
+            with open(file_path, "wb") as f:
+                f.write(file_bytes)
+                
+            payload = {
+                "chat_id": chat_id,
+                "type": "photo",
+                "filename": filename,
+                "caption": text
+            }
+            add_to_queue(source_type="telegram", raw_payload=payload, content_text=text, file_path=file_path)
+            
+            await http_client.post(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                json={"chat_id": chat_id, "text": "🧠 Image queued. Optical character reader (OCR) will process it."}
             )
-            await log_import_result(result, f"https://local.brain/photo/{timestamp}", chat_id, token, http_client)
 
         elif document and document.get("mime_type") == "application/pdf":
             file_id = document["file_id"]
-            file_name = document.get("file_name", "document.pdf")
+            file_name = sanitize_filename(document.get("file_name", "document.pdf"))
             file_bytes = await download_telegram_file(file_id, token, http_client)
             
             timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            result = await process_capture_core(
-                url=f"https://local.brain/document/{timestamp}/{file_name}",
-                title=file_name.rsplit(".", 1)[0],
-                pdf_bytes=file_bytes
+            unique_filename = f"telegram_doc_{timestamp}_{file_name}"
+            file_path = os.path.join(INBOX_PATH, unique_filename)
+            
+            with open(file_path, "wb") as f:
+                f.write(file_bytes)
+                
+            payload = {
+                "chat_id": chat_id,
+                "type": "pdf",
+                "filename": file_name,
+                "unique_filename": unique_filename
+            }
+            add_to_queue(source_type="telegram", raw_payload=payload, file_path=file_path)
+            
+            await http_client.post(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                json={"chat_id": chat_id, "text": f"🧠 PDF '{file_name}' queued for Deep Research extraction."}
             )
-            await log_import_result(result, f"https://local.brain/document/{timestamp}/{file_name}", chat_id, token, http_client)
 
         else:
-            urls = re.findall(r'(https?://[^\s)\]\n]+)', text)
-            if urls:
-                url = urls[0]
-                notes = text.replace(url, "").strip()
-                result = await process_capture_core(
-                    url=url,
-                    title="Telegram Link Import",
-                    markdown_text=notes
-                )
-                await log_import_result(result, url, chat_id, token, http_client)
-            elif text:
-                timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-                title_hint = await generate_title_from_text(text)
-                result = await process_capture_core(
-                    url=f"https://local.brain/thought/{timestamp}",
-                    title=title_hint,
-                    markdown_text=text
-                )
-                await log_import_result(result, f"https://local.brain/thought/{timestamp}", chat_id, token, http_client)
-            else:
-                await http_client.post(
-                    f"https://api.telegram.org/bot{token}/sendMessage",
-                    json={"chat_id": chat_id, "text": "⚠️ Could not determine the content format. Please send a link, text, photo, voice note, or PDF."}
-                )
-
-    except DuplicateURLError as e:
-        dup_title = e.existing_title
-        await http_client.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": chat_id, "text": f"ℹ️ Already Ingested: This is a duplicate of [[{dup_title}]]."}
-        )
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        completed_entry = f"- [[{dup_title}]] - (Duplicate via Telegram) (Processed on {timestamp})\n"
-        with open(COMPLETED_MD_FILE, "a", encoding="utf-8") as f:
-            f.write(completed_entry)
+            # Handle standard text or links
+            payload = {
+                "chat_id": chat_id,
+                "type": "text"
+            }
+            add_to_queue(source_type="telegram", raw_payload=payload, content_text=text)
             
+            await http_client.post(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                json={"chat_id": chat_id, "text": "🧠 Message received and queued."}
+            )
+
     except Exception as e:
-        print(f"Backend [Telegram Watcher]: Error processing capture: {e}")
+        print(f"Backend [Telegram Ingest]: Error queueing capture: {e}")
         await http_client.post(
             f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": chat_id, "text": f"❌ Error processing capture request: {e}"}
+            json={"chat_id": chat_id, "text": f"❌ Error queueing your request: {e}"}
         )
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        failed_entry = f"- Telegram Message - Failed on {timestamp}: {e}\n"
-        if text:
-            indented_text = "\n".join([f"  {line}" for line in text.splitlines()])
-            failed_entry += f"  Content:\n{indented_text}\n"
-        with open(FAILED_MD_FILE, "a", encoding="utf-8") as f:
-            f.write(failed_entry)
+
 
 async def poll_telegram():
     token = TELEGRAM_BOT_TOKEN

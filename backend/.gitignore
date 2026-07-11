@@ -12,3 +12,7 @@ wheels/
 # ENvironment variables
 .env
 .jira.env
+
+# Database & Cache
+*.db
+.cache_metadata.json

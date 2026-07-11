@@ -10,81 +10,54 @@ from backend.utils.sanitize import sanitize_filename
 from backend.processing.capture import process_capture_core, DuplicateURLError
 from backend.ingestion.telegram import notify_via_telegram, generate_title_from_text
 
-async def _ingest_email(subject: str, body: str, attachments: list):
-    print(f"Backend [Gmail Watcher]: Processing unread email: '{subject}'")
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
-    try:
-        pdf_attachment = None
-        for att in attachments:
-            if att["content_type"] == "application/pdf" or att["filename"].lower().endswith(".pdf"):
-                pdf_attachment = att
-                break
-                
-        if pdf_attachment:
-            safe_filename = sanitize_filename(pdf_attachment["filename"].rsplit(".", 1)[0])
-            result = await process_capture_core(
-                url=f"https://local.brain/email-attachment/{safe_filename}",
-                title=safe_filename,
-                pdf_bytes=pdf_attachment["bytes"]
-            )
-            safe_title = result.get("title", "Untitled")
-            completed_entry = f"- [[{safe_title}]] - Email Attachment: {pdf_attachment['filename']} (Processed on {timestamp})\n"
-            with open(COMPLETED_MD_FILE, "a", encoding="utf-8") as f:
-                f.write(completed_entry)
-            print(f"Backend [Gmail Watcher]: Successfully processed email attachment: [[{safe_title}]]")
-            await notify_via_telegram(f"📧✅ Gmail Import: [[{safe_title}]]")
-            
-        else:
-            urls = re.findall(r'(https?://[^\s)\]\n]+)', f"{subject}\n{body}")
-            if urls:
-                for url in urls:
-                    try:
-                        notes = body.replace(url, "").strip()
-                        result = await process_capture_core(
-                            url=url,
-                            title=subject or "Email Import",
-                            markdown_text=notes
-                        )
-                        safe_title = result.get("title", "Untitled")
-                        completed_entry = f"- [[{safe_title}]] - {url} (Processed from email on {timestamp})\n"
-                        with open(COMPLETED_MD_FILE, "a", encoding="utf-8") as f:
-                            f.write(completed_entry)
-                        print(f"Backend [Gmail Watcher]: Successfully processed url from email: [[{safe_title}]]")
-                        await notify_via_telegram(f"📧✅ Gmail Import: [[{safe_title}]]")
-                    except DuplicateURLError as e:
-                        completed_entry = f"- [[{e.existing_title}]] - {url} (Duplicate from email on {timestamp})\n"
-                        with open(COMPLETED_MD_FILE, "a", encoding="utf-8") as f:
-                            f.write(completed_entry)
-            elif body.strip():
-                timestamp_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-                title_hint = subject if subject.strip() else await generate_title_from_text(body)
-                result = await process_capture_core(
-                    url=f"https://local.brain/email/{timestamp_str}",
-                    title=title_hint,
-                    markdown_text=body
-                )
-                safe_title = result.get("title", "Untitled")
-                completed_entry = f"- [[{safe_title}]] - Email Body: {title_hint} (Processed on {timestamp})\n"
-                with open(COMPLETED_MD_FILE, "a", encoding="utf-8") as f:
-                    f.write(completed_entry)
-                print(f"Backend [Gmail Watcher]: Successfully processed email body: [[{safe_title}]]")
-                await notify_via_telegram(f"📧✅ Gmail Import: [[{safe_title}]]")
+from backend.ingestion.queue import add_to_queue
 
-    except DuplicateURLError as e:
-        completed_entry = f"- [[{e.existing_title}]] - Email duplicate on {timestamp}\n"
-        with open(COMPLETED_MD_FILE, "a", encoding="utf-8") as f:
-            f.write(completed_entry)
+async def _ingest_email(subject: str, body: str, attachments: list):
+    print(f"Backend [Gmail Watcher]: Queuing email: '{subject}'")
+    
+    # Staging path in vault for incoming files
+    from backend.config import INBOX_PATH
+    os.makedirs(INBOX_PATH, exist_ok=True)
+    
+    saved_attachments = []
+    try:
+        for att in attachments:
+            filename = sanitize_filename(att["filename"])
+            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            unique_filename = f"email_{timestamp}_{filename}"
+            file_path = os.path.join(INBOX_PATH, unique_filename)
             
+            with open(file_path, "wb") as f:
+                f.write(att["bytes"])
+                
+            saved_attachments.append({
+                "filename": filename,
+                "unique_filename": unique_filename,
+                "content_type": att["content_type"],
+                "file_path": file_path
+            })
+            
+        payload = {
+            "subject": subject,
+            "attachments": saved_attachments
+        }
+        
+        # If there's an attachment, let's link the primary file_path to the first attachment
+        primary_file_path = saved_attachments[0]["file_path"] if saved_attachments else None
+        
+        add_to_queue(
+            source_type="email",
+            raw_payload=payload,
+            content_text=body,
+            file_path=primary_file_path
+        )
+        
+        print(f"Backend [Gmail Watcher]: Successfully queued email '{subject}'")
+        await notify_via_telegram(f"📧 Inbound Email Queued: '{subject}'")
+        
     except Exception as e:
-        print(f"Backend [Gmail Watcher]: Error ingesting email '{subject}': {e}")
-        failed_entry = f"- Email: '{subject}' - Failed on {timestamp}: {e}\n"
-        if body:
-            indented_body = "\n".join([f"  {line}" for line in body.splitlines()])
-            failed_entry += f"  Body:\n{indented_body}\n"
-        with open(FAILED_MD_FILE, "a", encoding="utf-8") as f:
-            f.write(failed_entry)
-        await notify_via_telegram(f"📧❌ Gmail Import Failed: '{subject}'")
+        print(f"Backend [Gmail Watcher]: Error queuing email '{subject}': {e}")
+        await notify_via_telegram(f"📧❌ Gmail Queueing Failed: '{subject}' ({e})")
 
 def _process_gmail_emails(gmail_email, gmail_app_password, loop):
     email_user = gmail_email.split('@')[0] if '@' in gmail_email else "stevenmeers"

@@ -11,3 +11,4 @@ wheels/
 
 # ENvironment variables
 .env
+.jira.env

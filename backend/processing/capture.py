@@ -1,0 +1,146 @@
+import os
+import re
+import asyncio
+import httpx
+from typing import Optional
+
+from backend.config import SUMMARIES_PATH, SOURCES_PATH
+from backend.vault.paths import is_url_already_ingested, get_atlas_themes
+from backend.vault.writer import save_source_material, save_brain_node
+from backend.processing.extractor import (
+    extract_pdf_text_from_bytes,
+    extract_pdf_text,
+    extract_youtube_transcript,
+    extract_web_text,
+    fetch_cover
+)
+from backend.processing.brain_node import generate_brain_node, clean_yaml_brackets
+from backend.processing.concept_updater import update_concept_page
+from backend.utils.sanitize import sanitize_filename
+from backend.utils.logger import log_action
+
+class DuplicateURLError(Exception):
+    def __init__(self, message: str, existing_title: str):
+        super().__init__(message)
+        self.existing_title = existing_title
+
+async def process_capture_core(
+    url: str,
+    title: str = "Untitled Capture",
+    author_hint: str = "",
+    markdown_text: str = "",
+    pdf_bytes: Optional[bytes] = None
+) -> dict:
+    try:
+        print(f"\n>>> Backend: Processing Request: {title}")
+        
+        # Check for duplicates before executing stage 1 (saves bandwidth and API queries)
+        existing_title = is_url_already_ingested(url)
+        if existing_title:
+            print(f"Backend: URL already ingested: {url} (Title: {existing_title})")
+            raise DuplicateURLError(f"This URL has already been ingested as '{existing_title}'.", existing_title)
+        
+        content_text = markdown_text
+        clean_url = url.lower().split('?')[0]
+        is_pdf = clean_url.endswith('.pdf') or '/pdf/' in clean_url
+        is_youtube = "youtube.com/watch" in url or "youtu.be/" in url
+        
+        # 1. Handle PDF vs Text extraction vs YouTube Fallback
+        if is_pdf:
+            print("Backend [Stage 1]: Processing as PDF...")
+            if pdf_bytes:
+                content_text = extract_pdf_text_from_bytes(pdf_bytes)
+            else:
+                content_text, pdf_bytes = extract_pdf_text(url)
+        elif is_youtube and not content_text:
+            print("Backend [Stage 1]: Processing as YouTube (via backend fallback)...")
+            content_text = await extract_youtube_transcript(url)
+        elif not content_text:
+            print(f"Backend [Stage 1]: Scraping Web Content from {url}...")
+            content_text = extract_web_text(url)
+        else:
+            print(f"Backend [Stage 1]: Processing as Text ({len(content_text) if content_text else 0} chars)...")
+                
+        # 2. Call Gemini
+        print("Backend [Stage 2]: Generating Brain Node...")
+        atlas_themes = get_atlas_themes()
+        brain_node_result = await generate_brain_node(
+            title_hint=title,
+            author_hint=author_hint,
+            url=url,
+            content=content_text,
+            atlas_themes=atlas_themes
+        )
+
+        # 3. Clean Gemini output (Strip markdown backticks if present)
+        brain_node_markdown = brain_node_result.summary_markdown.strip()
+        # Remove ```yaml or ``` at start/end
+        brain_node_markdown = re.sub(r'^```[a-z]*\n', '', brain_node_markdown)
+        brain_node_markdown = re.sub(r'\n```$', '', brain_node_markdown)
+        brain_node_markdown = brain_node_markdown.strip()
+        
+        # 4. Standardize YAML (Fix brackets)
+        brain_node_markdown = clean_yaml_brackets(brain_node_markdown)
+
+        # 5. Fetch Cover Image
+        print("Backend [Stage 3]: Fetching Cover Image...")
+
+        cover_url = fetch_cover(url, is_youtube)
+        if cover_url:
+            print(f"Backend [Stage 3]: Found cover: {cover_url}")
+            # Inject cover into YAML frontmatter if gemini hasn't provided a better one
+            if 'cover: "' in brain_node_markdown:
+                brain_node_markdown = re.sub(r'cover: ".*?"', f'cover: "{cover_url}"', brain_node_markdown)
+            else:
+                brain_node_markdown = brain_node_markdown.replace("type:", f"cover: \"{cover_url}\"\ntype:", 1)
+        
+        # 4. Parse true title
+        print("Backend [Stage 4]: Finalizing and Saving...")
+        real_title = title
+        match = re.search(r'^title:\s*"(.*?)"', brain_node_markdown, re.MULTILINE)
+        if match:
+            real_title = match.group(1)
+            
+        # Strip browser notification counts like (1) or (1234) from the start
+        real_title = re.sub(r'^\(\d+\)\s*', '', real_title)
+            
+        safe_title = sanitize_filename(real_title)
+        print(f"Backend [Stage 4]: Determined Title: {safe_title}")
+        
+        # 5. Save Source file
+        source_link_name, _ = save_source_material(safe_title, is_pdf, url, content_text, pdf_bytes)
+                
+        # 6. Save Brain Node
+        node_path = save_brain_node(safe_title, brain_node_markdown, source_link_name)
+            
+        # 7. Process Concepts (Entity Update Loop)
+        if brain_node_result.concepts:
+            print(f"Backend [Stage 5]: Processing {len(brain_node_result.concepts)} concepts with throttling...")
+            for concept in brain_node_result.concepts:
+                await update_concept_page(concept, brain_node_markdown, safe_title)
+                await asyncio.sleep(4)  # Stay under 15 RPM limit
+        else:
+            print(f"Backend [Stage 5]: WARNING - 0 concepts were extracted by Gemini.")
+            
+        # Log the ingestion
+        themes = []
+        primary_match = re.search(r'theme_primary:\s*"(.*?)"', brain_node_markdown)
+        if primary_match:
+            themes.append(primary_match.group(1))
+            
+        related_match = re.search(r'theme_related:\s*\[(.*)\]', brain_node_markdown)
+        if related_match:
+            related_themes = [t.strip().strip('"').strip("'") for t in related_match.group(1).split(',')]
+            themes.extend([t for t in related_themes if t])
+            
+        log_action("Ingested", f'Source: "{safe_title}"', concepts=themes)
+            
+        print(f"<<< Backend: Request Complete: {safe_title}")
+        return {"status": "success", "title": safe_title, "node_path": node_path}
+        
+    except httpx.HTTPStatusError as e:
+        print(f"HTTP Error during capture: {e}")
+        raise RuntimeError("Failed to download source URL")
+    except Exception as e:
+        print(f"Error in core capture processing: {e}")
+        raise e

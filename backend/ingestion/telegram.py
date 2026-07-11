@@ -86,6 +86,30 @@ async def process_telegram_message(message: dict, token: str, http_client: httpx
     os.makedirs(INBOX_PATH, exist_ok=True)
 
     try:
+        if text.startswith("/query") or text.startswith("/ask"):
+            query_text = re.sub(r'^/(query|ask)\s*', '', text).strip()
+            if not query_text:
+                await http_client.post(
+                    f"https://api.telegram.org/bot{token}/sendMessage",
+                    json={"chat_id": chat_id, "text": "Please provide a query, e.g. /query Syncthing IDs"}
+                )
+                return
+            
+            await http_client.post(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                json={"chat_id": chat_id, "text": "🔍 Searching your Second Brain..."}
+            )
+            
+            from backend.rag.chat import query_brain
+            result = await query_brain(query_text)
+            answer = result["answer"]
+            
+            await http_client.post(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                json={"chat_id": chat_id, "text": answer}
+            )
+            return
+
         if voice or audio:
             voice_obj = voice or audio
             file_id = voice_obj["file_id"]

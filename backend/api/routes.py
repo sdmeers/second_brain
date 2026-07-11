@@ -25,3 +25,16 @@ async def startup_event():
     print("Backend [Startup]: Registering background watch_inbox_loop task.")
     asyncio.create_task(watch_inbox_loop())
 
+from pydantic import BaseModel
+from backend.rag.chat import query_brain
+
+class QueryRequest(BaseModel):
+    query: str
+    top_k: int = 5
+
+@app.post("/query")
+async def handle_query(payload: QueryRequest):
+    result = await query_brain(payload.query, top_k=payload.top_k)
+    return result
+
+

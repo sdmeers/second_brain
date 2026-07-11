@@ -15,3 +15,13 @@ app.add_middleware(
 
 # Include ingestion router
 app.include_router(ingestion_router)
+
+from backend.ingestion.watcher import watch_inbox_loop
+import asyncio
+
+@app.on_event("startup")
+async def startup_event():
+    """Starts the background inbox watcher loop when the FastAPI server initializes."""
+    print("Backend [Startup]: Registering background watch_inbox_loop task.")
+    asyncio.create_task(watch_inbox_loop())
+

@@ -15,4 +15,7 @@ wheels/
 
 # Database & Cache
 *.db
+*-journal
+*.db-journal
 .cache_metadata.json
+

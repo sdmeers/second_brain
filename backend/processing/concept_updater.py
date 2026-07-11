@@ -45,8 +45,8 @@ Please update the page to integrate any new information, note contradictions, an
                     if "# Map of Content" not in updated_content:
                         updated_content += "\n\n# Map of Content" + moc_part
             
-            with open(target_path, "w", encoding="utf-8") as f:
-                f.write(updated_content)
+            from backend.vault.writer import atomic_write
+            atomic_write(target_path, updated_content)
             log_action("Concept Updated", f'Updated [[{clean_concept}]] with context from "{source_title}"')
         except Exception as e:
             print(f"Backend [Concept]: Failed to update [[{clean_concept}]]: {e}")
@@ -54,7 +54,7 @@ Please update the page to integrate any new information, note contradictions, an
         print(f"Backend [Concept]: Creating new concept [[{clean_concept}]]")
         prompt = f"""Generate a baseline definition and concept page for '{clean_concept}' based on its usage in this new source summary:
 {new_summary}
-
+ 
 Please include a backlink to the source: [[{source_title}]]. Return the Markdown.
 """
         try:
@@ -63,7 +63,7 @@ Please include a backlink to the source: [[{source_title}]]. Return the Markdown
                 contents=prompt,
             )
             new_content = response.text.strip()
-            with open(target_path, "w", encoding="utf-8") as f:
-                f.write(new_content)
+            from backend.vault.writer import atomic_write
+            atomic_write(target_path, new_content)
         except Exception as e:
             print(f"Backend [Concept]: Failed to create concept [[{clean_concept}]]: {e}")

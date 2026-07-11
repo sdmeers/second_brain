@@ -101,8 +101,8 @@ tags: [project, {target_project.lower().replace(' ', '_')}]
 """
     
     try:
-        with open(file_path, "w", encoding="utf-8") as f:
-            f.write(file_content)
+        from backend.vault.writer import atomic_write
+        atomic_write(file_path, file_content)
         
         # Log to _CHANGELOG.md
         # We can write the changelog entry directly or use log_action
@@ -110,8 +110,14 @@ tags: [project, {target_project.lower().replace(' ', '_')}]
         if os.path.exists(changelog_file):
             rel_path = os.path.relpath(file_path, OBSIDIAN_VAULT_PATH)
             date_str = datetime.now().strftime("%Y-%m-%d")
-            with open(changelog_file, "a", encoding="utf-8") as f:
-                f.write(f"- {date_str}: Created project note [[{rel_path}]]\n")
+            # For append, we read, append, and atomic_write to prevent corruption
+            try:
+                with open(changelog_file, "r", encoding="utf-8") as f:
+                    old_changelog = f.read()
+            except Exception:
+                old_changelog = ""
+            new_changelog = old_changelog + f"- {date_str}: Created project note [[{rel_path}]]\n"
+            atomic_write(changelog_file, new_changelog)
                 
         print(f"Project Router: Saved note to {file_path}")
         return {

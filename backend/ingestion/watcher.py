@@ -165,6 +165,23 @@ async def process_queue_worker():
     update_item_status(item_id, "processing")
     
     try:
+        # Check if the file is an audio file and needs transcription
+        if file_path and (file_path.lower().endswith(('.ogg', '.mp3', '.wav', '.m4a', '.3gp', '.opus'))):
+            if not content_text.strip():
+                print(f"Backend [Queue Worker]: Audio file detected ({os.path.basename(file_path)}). Running transcription...")
+                from backend.processing.transcriber import transcribe_audio_local
+                transcription = await transcribe_audio_local(file_path)
+                content_text = transcription
+                
+                # Update database record with the transcribed text to cache it
+                from backend.ingestion.queue import get_db_connection
+                db_conn = get_db_connection()
+                db_cursor = db_conn.cursor()
+                db_cursor.execute("UPDATE ingestion_queue SET content_text = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (transcription, item_id))
+                db_conn.commit()
+                db_conn.close()
+                print("Backend [Queue Worker]: Transcription completed and cached in database.")
+                
         # Determine raw classification text
         classification_input = content_text
         if file_path and not classification_input:

@@ -70,14 +70,25 @@ For each task, provide:
         new_entries.append(entry)
         
     try:
-        # Create Tasks.md if it doesn't exist
-        mode = "a" if os.path.exists(tasks_file) else "w"
-        with open(tasks_file, mode, encoding="utf-8") as f:
-            if mode == "w":
-                f.write("# 📋 Master Tasks List\n\n")
-            for entry in new_entries:
-                f.write(entry)
-                
+        from backend.vault.writer import atomic_write
+        # Read existing Tasks.md if it exists, otherwise initialize it
+        if os.path.exists(tasks_file):
+            try:
+                with open(tasks_file, "r", encoding="utf-8") as f:
+                    existing_content = f.read()
+            except Exception:
+                existing_content = "# 📋 Master Tasks List\n\n"
+        else:
+            existing_content = "# 📋 Master Tasks List\n\n"
+            
+        # Append new task entries
+        updated_content = existing_content
+        if not updated_content.endswith("\n") and updated_content.strip():
+            updated_content += "\n"
+        for entry in new_entries:
+            updated_content += entry
+            
+        atomic_write(tasks_file, updated_content)
         print(f"Task Handler: Appended {len(new_entries)} tasks to Tasks.md")
         return f"Successfully added {len(new_entries)} tasks to your Tasks list."
     except Exception as e:

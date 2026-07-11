@@ -15,7 +15,8 @@ from backend.config import (
     TELEGRAM_BOT_TOKEN,
     GMAIL_EMAIL,
     GMAIL_APP_PASSWORD,
-    SOURCES_PATH
+    SOURCES_PATH,
+    OBSIDIAN_VAULT_PATH
 )
 from backend.ingestion.queue import (
     init_queue_db,

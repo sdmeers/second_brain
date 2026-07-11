@@ -106,6 +106,7 @@ def _process_gmail_emails(gmail_email, gmail_app_password, loop):
                 subject = subject.decode(encoding or "utf-8", errors="ignore")
             
             body = ""
+            html_body = ""
             attachments = []
             if msg.is_multipart():
                 for part in msg.walk():
@@ -115,6 +116,9 @@ def _process_gmail_emails(gmail_email, gmail_app_password, loop):
                     if content_type == "text/plain" and "attachment" not in content_disposition:
                         payload = part.get_payload(decode=True)
                         body += payload.decode(part.get_content_charset() or "utf-8", errors="ignore")
+                    elif content_type == "text/html" and "attachment" not in content_disposition:
+                        payload = part.get_payload(decode=True)
+                        html_body += payload.decode(part.get_content_charset() or "utf-8", errors="ignore")
                     elif "attachment" in content_disposition:
                         file_name = part.get_filename()
                         if file_name:
@@ -128,6 +132,22 @@ def _process_gmail_emails(gmail_email, gmail_app_password, loop):
                 if content_type == "text/plain":
                     payload = msg.get_payload(decode=True)
                     body = payload.decode(msg.get_content_charset() or "utf-8", errors="ignore")
+                elif content_type == "text/html":
+                    payload = msg.get_payload(decode=True)
+                    html_body = payload.decode(msg.get_content_charset() or "utf-8", errors="ignore")
+            
+            # Use HTML fallback if plain text body is empty
+            if not body.strip() and html_body.strip():
+                try:
+                    from bs4 import BeautifulSoup
+                    soup = BeautifulSoup(html_body, "html.parser")
+                    # Clean scripts and styles
+                    for script in soup(["script", "style"]):
+                        script.decompose()
+                    body = soup.get_text(separator="\n").strip()
+                except Exception as e:
+                    print(f"Backend [Gmail Watcher]: Error converting HTML to text: {e}")
+                    body = html_body
             
             asyncio.run_coroutine_threadsafe(
                 _ingest_email(subject, body, attachments),
@@ -135,6 +155,7 @@ def _process_gmail_emails(gmail_email, gmail_app_password, loop):
             )
             
             mail.store(mail_id, '+FLAGS', '\\Seen')
+
             
         except Exception as e:
             print(f"Backend [Gmail Watcher]: Error processing email ID {mail_id}: {e}")

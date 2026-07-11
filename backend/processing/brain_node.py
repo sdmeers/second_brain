@@ -169,3 +169,83 @@ tags: [brain]
     except Exception as e:
         print(f"Backend [Gemini]: ERROR: {e}")
         raise
+
+class LightNodeExtraction(BaseModel):
+    summary_markdown: str = Field(description="The complete markdown formatted summary including YAML frontmatter. NO concept pages or wikilinks in Core Concepts.")
+
+async def generate_light_node(title_hint: str, author_hint: str, url: str, content: str) -> LightNodeExtraction:
+    """Calls Gemini to generate a lightweight summary of standard URL captures and bookmarks (without concepts/MOC details)."""
+    print(f"Backend [Gemini-Light]: Preparing prompt for content ({len(content)} chars)...")
+    
+    system_instruction = """You are a helpful knowledge assistant building a personal index of bookmarks and notes in Obsidian.
+Your goal is to analyze the provided text and write a clean, lightweight summary.
+
+CRITICAL RULES:
+1. NO CORE CONCEPTS / WIKILINK MAPPING: Do NOT extract specific concepts, create new pages, or output a '## Core Concepts' section with wikilinks.
+2. NO MAP OF CONTENT (MOC) DETAILS: Do not output Atlas primary themes or theme connections.
+3. Keep the output focused and clean. A brief tl;dr followed by key highlights.
+4. Emoji prefixes: prefix the title with:
+   - article: 📄
+   - video: 🎞️
+   - book: 📖
+   - note: 📝
+
+5. OUTPUT FORMAT TEMPLATE for summary_markdown:
+---
+title: "{{Emoji}} {{Extract Title}}"
+author: "{{Extract the Author or Domain}}"
+url: "{{URL}}"
+date_processed: "{{Date}}"
+date_captured: "{{Date}}"
+status: "🟡 to-review"
+type: "{{article | video | book | note}}"
+cover: "{{Emoji}}"
+tags: [brain, inbox_capture]
+---
+# [[{{Emoji}} {{Extract Title}}]]
+
+## tl;dr
+{{A brief, 1-2 paragraph description or summary of the article/bookmark.}}
+
+## Key Highlights
+* {{Point 1}}
+* {{Point 2}}
+* {{Point 3}}
+"""
+
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    
+    prompt = (
+        f"Title Hint: {title_hint}\n"
+        f"Author Hint: {author_hint}\n"
+        f"Source: {url}\n"
+        f"Date: {date_str}\n"
+        f"Text to analyze: {content[:30000]}"
+    )
+    
+    try:
+        config = types.GenerateContentConfig(
+            system_instruction=system_instruction,
+            temperature=0.2,
+            response_mime_type="application/json",
+            response_schema=LightNodeExtraction,
+        )
+        
+        response = await call_gemini_with_retry(
+            model=GEMINI_MODEL,
+            contents=prompt,
+            config=config
+        )
+        print("Backend [Gemini-Light]: API call successful.")
+        
+        data = response.text
+        parsed = LightNodeExtraction.model_validate_json(data)
+        
+        if not parsed.summary_markdown.strip().startswith("---"):
+            parsed.summary_markdown = "---\n" + parsed.summary_markdown.strip()
+            
+        return parsed
+    except Exception as e:
+        print(f"Backend [Gemini-Light]: ERROR: {e}")
+        raise
+

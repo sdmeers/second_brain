@@ -177,10 +177,10 @@ async def process_queue_worker():
         url = urls[0] if urls else None
         
         # Stubs for different workflows (Phase 4 Tasks/Notes will extend these)
-        if classification.category in ["url_capture", "deep_research"] or url:
-            # Existing Centaur Brain capture workflow
-            target_url = url or f"https://local.brain/queue-item/{item_id}"
-            target_title = raw_payload.get("title") or os.path.basename(file_path or "").rsplit(".", 1)[0] or "Queue Capture"
+        if classification.category == "deep_research" or (file_path and file_path.lower().endswith(".pdf")):
+            # Full Centaur Brain Deep Research workflow
+            target_url = url or f"https://local.brain/deep-research/{item_id}"
+            target_title = raw_payload.get("title") or os.path.basename(file_path or "").rsplit(".", 1)[0] or "Deep Research Capture"
             notes = classification_input.replace(target_url, "").strip() if target_url in classification_input else classification_input
             
             pdf_bytes = None
@@ -192,23 +192,40 @@ async def process_queue_worker():
                 url=target_url,
                 title=target_title,
                 markdown_text=notes,
-                pdf_bytes=pdf_bytes
+                pdf_bytes=pdf_bytes,
+                deep_extraction=True
+            )
+            result_title = result.get("title", target_title)
+            success = True
+        elif classification.category == "url_capture" or url:
+            # Lightweight URL Capture (without concept updates)
+            target_url = url or f"https://local.brain/bookmark/{item_id}"
+            target_title = raw_payload.get("title") or "Bookmark Capture"
+            notes = classification_input.replace(target_url, "").strip() if target_url in classification_input else classification_input
+            
+            result = await process_capture_core(
+                url=target_url,
+                title=target_title,
+                markdown_text=notes,
+                deep_extraction=False
             )
             result_title = result.get("title", target_title)
             success = True
         else:
             # Stubs for quick_note, task, meeting_transcript, voice_dump, idea
-            # For now, we file them simply using a placeholder capture logic
+            # Process as lightweight notes for now (no concept updates)
             target_url = f"https://local.brain/{classification.category}/{item_id}"
             target_title = f"{classification.category.title()} {datetime.now().strftime('%Y-%m-%d %H:%M')}"
             
             result = await process_capture_core(
                 url=target_url,
                 title=target_title,
-                markdown_text=classification_input
+                markdown_text=classification_input,
+                deep_extraction=False
             )
             result_title = result.get("title", target_title)
             success = True
+
             
         if success:
             update_item_status(item_id, "completed")

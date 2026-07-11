@@ -14,7 +14,7 @@ from backend.processing.extractor import (
     extract_web_text,
     fetch_cover
 )
-from backend.processing.brain_node import generate_brain_node, clean_yaml_brackets
+from backend.processing.brain_node import generate_brain_node, generate_light_node, clean_yaml_brackets
 from backend.processing.concept_updater import update_concept_page
 from backend.utils.sanitize import sanitize_filename
 from backend.utils.logger import log_action
@@ -24,15 +24,17 @@ class DuplicateURLError(Exception):
         super().__init__(message)
         self.existing_title = existing_title
 
+
 async def process_capture_core(
     url: str,
     title: str = "Untitled Capture",
     author_hint: str = "",
     markdown_text: str = "",
-    pdf_bytes: Optional[bytes] = None
+    pdf_bytes: Optional[bytes] = None,
+    deep_extraction: bool = True
 ) -> dict:
     try:
-        print(f"\n>>> Backend: Processing Request: {title}")
+        print(f"\n>>> Backend: Processing Request: {title} (Deep: {deep_extraction})")
         
         # Check for duplicates before executing stage 1 (saves bandwidth and API queries)
         existing_title = is_url_already_ingested(url)
@@ -60,20 +62,34 @@ async def process_capture_core(
             content_text = extract_web_text(url)
         else:
             print(f"Backend [Stage 1]: Processing as Text ({len(content_text) if content_text else 0} chars)...")
-                
+                 
         # 2. Call Gemini
-        print("Backend [Stage 2]: Generating Brain Node...")
-        atlas_themes = get_atlas_themes()
-        brain_node_result = await generate_brain_node(
-            title_hint=title,
-            author_hint=author_hint,
-            url=url,
-            content=content_text,
-            atlas_themes=atlas_themes
-        )
+        brain_node_markdown = ""
+        concepts_to_process = []
+        
+        if deep_extraction:
+            print("Backend [Stage 2]: Generating Brain Node (Deep Research)...")
+            atlas_themes = get_atlas_themes()
+            brain_node_result = await generate_brain_node(
+                title_hint=title,
+                author_hint=author_hint,
+                url=url,
+                content=content_text,
+                atlas_themes=atlas_themes
+            )
+            brain_node_markdown = brain_node_result.summary_markdown.strip()
+            concepts_to_process = brain_node_result.concepts
+        else:
+            print("Backend [Stage 2]: Generating Brain Node (Lightweight Capture)...")
+            brain_node_result = await generate_light_node(
+                title_hint=title,
+                author_hint=author_hint,
+                url=url,
+                content=content_text
+            )
+            brain_node_markdown = brain_node_result.summary_markdown.strip()
 
         # 3. Clean Gemini output (Strip markdown backticks if present)
-        brain_node_markdown = brain_node_result.summary_markdown.strip()
         # Remove ```yaml or ``` at start/end
         brain_node_markdown = re.sub(r'^```[a-z]*\n', '', brain_node_markdown)
         brain_node_markdown = re.sub(r'\n```$', '', brain_node_markdown)
@@ -114,13 +130,13 @@ async def process_capture_core(
         node_path = save_brain_node(safe_title, brain_node_markdown, source_link_name)
             
         # 7. Process Concepts (Entity Update Loop)
-        if brain_node_result.concepts:
-            print(f"Backend [Stage 5]: Processing {len(brain_node_result.concepts)} concepts with throttling...")
-            for concept in brain_node_result.concepts:
+        if deep_extraction and concepts_to_process:
+            print(f"Backend [Stage 5]: Processing {len(concepts_to_process)} concepts with throttling...")
+            for concept in concepts_to_process:
                 await update_concept_page(concept, brain_node_markdown, safe_title)
                 await asyncio.sleep(4)  # Stay under 15 RPM limit
         else:
-            print(f"Backend [Stage 5]: WARNING - 0 concepts were extracted by Gemini.")
+            print(f"Backend [Stage 5]: Skipping concept page creation (Lightweight / 0 concepts).")
             
         # Log the ingestion
         themes = []
@@ -137,6 +153,7 @@ async def process_capture_core(
             
         print(f"<<< Backend: Request Complete: {safe_title}")
         return {"status": "success", "title": safe_title, "node_path": node_path}
+
         
     except httpx.HTTPStatusError as e:
         print(f"HTTP Error during capture: {e}")

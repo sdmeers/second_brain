@@ -223,8 +223,8 @@ async def process_queue_worker():
             result_title = f"Project Note: {result.get('title')}"
             success = True
             
-        elif classification.category in ["quick_note", "idea"]:
-            # Quick Note/Idea: check if it matches an active project folder
+        elif classification.category in ["quick_note", "idea", "reference"]:
+            # Quick Note/Idea/Reference: check if it matches an active project folder
             # If yes: saves inside project. If no: matches to 'None' and we save as lightweight summary
             from backend.config import OBSIDIAN_VAULT_PATH, GEMINI_MODEL
             from google.genai import types

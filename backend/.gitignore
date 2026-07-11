@@ -18,4 +18,6 @@ wheels/
 *-journal
 *.db-journal
 .cache_metadata.json
+.telegram_offset
+
 

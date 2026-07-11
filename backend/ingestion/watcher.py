@@ -315,12 +315,28 @@ async def process_queue_worker():
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             completed_entry = f"- [[{result_title}]] - {source_type.title()} Source (Processed on {timestamp})\n"
             
-            # Log to completed list
+            # Log to completed list atomically to prevent corruption
             try:
-                with open(COMPLETED_MD_FILE, "a", encoding="utf-8") as f:
-                    f.write(completed_entry)
+                from backend.vault.writer import atomic_write
+                if os.path.exists(COMPLETED_MD_FILE):
+                    try:
+                        with open(COMPLETED_MD_FILE, "r", encoding="utf-8") as f:
+                            old_content = f.read()
+                    except Exception:
+                        old_content = ""
+                else:
+                    old_content = ""
+                atomic_write(COMPLETED_MD_FILE, old_content + completed_entry)
             except Exception as e:
                 print(f"Backend [Queue Worker]: Error writing to {COMPLETED_MD_FILE}: {e}")
+                
+            # Auto-commit to Git
+            try:
+                from backend.utils.git import commit_vault_changes
+                commit_message = f"[orchestrator] Ingested: [[{result_title}]] (Category: {classification.category})"
+                commit_vault_changes(commit_message)
+            except Exception as git_e:
+                print(f"Backend [Queue Worker]: Git commit failed: {git_e}")
                 
             # Notify Steven
             await notify_via_telegram(
@@ -345,6 +361,50 @@ def json_loads_safe(s: str) -> dict:
     except Exception:
         return {}
 
+
+_notified_conflicts = set()
+
+async def scan_for_syncthing_conflicts():
+    """Scans the vault directory for Syncthing conflict files and notifies the user via Telegram."""
+    global _notified_conflicts
+    if not OBSIDIAN_VAULT_PATH:
+        return
+        
+    current_conflicts = set()
+    try:
+        def walk_files():
+            found = set()
+            for root, _, files in os.walk(OBSIDIAN_VAULT_PATH):
+                # Ignore hidden folders
+                if any(part.startswith(".") for part in root.split(os.sep)):
+                    continue
+                for file in files:
+                    if ".sync-conflict-" in file:
+                        full_path = os.path.join(root, file)
+                        rel_path = os.path.relpath(full_path, OBSIDIAN_VAULT_PATH)
+                        found.add(rel_path)
+            return found
+            
+        current_conflicts = await asyncio.to_thread(walk_files)
+    except Exception as e:
+        print(f"Backend [Watcher]: Error scanning for Syncthing conflicts: {e}")
+        return
+        
+    # Determine new conflicts we haven't notified about yet
+    new_conflicts = current_conflicts - _notified_conflicts
+    
+    if new_conflicts:
+        print(f"Backend [Watcher]: Found {len(new_conflicts)} new Syncthing conflict files!")
+        conflict_list = "\n".join([f"- `{c}`" for c in sorted(new_conflicts)])
+        await notify_via_telegram(
+            f"⚠️ **Syncthing Sync Conflicts Detected**\n"
+            f"The following new sync conflict file(s) were detected in your vault:\n\n"
+            f"{conflict_list}\n\n"
+            f"Please resolve these conflicts manually to avoid data loss."
+        )
+        
+    # Update state: keep only the conflicts that still exist
+    _notified_conflicts = current_conflicts
 
 async def watch_inbox_loop():
     """Background polling loop that runs DB migrations, checks active inputs,
@@ -374,6 +434,9 @@ async def watch_inbox_loop():
                 
             # Queue processing step (pull from queue)
             await process_queue_worker()
+            
+            # Scan for Syncthing conflicts
+            await scan_for_syncthing_conflicts()
                 
         except Exception as e:
             print(f"Backend [Watcher]: Error in watch loop iteration: {e}")

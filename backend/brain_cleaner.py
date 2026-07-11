@@ -20,9 +20,9 @@ GEMINI_MODEL = os.getenv("CLEANER_GEMINI_MODEL", os.getenv("GEMINI_MODEL", "gemi
 if not VAULT_PATH or not GEMINI_API_KEY:
     raise RuntimeError("Missing OBSIDIAN_VAULT_PATH or GEMINI_API_KEY in .env")
 
-SUMMARIES_DIR = os.path.join(VAULT_PATH, "02 Summaries")
-ATLAS_DIR = os.path.join(VAULT_PATH, "03 Atlas")
-CONCEPTS_DIR = os.path.join(VAULT_PATH, "04 Concepts")
+SUMMARIES_DIR = os.path.join(VAULT_PATH, "04_Resources", "Summaries")
+ATLAS_DIR = os.path.join(VAULT_PATH, "04_Resources", "Atlas")
+CONCEPTS_DIR = os.path.join(VAULT_PATH, "04_Resources", "Concepts")
 
 client = genai.Client(api_key=GEMINI_API_KEY)
 
@@ -71,9 +71,37 @@ def load_state():
             return json.load(f)
     return {"processed_groups": [], "refactored_hashes": {}}
 
+def atomic_write(file_path: str, content: str):
+    """Writes content to a temporary file first, then renames it atomically to prevent corruption."""
+    temp_path = f"{file_path}.tmp"
+    dir_name = os.path.dirname(file_path)
+    if dir_name:
+        os.makedirs(dir_name, exist_ok=True)
+    try:
+        with open(temp_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        os.replace(temp_path, file_path)
+    except Exception as e:
+        if os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except Exception:
+                pass
+        raise e
+
 def save_state(state):
-    with open(STATE_FILE, "w", encoding="utf-8") as f:
-        json.dump(state, f)
+    temp_file = f"{STATE_FILE}.tmp"
+    try:
+        with open(temp_file, "w", encoding="utf-8") as f:
+            json.dump(state, f)
+        os.replace(temp_file, STATE_FILE)
+    except Exception as e:
+        if os.path.exists(temp_file):
+            try:
+                os.remove(temp_file)
+            except Exception:
+                pass
+        raise e
 
 def calculate_hash(content: str) -> str:
     return hashlib.sha256(content.encode('utf-8')).hexdigest()
@@ -131,8 +159,7 @@ def clean_file(file_path):
     new_content = f"---\n{new_yaml}\n---\n\n{new_body.strip()}"
     
     if new_content.strip() != content.strip():
-        with open(file_path, 'w', encoding='utf-8') as f:
-            f.write(new_content)
+        atomic_write(file_path, new_content)
         print(f"  [FIXED] {file_path.name}")
 
 def extract_snippets(content: str, link: str, snippet_length: int = 150) -> list[str]:
@@ -217,8 +244,7 @@ Here are the concept pages to merge:
                 new_yaml = yaml.dump(data, sort_keys=False, allow_unicode=True).strip()
                 final_content = f"---\n{new_yaml}\n---\n\n{body}"
                 
-                with open(canonical_file, 'w', encoding='utf-8') as out_f:
-                    out_f.write(final_content)
+                atomic_write(canonical_file, final_content)
                     
                 # Vault-Wide Link Healing
                 all_markdown_files = list(Path(SUMMARIES_DIR).glob("*.md")) + \
@@ -238,8 +264,7 @@ Here are the concept pages to merge:
                                 return f"[[{c_stem}|{o_stem}]]"
                         new_text = pattern.sub(repl, new_text)
                     if new_text != text:
-                        with open(md_file, 'w', encoding='utf-8') as write_f:
-                            write_f.write(new_text)
+                        atomic_write(md_file, new_text)
                             
                 for f in files:
                     if f != canonical_file:
@@ -335,8 +360,7 @@ Please return the content formatted as Markdown. Include a definition, and synth
                     contents=prompt
                 )
                 api_calls += 1
-                with open(concept_path, 'w', encoding='utf-8') as f:
-                    f.write(response.text.strip())
+                atomic_write(concept_path, response.text.strip())
                 manifested_count += 1
                 time.sleep(4)
             except Exception as e:
@@ -382,8 +406,7 @@ Here is the concept page content:
                 api_calls += 1
                 new_content = response.text.strip()
                 
-                with open(f, 'w', encoding='utf-8') as file:
-                    file.write(new_content)
+                atomic_write(f, new_content)
                 
                 # Store the hash of the NEW content so we don't refactor it again until it changes
                 refactored_hashes[f.name] = calculate_hash(new_content)

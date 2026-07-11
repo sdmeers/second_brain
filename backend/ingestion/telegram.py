@@ -79,11 +79,9 @@ async def process_telegram_message(message: dict, token: str, http_client: httpx
     voice = message.get("voice")
     audio = message.get("audio")
     photo = message.get("photo")
-    document = message.get("document")
-
-    # Staging path in vault for incoming files
-    from backend.config import INBOX_PATH
-    os.makedirs(INBOX_PATH, exist_ok=True)
+    document = message.get("document")    # Staging path for incoming Telegram files (private temp folder)
+    staging_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "staging")
+    os.makedirs(staging_path, exist_ok=True)
 
     try:
         if text.startswith("/query") or text.startswith("/ask"):
@@ -119,7 +117,7 @@ async def process_telegram_message(message: dict, token: str, http_client: httpx
             file_bytes = await download_telegram_file(file_id, token, http_client)
             timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
             filename = f"telegram_voice_{timestamp}.{ext}"
-            file_path = os.path.join(INBOX_PATH, filename)
+            file_path = os.path.join(staging_path, filename)
             
             with open(file_path, "wb") as f:
                 f.write(file_bytes)
@@ -144,7 +142,7 @@ async def process_telegram_message(message: dict, token: str, http_client: httpx
             
             timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
             filename = f"telegram_photo_{timestamp}.jpg"
-            file_path = os.path.join(INBOX_PATH, filename)
+            file_path = os.path.join(staging_path, filename)
             
             with open(file_path, "wb") as f:
                 f.write(file_bytes)
@@ -161,7 +159,7 @@ async def process_telegram_message(message: dict, token: str, http_client: httpx
                 f"https://api.telegram.org/bot{token}/sendMessage",
                 json={"chat_id": chat_id, "text": "🧠 Image queued. Optical character reader (OCR) will process it."}
             )
-
+ 
         elif document and document.get("mime_type") == "application/pdf":
             file_id = document["file_id"]
             file_name = sanitize_filename(document.get("file_name", "document.pdf"))
@@ -169,7 +167,7 @@ async def process_telegram_message(message: dict, token: str, http_client: httpx
             
             timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
             unique_filename = f"telegram_doc_{timestamp}_{file_name}"
-            file_path = os.path.join(INBOX_PATH, unique_filename)
+            file_path = os.path.join(staging_path, unique_filename)
             
             with open(file_path, "wb") as f:
                 f.write(file_bytes)

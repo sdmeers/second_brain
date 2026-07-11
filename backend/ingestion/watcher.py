@@ -354,6 +354,15 @@ async def process_queue_worker():
         update_item_status(item_id, "failed", error_message=str(e))
         print(f"Backend [Queue Worker]: Error processing item ID {item_id}: {e}")
         await notify_via_telegram(f"🧠❌ Processing Failed for item ID {item_id}: {e}")
+    finally:
+        # Clean up temporary staged Telegram files
+        if file_path and os.path.exists(file_path):
+            if "staging" in os.path.abspath(file_path):
+                try:
+                    os.remove(file_path)
+                    print(f"Backend [Queue Worker]: Cleaned up staged file: {os.path.basename(file_path)}")
+                except Exception as cleanup_e:
+                    print(f"Backend [Queue Worker]: Failed to remove staged file {file_path}: {cleanup_e}")
 
 def json_loads_safe(s: str) -> dict:
     try:

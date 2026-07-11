@@ -171,7 +171,7 @@ tags: [brain]
         raise
 
 class LightNodeExtraction(BaseModel):
-    summary_markdown: str = Field(description="The complete markdown formatted summary including YAML frontmatter. NO concept pages or wikilinks in Core Concepts.")
+    summary_markdown: str = Field(description="The complete markdown formatted summary including YAML frontmatter. Must contain actual newline characters (\\n) separating each line. DO NOT output a single line.")
 
 async def generate_light_node(title_hint: str, author_hint: str, url: str, content: str) -> LightNodeExtraction:
     """Calls Gemini to generate a lightweight summary of standard URL captures and bookmarks (without concepts/MOC details)."""
@@ -181,16 +181,17 @@ async def generate_light_node(title_hint: str, author_hint: str, url: str, conte
 Your goal is to analyze the provided text and write a clean, lightweight summary.
 
 CRITICAL RULES:
-1. NO CORE CONCEPTS / WIKILINK MAPPING: Do NOT extract specific concepts, create new pages, or output a '## Core Concepts' section with wikilinks.
-2. NO MAP OF CONTENT (MOC) DETAILS: Do not output Atlas primary themes or theme connections.
-3. Keep the output focused and clean. A brief tl;dr followed by key highlights.
-4. Emoji prefixes: prefix the title with:
+1. NEWLINES: You MUST generate actual newline characters (\\n) in the JSON string to separate the lines. Do NOT write a single-line string with spaces.
+2. NO CORE CONCEPTS / WIKILINK MAPPING: Do NOT extract specific concepts, create new pages, or output a '## Core Concepts' section with wikilinks.
+3. NO MAP OF CONTENT (MOC) DETAILS: Do not output Atlas primary themes or theme connections.
+4. Keep the output focused and clean. A brief tl;dr followed by key highlights.
+5. Emoji prefixes: prefix the title with:
    - article: 📄
    - video: 🎞️
    - book: 📖
    - note: 📝
 
-5. OUTPUT FORMAT TEMPLATE for summary_markdown:
+6. OUTPUT FORMAT TEMPLATE for summary_markdown (use actual newlines to separate lines!):
 ---
 title: "{{Emoji}} {{Extract Title}}"
 author: "{{Extract the Author or Domain}}"

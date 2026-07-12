@@ -20,6 +20,8 @@ backend/antigravity-ide
 
 # Environment variables
 .env
+backend/.telegram_offset
+backend/.telegram_qa_offset
 
 # Local State & Personal Notes
 backend/.brain_cleaner_state.json

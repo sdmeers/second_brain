@@ -31,12 +31,12 @@ async def generate_title_from_text(text: str) -> str:
 
 async def download_telegram_file(file_id: str, token: str, http_client: httpx.AsyncClient) -> bytes:
     file_info_url = f"https://api.telegram.org/bot{token}/getFile"
-    response = await http_client.get(file_info_url, params={"file_id": file_id})
+    response = await http_client.get(file_info_url, params={"file_id": file_id}, timeout=30.0)
     response.raise_for_status()
     file_path = response.json()["result"]["file_path"]
     
     file_download_url = f"https://api.telegram.org/file/bot{token}/{file_path}"
-    download_res = await http_client.get(file_download_url)
+    download_res = await http_client.get(file_download_url, timeout=120.0)
     download_res.raise_for_status()
     return download_res.content
 
@@ -200,6 +200,8 @@ async def process_telegram_message(message: dict, token: str, http_client: httpx
             )
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         print(f"Backend [Telegram Ingest]: Error queueing capture: {e}")
         await http_client.post(
             f"https://api.telegram.org/bot{token}/sendMessage",

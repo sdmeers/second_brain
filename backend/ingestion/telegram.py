@@ -14,6 +14,7 @@ from backend.processing.extractor import analyze_image_via_gemini
 from google.genai import types
 from backend.config import GEMINI_MODEL
 from backend.utils.gemini import call_gemini_with_retry
+from backend.utils.sanitize import sanitize_filename
 
 async def generate_title_from_text(text: str) -> str:
     prompt = "Create a brief, clean title (3 to 6 words) summarizing the following text. Do not use special characters or quotes. Output ONLY the title text."

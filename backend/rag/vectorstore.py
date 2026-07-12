@@ -11,7 +11,8 @@ DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "brain_vector
 
 def get_vector_db_connection():
     """Establishes connection to the vector database and loads the sqlite-vss extension."""
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30.0)
+    conn.execute("PRAGMA journal_mode=WAL")
     conn.enable_load_extension(True)
     sqlite_vss.load(conn)
     return conn

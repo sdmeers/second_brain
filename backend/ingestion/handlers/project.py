@@ -13,7 +13,7 @@ class ProjectMatchResult(BaseModel):
     note_title: str = Field(description="A clean, descriptive title for this note (3 to 6 words).")
     reasoning: str = Field(description="Brief explanation of the match.")
 
-async def process_project_item(content_text: str, source_info: str, category: str = None, raw_file_path: str = None) -> dict:
+async def process_project_item(content_text: str, source_info: str, category: str = None, raw_file_path: str = None, matched_project: str = None, matched_title: str = None) -> dict:
     """Classifies a project-related note, matches it to an active project folder, and saves it there under the correct subfolder."""
     projects_dir = os.path.join(OBSIDIAN_VAULT_PATH, "02_Projects")
     
@@ -27,14 +27,21 @@ async def process_project_item(content_text: str, source_info: str, category: st
         
     print(f"Project Router: Detected active projects: {active_projects}")
     
-    if not active_projects:
+    if matched_project and matched_title:
+        match = ProjectMatchResult(
+            matched_project=matched_project,
+            note_title=matched_title,
+            reasoning="Pre-matched by watcher router"
+        )
+    elif not active_projects:
         # Fallback to Second Brain project or root of Projects if none exists
         default_proj = "Second Brain"
         os.makedirs(os.path.join(projects_dir, default_proj), exist_ok=True)
         active_projects = [default_proj]
 
-    # 2. Use Gemini to find the matching project
-    system_instruction = f"""You are a personal information librarian.
+    # 2. Use Gemini to find the matching project if not pre-matched
+    if not (matched_project and matched_title):
+        system_instruction = f"""You are a personal information librarian.
 Analyze the incoming note and map it to exactly ONE of the active projects list: {active_projects}.
 
 If the note is clearly about one of these projects (e.g. mentions coding tasks for 'VibeCook', RAID/Dstl work for 'Task Force RAID', or second brain/sync updates for 'Second Brain'), return that project name.
@@ -42,29 +49,29 @@ If it does not fit any active project, return 'None'.
 
 Also, generate a clean, brief note title (3 to 6 words) summarizing the content. Do not use quotes or special characters in the title.
 """
-    
-    try:
-        config = types.GenerateContentConfig(
-            system_instruction=system_instruction,
-            temperature=0.1,
-            response_mime_type="application/json",
-            response_schema=ProjectMatchResult,
-        )
         
-        response = await call_gemini_with_retry(
-            model=GEMINI_MODEL,
-            contents=f"Map this note to a project:\n\n{content_text}",
-            config=config
-        )
-        
-        match = ProjectMatchResult.model_validate_json(response.text.strip())
-    except Exception as e:
-        print(f"Project Router: Error matching project via Gemini: {e}")
-        match = ProjectMatchResult(
-            matched_project="Second Brain",
-            note_title="Inbox Project Update",
-            reasoning=f"Fallback due to error: {e}"
-        )
+        try:
+            config = types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                temperature=0.1,
+                response_mime_type="application/json",
+                response_schema=ProjectMatchResult,
+            )
+            
+            response = await call_gemini_with_retry(
+                model=GEMINI_MODEL,
+                contents=f"Map this note to a project:\n\n{content_text}",
+                config=config
+            )
+            
+            match = ProjectMatchResult.model_validate_json(response.text.strip())
+        except Exception as e:
+            print(f"Project Router: Error matching project via Gemini: {e}")
+            match = ProjectMatchResult(
+                matched_project="Second Brain",
+                note_title="Inbox Project Update",
+                reasoning=f"Fallback due to error: {e}"
+            )
 
     # 3. Determine the correct subfolder under the project directory based on category
     target_project = match.matched_project if match.matched_project in active_projects else "Second Brain"

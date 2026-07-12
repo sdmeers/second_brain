@@ -260,35 +260,129 @@ async def process_queue_worker():
             success = True
             
         elif classification.category in ["quick_note", "idea", "reference"]:
-            # Quick Note/Idea/Reference: check if it matches an active project folder
-            # If yes: saves inside project. If no: matches to 'None' and we save as lightweight summary or future project idea
+            # Quick Note/Idea/Reference: check if it matches an active project or area folder
+            # If yes: saves inside project or area. If no: saves as lightweight summary or future project idea
+            from pydantic import BaseModel, Field
+            class PARARoutingResult(BaseModel):
+                matched_type: str = Field(description="The type of folder matched. Must be one of: 'project', 'area', or 'None'.")
+                matched_name: str = Field(description="The exact name of the project or area matched, or 'None'.")
+                note_title: str = Field(description="A clean, descriptive title for this note (3 to 6 words).")
+                reasoning: str = Field(description="Brief explanation of the match.")
+
             from backend.config import OBSIDIAN_VAULT_PATH, GEMINI_MODEL
             from google.genai import types
             from backend.utils.gemini import call_gemini_with_retry
             from backend.utils.sanitize import sanitize_filename
+            
             projects_dir = os.path.join(OBSIDIAN_VAULT_PATH, "02_Projects")
             active_projects = []
             if os.path.exists(projects_dir):
                 active_projects = [d for d in os.listdir(projects_dir) if os.path.isdir(os.path.join(projects_dir, d)) and not d.startswith(".")]
-            
-            # Map using project match helper
-            from backend.ingestion.handlers.project import ProjectMatchResult
-            system_instruction = f"Analyze note and map to exactly ONE of the active projects: {active_projects}. Return 'None' if it does not fit."
-            try:
-                config = types.GenerateContentConfig(system_instruction=system_instruction, temperature=0.1, response_mime_type="application/json", response_schema=ProjectMatchResult)
-                response = await call_gemini_with_retry(model=GEMINI_MODEL, contents=f"Map this to project:\n\n{classification_input}", config=config)
-                match = ProjectMatchResult.model_validate_json(response.text.strip())
-            except Exception:
-                match = ProjectMatchResult(matched_project="None", note_title="Quick Capture", reasoning="Error")
                 
-            if match.matched_project in active_projects:
-                # Save inside the matched project folder!
+            areas_dir = os.path.join(OBSIDIAN_VAULT_PATH, "03_Areas")
+            active_areas_map = {}
+            if os.path.exists(areas_dir):
+                for root, dirs, files in os.walk(areas_dir):
+                    dirs[:] = [d for d in dirs if not d.startswith(".")]
+                    for d in dirs:
+                        full_path = os.path.join(root, d)
+                        rel_path = os.path.relpath(full_path, areas_dir)
+                        active_areas_map[d] = rel_path
+            
+            system_instruction = (
+                f"You are a personal information librarian for Steven's Second Brain.\n"
+                f"Your task is to analyze the incoming note and map it to exactly ONE of the active Projects or Areas if it fits.\n\n"
+                f"Active Projects (cased exactly): {active_projects}\n"
+                f"Active Areas (cased exactly): {list(active_areas_map.keys())}\n\n"
+                f"CRITICAL INSTRUCTION:\n"
+                f"- If the note is about an ongoing area of life or a domain of interest (e.g., family/Rosie, cookery, health, music, finance/legal, server administration, coding, or work domains TF RAID, Dstl, Southampton), map it to 'area' with the matched area name.\n"
+                f"- If the note is about a specific temporary project with a deadline/goal (e.g., 'Second Brain', 'Hermes', 'VibeCook'), map it to 'project' with the matched project name.\n"
+                f"- If it doesn't clearly fit any of these, set matched_type to 'None'.\n"
+                f"- Generatively produce a clean, brief note title (3 to 6 words) in note_title (do not use quotes or special characters)."
+            )
+            
+            try:
+                config = types.GenerateContentConfig(
+                    system_instruction=system_instruction,
+                    temperature=0.1,
+                    response_mime_type="application/json",
+                    response_schema=PARARoutingResult
+                )
+                response = await call_gemini_with_retry(
+                    model=GEMINI_MODEL,
+                    contents=f"Map this note:\n\n{classification_input}",
+                    config=config
+                )
+                match = PARARoutingResult.model_validate_json(response.text.strip())
+            except Exception as e:
+                print(f"Watcher Router: Error matching PARA category via Gemini: {e}")
+                match = PARARoutingResult(
+                    matched_type="None",
+                    matched_name="None",
+                    note_title="Quick Capture",
+                    reasoning=f"Fallback due to error: {e}"
+                )
+                
+            if match.matched_type == "project" and match.matched_name in active_projects:
+                # Save inside the matched project folder
                 result = await process_project_item(
                     classification_input, source_label,
-                    category=classification.category, raw_file_path=file_path
+                    category=classification.category, raw_file_path=file_path,
+                    matched_project=match.matched_name, matched_title=match.note_title
                 )
-                result_title = f"Project Note: {result.get('title')} ({match.matched_project})"
+                result_title = f"Project Note: {result.get('title')} ({match.matched_name})"
                 success = True
+                
+            elif match.matched_type == "area" and match.matched_name in active_areas_map:
+                # Save inside the matched area folder!
+                target_area_rel_path = active_areas_map[match.matched_name]
+                target_area_dir = os.path.join(OBSIDIAN_VAULT_PATH, "03_Areas", target_area_rel_path)
+                
+                safe_title = sanitize_filename(match.note_title)
+                file_path_dest = os.path.join(target_area_dir, f"{safe_title}.md")
+                
+                # Resolve name collisions
+                counter = 1
+                base_file_path = file_path_dest
+                while os.path.exists(file_path_dest):
+                    file_path_dest = base_file_path.replace(".md", f"_{counter}.md")
+                    counter += 1
+                    
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                
+                # Copy raw source file if provided (e.g. audio, pdf)
+                source_link = source_label
+                if file_path and os.path.exists(file_path):
+                    try:
+                        import shutil
+                        _, ext = os.path.splitext(file_path)
+                        raw_dest_name = f"{os.path.basename(file_path_dest).rsplit('.', 1)[0]}_raw{ext}"
+                        raw_dest_path = os.path.join(target_area_dir, raw_dest_name)
+                        shutil.copy2(file_path, raw_dest_path)
+                        source_link = f"[[{raw_dest_name}]]"
+                    except Exception as copy_e:
+                        print(f"Area Router: Failed to copy raw file: {copy_e}")
+                        
+                file_content = f"""---
+title: "{match.note_title}"
+area: "{match.matched_name}"
+date_created: "{timestamp}"
+source: "{source_link}"
+tags: [area, {match.matched_name.lower().replace(' ', '_')}]
+---
+# {match.note_title}
+
+*Created on {timestamp} via {source_link}*
+
+---
+
+{clean_input}
+"""
+                from backend.vault.writer import atomic_write
+                atomic_write(file_path_dest, file_content)
+                result_title = f"Area Note: {match.note_title} ({match.matched_name})"
+                success = True
+                
             elif classification.category == "idea":
                 # Save general project ideas in the 02_Projects/Ideas/ folder!
                 ideas_dir = os.path.join(OBSIDIAN_VAULT_PATH, "02_Projects", "Ideas")
@@ -336,6 +430,7 @@ tags: [future_project, idea]
                 atomic_write(file_path_dest, file_content)
                 result_title = f"Future Project Idea: {match.note_title}"
                 success = True
+                
             else:
                 # Save as standard lightweight summary in Reference_Notes/ (no concepts updated)
                 target_url = url or f"https://local.brain/bookmark/{item_id}"

@@ -161,9 +161,9 @@ async def process_telegram_message(message: dict, token: str, http_client: httpx
                 json={"chat_id": chat_id, "text": "🧠 Image queued. Optical character reader (OCR) will process it."}
             )
  
-        elif document and document.get("mime_type") == "application/pdf":
+        elif document:
             file_id = document["file_id"]
-            file_name = sanitize_filename(document.get("file_name", "document.pdf"))
+            file_name = sanitize_filename(document.get("file_name", "document.dat"))
             file_bytes = await download_telegram_file(file_id, token, http_client)
             
             timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -173,17 +173,25 @@ async def process_telegram_message(message: dict, token: str, http_client: httpx
             with open(file_path, "wb") as f:
                 f.write(file_bytes)
                 
+            doc_type = "document"
+            mime = document.get("mime_type", "")
+            if mime == "application/pdf" or file_name.lower().endswith(".pdf"):
+                doc_type = "pdf"
+            elif "presentation" in mime or file_name.lower().endswith((".pptx", ".ppt")):
+                doc_type = "pptx"
+                
             payload = {
                 "chat_id": chat_id,
-                "type": "pdf",
+                "type": doc_type,
                 "filename": file_name,
-                "unique_filename": unique_filename
+                "unique_filename": unique_filename,
+                "caption": text
             }
-            add_to_queue(source_type="telegram", raw_payload=payload, file_path=file_path)
+            add_to_queue(source_type="telegram", raw_payload=payload, content_text=text, file_path=file_path)
             
             await http_client.post(
                 f"https://api.telegram.org/bot{token}/sendMessage",
-                json={"chat_id": chat_id, "text": f"🧠 PDF '{file_name}' queued for Deep Research extraction."}
+                json={"chat_id": chat_id, "text": f"🧠 Document '{file_name}' queued for processing."}
             )
 
         else:

@@ -222,22 +222,17 @@ async def process_queue_worker():
             pattern = re.compile(re.escape(trigger), re.IGNORECASE)
             clean_input = pattern.sub("", clean_input).strip()
             
-        if research_requested or classification.category == "deep_research" or (file_path and file_path.lower().endswith(".pdf")):
+        if research_requested or classification.category == "deep_research" or (file_path and file_path.lower().endswith((".pdf", ".pptx"))):
             # Full Research Brain Deep Research workflow ONLY if explicitly requested, otherwise light capture
             target_url = url or f"https://local.brain/deep-research/{item_id}"
             target_title = raw_payload.get("title") or os.path.basename(file_path or "").rsplit(".", 1)[0] or "Deep Research Capture"
             notes = clean_input.replace(target_url, "").strip() if target_url in clean_input else clean_input
             
-            pdf_bytes = None
-            if file_path and file_path.lower().endswith(".pdf"):
-                with open(file_path, "rb") as f:
-                    pdf_bytes = f.read()
-            
             result = await process_capture_core(
                 url=target_url,
                 title=target_title,
                 markdown_text=notes,
-                pdf_bytes=pdf_bytes,
+                file_path=file_path,
                 deep_extraction=research_requested
             )
             result_title = result.get("title", target_title)
@@ -351,7 +346,7 @@ tags: [future_project, idea]
                     url=target_url,
                     title=target_title,
                     markdown_text=notes_clean,
-                    pdf_bytes=None,
+                    file_path=file_path,
                     deep_extraction=False
                 )
                 result_title = result.get("title", target_title)
@@ -522,6 +517,13 @@ async def watch_inbox_loop():
             
             # Scan for Syncthing conflicts
             await scan_for_syncthing_conflicts()
+            
+            # Reorganize Tasks.md dashboard and archive completed items
+            try:
+                from backend.utils.tasks_dashboard import maintain_tasks_dashboard
+                await maintain_tasks_dashboard()
+            except Exception as dashboard_e:
+                print(f"Backend [Watcher]: Error running tasks dashboard maintenance: {dashboard_e}")
                 
         except Exception as e:
             print(f"Backend [Watcher]: Error in watch loop iteration: {e}")

@@ -23,13 +23,14 @@ def atomic_write(file_path: str, content, is_binary: bool = False):
                 pass
         raise e
 
-def save_source_material(safe_title: str, is_pdf: bool, url: str, content_text: str, pdf_bytes: bytes = None, custom_sources_path: str = None) -> tuple[str, str]:
-    """Saves raw text or PDF source to vault/Sources. Returns (filename, absolute_path)."""
+def save_source_material(safe_title: str, is_binary: bool, url: str, content_text: str, file_bytes: bytes = None, custom_sources_path: str = None, extension: str = None) -> tuple[str, str]:
+    """Saves raw text or binary source to vault/Sources. Returns (filename, absolute_path)."""
     target_path = custom_sources_path or SOURCES_PATH
-    if is_pdf:
-        source_filename = f"{safe_title}.pdf"
+    ext = extension or (".pdf" if is_binary else ".md")
+    if is_binary:
+        source_filename = f"{safe_title}{ext}"
         source_path = os.path.join(target_path, source_filename)
-        atomic_write(source_path, pdf_bytes, is_binary=True)
+        atomic_write(source_path, file_bytes, is_binary=True)
         return source_filename, source_path
     else:
         source_filename = f"{safe_title}_raw.md"

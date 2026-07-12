@@ -165,3 +165,50 @@ async def analyze_image_via_gemini(file_bytes: bytes, caption: str) -> str:
         ]
     )
     return response.text.strip()
+
+def extract_pptx_text(file_path: str) -> str:
+    """Extracts text from slides and speaker notes in a PowerPoint presentation."""
+    from pptx import Presentation
+    try:
+        prs = Presentation(file_path)
+        text_runs = []
+        for slide_idx, slide in enumerate(prs.slides, 1):
+            text_runs.append(f"--- Slide {slide_idx} ---")
+            for shape in slide.shapes:
+                if hasattr(shape, "text") and shape.text.strip():
+                    text_runs.append(shape.text.strip())
+            
+            if slide.notes_slide and slide.notes_slide.notes_text_frame:
+                notes = slide.notes_slide.notes_text_frame.text.strip()
+                if notes:
+                    text_runs.append(f"[Speaker Notes]: {notes}")
+                    
+        return "\n\n".join(text_runs).strip()
+    except Exception as e:
+        print(f"PPTX Text Extraction Error: {e}")
+        return f"Error extracting text from PowerPoint presentation: {e}"
+
+def extract_pptx_text_from_bytes(pptx_bytes: bytes) -> str:
+    """Extracts text from PowerPoint presentation bytes."""
+    import io
+    from pptx import Presentation
+    try:
+        pptx_stream = io.BytesIO(pptx_bytes)
+        prs = Presentation(pptx_stream)
+        text_runs = []
+        for slide_idx, slide in enumerate(prs.slides, 1):
+            text_runs.append(f"--- Slide {slide_idx} ---")
+            for shape in slide.shapes:
+                if hasattr(shape, "text") and shape.text.strip():
+                    text_runs.append(shape.text.strip())
+            
+            if slide.notes_slide and slide.notes_slide.notes_text_frame:
+                notes = slide.notes_slide.notes_text_frame.text.strip()
+                if notes:
+                    text_runs.append(f"[Speaker Notes]: {notes}")
+                    
+        return "\n\n".join(text_runs).strip()
+    except Exception as e:
+        print(f"PPTX Bytes Text Extraction Error: {e}")
+        return f"Error extracting text from PowerPoint presentation bytes: {e}"
+

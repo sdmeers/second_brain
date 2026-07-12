@@ -30,7 +30,7 @@ async def process_capture_core(
     title: str = "Untitled Capture",
     author_hint: str = "",
     markdown_text: str = "",
-    pdf_bytes: Optional[bytes] = None,
+    file_path: Optional[str] = None,
     deep_extraction: bool = True
 ) -> dict:
     try:
@@ -44,16 +44,43 @@ async def process_capture_core(
         
         content_text = markdown_text
         clean_url = url.lower().split('?')[0]
-        is_pdf = clean_url.endswith('.pdf') or '/pdf/' in clean_url
+        
+        ext = ""
+        if file_path:
+            _, ext = os.path.splitext(file_path.lower())
+            
+        is_pdf = ext == ".pdf" or clean_url.endswith('.pdf') or '/pdf/' in clean_url
+        is_pptx = ext == ".pptx" or clean_url.endswith('.pptx')
         is_youtube = "youtube.com/watch" in url or "youtu.be/" in url
         
-        # 1. Handle PDF vs Text extraction vs YouTube Fallback
+        # Read the file bytes if file_path is provided
+        file_bytes = None
+        if file_path and os.path.exists(file_path):
+            try:
+                with open(file_path, "rb") as f:
+                    file_bytes = f.read()
+            except Exception as read_e:
+                print(f"Backend: Failed to read file bytes: {read_e}")
+        
+        # 1. Handle PDF vs PPTX vs Text extraction vs YouTube Fallback
         if is_pdf:
             print("Backend [Stage 1]: Processing as PDF...")
-            if pdf_bytes:
-                content_text = extract_pdf_text_from_bytes(pdf_bytes)
+            if file_bytes:
+                content_text = extract_pdf_text_from_bytes(file_bytes)
             else:
-                content_text, pdf_bytes = extract_pdf_text(url)
+                content_text, file_bytes = extract_pdf_text(url)
+        elif is_pptx:
+            print("Backend [Stage 1]: Processing as PPTX...")
+            from backend.processing.extractor import extract_pptx_text_from_bytes
+            if file_bytes:
+                extracted_text = extract_pptx_text_from_bytes(file_bytes)
+                # Combine slide text with the email body or notes if present
+                if content_text.strip():
+                    content_text = f"{content_text}\n\n=== Slide Contents ===\n\n{extracted_text}"
+                else:
+                    content_text = extracted_text
+            else:
+                content_text = f"PowerPoint presentation: {title}"
         elif is_youtube and not content_text:
             print("Backend [Stage 1]: Processing as YouTube (via backend fallback)...")
             content_text = await extract_youtube_transcript(url)
@@ -127,9 +154,10 @@ async def process_capture_core(
         custom_src_path = None if deep_extraction else REFERENCE_SOURCES_PATH
         custom_sum_path = None if deep_extraction else REFERENCE_NOTES_PATH
 
+        ext_to_use = ".pdf" if is_pdf else (".pptx" if is_pptx else ".md")
         source_link_name, _ = save_source_material(
-            safe_title, is_pdf, url, content_text, pdf_bytes,
-            custom_sources_path=custom_src_path
+            safe_title, is_pdf or is_pptx, url, content_text, file_bytes,
+            custom_sources_path=custom_src_path, extension=ext_to_use
         )
                 
         # 6. Save Brain Node

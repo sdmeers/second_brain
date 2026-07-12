@@ -183,6 +183,34 @@ async def process_queue_worker():
                 db_conn.close()
                 print("Backend [Queue Worker]: Transcription completed and cached in database.")
                 
+        # Check if the file is a PDF or PPTX and needs text extraction for classification
+        elif file_path and file_path.lower().endswith(('.pdf', '.pptx')):
+            if not content_text.strip():
+                print(f"Backend [Queue Worker]: Document file detected ({os.path.basename(file_path)}). Running text extraction for classification...")
+                try:
+                    _, ext = os.path.splitext(file_path.lower())
+                    extracted_text = ""
+                    if ext == ".pdf":
+                        from backend.processing.extractor import extract_pdf_text_from_bytes
+                        with open(file_path, "rb") as f:
+                            extracted_text = extract_pdf_text_from_bytes(f.read())
+                    elif ext == ".pptx":
+                        from backend.processing.extractor import extract_pptx_text
+                        extracted_text = extract_pptx_text(file_path)
+                    
+                    if extracted_text.strip():
+                        content_text = extracted_text
+                        # Update database record with the extracted text to cache it
+                        from backend.ingestion.queue import get_db_connection
+                        db_conn = get_db_connection()
+                        db_cursor = db_conn.cursor()
+                        db_cursor.execute("UPDATE ingestion_queue SET content_text = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (extracted_text, item_id))
+                        db_conn.commit()
+                        db_conn.close()
+                        print("Backend [Queue Worker]: Document text extraction completed and cached in database.")
+                except Exception as ext_e:
+                    print(f"Backend [Queue Worker]: Error extracting text for classification: {ext_e}")
+                
         # Determine raw classification text
         classification_input = content_text
         if file_path and not classification_input:

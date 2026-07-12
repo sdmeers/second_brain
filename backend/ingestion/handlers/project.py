@@ -13,8 +13,8 @@ class ProjectMatchResult(BaseModel):
     note_title: str = Field(description="A clean, descriptive title for this note (3 to 6 words).")
     reasoning: str = Field(description="Brief explanation of the match.")
 
-async def process_project_item(content_text: str, source_info: str) -> dict:
-    """Classifies a project-related note, matches it to an active project folder, and saves it there."""
+async def process_project_item(content_text: str, source_info: str, category: str = None, raw_file_path: str = None) -> dict:
+    """Classifies a project-related note, matches it to an active project folder, and saves it there under the correct subfolder."""
     projects_dir = os.path.join(OBSIDIAN_VAULT_PATH, "02_Projects")
     
     # 1. Resolve list of active projects from the filesystem
@@ -66,13 +66,29 @@ Also, generate a clean, brief note title (3 to 6 words) summarizing the content.
             reasoning=f"Fallback due to error: {e}"
         )
 
-    # 3. Save the note to the project directory
+    # 3. Determine the correct subfolder under the project directory based on category
     target_project = match.matched_project if match.matched_project in active_projects else "Second Brain"
-    note_dir = os.path.join(projects_dir, target_project)
+    subfolder_name = "Notes"
+    if category == "meeting_transcript":
+        subfolder_name = "Meetings"
+    elif category == "idea":
+        subfolder_name = "Notes"
+    elif category in ["deliverable", "output"]:
+        subfolder_name = "Outputs"
+        
+    note_dir = os.path.join(projects_dir, target_project, subfolder_name)
     os.makedirs(note_dir, exist_ok=True)
     
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    date_prefix = datetime.now().strftime("%Y-%m-%d")
+    
     safe_title = sanitize_filename(match.note_title)
-    file_path = os.path.join(note_dir, f"{safe_title}.md")
+    if category == "meeting_transcript":
+        file_name = f"{date_prefix}_{safe_title}"
+    else:
+        file_name = safe_title
+        
+    file_path = os.path.join(note_dir, f"{file_name}.md")
     
     # Check for name collisions
     counter = 1
@@ -81,19 +97,33 @@ Also, generate a clean, brief note title (3 to 6 words) summarizing the content.
         file_path = base_file_path.replace(".md", f"_{counter}.md")
         counter += 1
         
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
+    # Copy raw source file if provided (e.g. audio, pdf, docx, txt)
+    if raw_file_path and os.path.exists(raw_file_path):
+        try:
+            import shutil
+            _, ext = os.path.splitext(raw_file_path)
+            raw_dest_name = f"{os.path.basename(file_path).rsplit('.', 1)[0]}_raw{ext}"
+            raw_dest_path = os.path.join(note_dir, raw_dest_name)
+            shutil.copy2(raw_file_path, raw_dest_path)
+            print(f"Project Router: Copied original source file to {raw_dest_path}")
+            source_link = f"[[{raw_dest_name}]]"
+        except Exception as copy_e:
+            print(f"Project Router: Failed to copy raw source file: {copy_e}")
+            source_link = source_info
+    else:
+        source_link = source_info
+        
     # Save the note with simple, clean metadata
     file_content = f"""---
 title: "{match.note_title}"
 project: "{target_project}"
 date_created: "{timestamp}"
-source: "{source_info}"
+source: "{source_link}"
 tags: [project, {target_project.lower().replace(' ', '_')}]
 ---
 # {match.note_title}
 
-*Created on {timestamp} via {source_info}*
+*Created on {timestamp} via {source_link}*
 
 ---
 
@@ -105,12 +135,10 @@ tags: [project, {target_project.lower().replace(' ', '_')}]
         atomic_write(file_path, file_content)
         
         # Log to _CHANGELOG.md
-        # We can write the changelog entry directly or use log_action
         changelog_file = os.path.join(OBSIDIAN_VAULT_PATH, "00_System", "_CHANGELOG.md")
         if os.path.exists(changelog_file):
             rel_path = os.path.relpath(file_path, OBSIDIAN_VAULT_PATH)
             date_str = datetime.now().strftime("%Y-%m-%d")
-            # For append, we read, append, and atomic_write to prevent corruption
             try:
                 with open(changelog_file, "r", encoding="utf-8") as f:
                     old_changelog = f.read()

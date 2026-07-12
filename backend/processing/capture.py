@@ -4,7 +4,7 @@ import asyncio
 import httpx
 from typing import Optional
 
-from backend.config import SUMMARIES_PATH, SOURCES_PATH
+from backend.config import SUMMARIES_PATH, SOURCES_PATH, REFERENCE_NOTES_PATH, REFERENCE_SOURCES_PATH
 from backend.vault.paths import is_url_already_ingested, get_atlas_themes
 from backend.vault.writer import save_source_material, save_brain_node
 from backend.processing.extractor import (
@@ -124,10 +124,19 @@ async def process_capture_core(
         print(f"Backend [Stage 4]: Determined Title: {safe_title}")
         
         # 5. Save Source file
-        source_link_name, _ = save_source_material(safe_title, is_pdf, url, content_text, pdf_bytes)
+        custom_src_path = None if deep_extraction else REFERENCE_SOURCES_PATH
+        custom_sum_path = None if deep_extraction else REFERENCE_NOTES_PATH
+
+        source_link_name, _ = save_source_material(
+            safe_title, is_pdf, url, content_text, pdf_bytes,
+            custom_sources_path=custom_src_path
+        )
                 
         # 6. Save Brain Node
-        node_path = save_brain_node(safe_title, brain_node_markdown, source_link_name)
+        node_path = save_brain_node(
+            safe_title, brain_node_markdown, source_link_name,
+            custom_summaries_path=custom_sum_path
+        )
             
         # 7. Process Concepts (Entity Update Loop)
         if deep_extraction and concepts_to_process:

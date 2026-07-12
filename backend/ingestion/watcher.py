@@ -202,11 +202,31 @@ async def process_queue_worker():
         
         source_label = f"{source_type.title()} Input"
         
-        if classification.category == "deep_research" or (file_path and file_path.lower().endswith(".pdf")):
-            # Full Centaur Brain Deep Research workflow
+        # Check if Research Brain is explicitly requested
+        research_requested = False
+        triggers = [
+            "/research_brain", "/research", "#research", "add to research brain", "add to research",
+            "/centaur", "add to centaur brain", "#centaur", "centaur brain"
+        ]
+        text_lower = classification_input.lower()
+        subject_lower = str(raw_payload.get("subject", "")).lower()
+        
+        for trigger in triggers:
+            if trigger in text_lower or trigger in subject_lower:
+                research_requested = True
+                break
+                
+        # Clean trigger tags from input text so they don't appear in the final note body
+        clean_input = classification_input
+        for trigger in triggers:
+            pattern = re.compile(re.escape(trigger), re.IGNORECASE)
+            clean_input = pattern.sub("", clean_input).strip()
+            
+        if research_requested or classification.category == "deep_research" or (file_path and file_path.lower().endswith(".pdf")):
+            # Full Research Brain Deep Research workflow ONLY if explicitly requested, otherwise light capture
             target_url = url or f"https://local.brain/deep-research/{item_id}"
             target_title = raw_payload.get("title") or os.path.basename(file_path or "").rsplit(".", 1)[0] or "Deep Research Capture"
-            notes = classification_input.replace(target_url, "").strip() if target_url in classification_input else classification_input
+            notes = clean_input.replace(target_url, "").strip() if target_url in clean_input else clean_input
             
             pdf_bytes = None
             if file_path and file_path.lower().endswith(".pdf"):
@@ -218,7 +238,7 @@ async def process_queue_worker():
                 title=target_title,
                 markdown_text=notes,
                 pdf_bytes=pdf_bytes,
-                deep_extraction=True
+                deep_extraction=research_requested
             )
             result_title = result.get("title", target_title)
             success = True
@@ -237,16 +257,20 @@ async def process_queue_worker():
             
         elif classification.category in ["meeting_transcript", "project_note"]:
             # Project Handler: save note in matching 02_Projects folder
-            result = await process_project_item(classification_input, source_label)
+            result = await process_project_item(
+                classification_input, source_label,
+                category=classification.category, raw_file_path=file_path
+            )
             result_title = f"Project Note: {result.get('title')}"
             success = True
             
         elif classification.category in ["quick_note", "idea", "reference"]:
             # Quick Note/Idea/Reference: check if it matches an active project folder
-            # If yes: saves inside project. If no: matches to 'None' and we save as lightweight summary
+            # If yes: saves inside project. If no: matches to 'None' and we save as lightweight summary or future project idea
             from backend.config import OBSIDIAN_VAULT_PATH, GEMINI_MODEL
             from google.genai import types
             from backend.utils.gemini import call_gemini_with_retry
+            from backend.utils.sanitize import sanitize_filename
             projects_dir = os.path.join(OBSIDIAN_VAULT_PATH, "02_Projects")
             active_projects = []
             if os.path.exists(projects_dir):
@@ -264,19 +288,70 @@ async def process_queue_worker():
                 
             if match.matched_project in active_projects:
                 # Save inside the matched project folder!
-                result = await process_project_item(classification_input, source_label)
+                result = await process_project_item(
+                    classification_input, source_label,
+                    category=classification.category, raw_file_path=file_path
+                )
                 result_title = f"Project Note: {result.get('title')} ({match.matched_project})"
                 success = True
+            elif classification.category == "idea":
+                # Save general project ideas in the 02_Projects/Ideas/ folder!
+                ideas_dir = os.path.join(OBSIDIAN_VAULT_PATH, "02_Projects", "Ideas")
+                os.makedirs(ideas_dir, exist_ok=True)
+                safe_title = sanitize_filename(match.note_title)
+                file_path_dest = os.path.join(ideas_dir, f"{safe_title}.md")
+                
+                # Check for name collisions
+                counter = 1
+                base_file_path = file_path_dest
+                while os.path.exists(file_path_dest):
+                    file_path_dest = base_file_path.replace(".md", f"_{counter}.md")
+                    counter += 1
+                
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                
+                # Copy raw source file if provided (e.g. audio, pdf)
+                source_link = source_label
+                if file_path and os.path.exists(file_path):
+                    try:
+                        import shutil
+                        _, ext = os.path.splitext(file_path)
+                        raw_dest_name = f"{os.path.basename(file_path_dest).rsplit('.', 1)[0]}_raw{ext}"
+                        raw_dest_path = os.path.join(ideas_dir, raw_dest_name)
+                        shutil.copy2(file_path, raw_dest_path)
+                        source_link = f"[[{raw_dest_name}]]"
+                    except Exception as copy_e:
+                        print(f"Project Router: Failed to copy raw idea file: {copy_e}")
+                
+                file_content = f"""---
+title: "{match.note_title}"
+date_created: "{timestamp}"
+source: "{source_link}"
+tags: [future_project, idea]
+---
+# {match.note_title}
+
+*Created on {timestamp} via {source_link}*
+
+---
+
+{clean_input}
+"""
+                from backend.vault.writer import atomic_write
+                atomic_write(file_path_dest, file_content)
+                result_title = f"Future Project Idea: {match.note_title}"
+                success = True
             else:
-                # Save as standard lightweight summary in Summaries/ (no concepts updated)
+                # Save as standard lightweight summary in Reference_Notes/ (no concepts updated)
                 target_url = url or f"https://local.brain/bookmark/{item_id}"
                 target_title = raw_payload.get("title") or match.note_title or "Bookmark Capture"
-                notes = classification_input.replace(target_url, "").strip() if target_url in classification_input else classification_input
+                notes_clean = clean_input.replace(target_url, "").strip() if target_url in clean_input else clean_input
                 
                 result = await process_capture_core(
                     url=target_url,
                     title=target_title,
-                    markdown_text=notes,
+                    markdown_text=notes_clean,
+                    pdf_bytes=None,
                     deep_extraction=False
                 )
                 result_title = result.get("title", target_title)

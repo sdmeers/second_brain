@@ -17,10 +17,15 @@ if not OBSIDIAN_VAULT_PATH:
     raise RuntimeError("CRITICAL: OBSIDIAN_VAULT_PATH missing from .env")
 
 # Ensure Obsidian folders exist (using P.A.R.A. folders)
-SUMMARIES_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "04_Resources", "Summaries")
-SOURCES_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "04_Resources", "Sources")
-ATLAS_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "04_Resources", "Atlas")
-CONCEPTS_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "04_Resources", "Concepts")
+RESEARCH_BRAIN_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "04_Resources", "research_brain")
+SUMMARIES_PATH = os.path.join(RESEARCH_BRAIN_PATH, "Summaries")
+SOURCES_PATH = os.path.join(RESEARCH_BRAIN_PATH, "Sources")
+ATLAS_PATH = os.path.join(RESEARCH_BRAIN_PATH, "Atlas")
+CONCEPTS_PATH = os.path.join(RESEARCH_BRAIN_PATH, "Concepts")
+
+# General Reference Resources (Non-Centaur)
+REFERENCE_NOTES_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "04_Resources", "Reference_Notes")
+REFERENCE_SOURCES_PATH = os.path.join(REFERENCE_NOTES_PATH, "Sources")
 
 # New P.A.R.A paths
 INBOX_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "01_Inbox")
@@ -35,6 +40,8 @@ os.makedirs(SUMMARIES_PATH, exist_ok=True)
 os.makedirs(SOURCES_PATH, exist_ok=True)
 os.makedirs(ATLAS_PATH, exist_ok=True)
 os.makedirs(CONCEPTS_PATH, exist_ok=True)
+os.makedirs(REFERENCE_NOTES_PATH, exist_ok=True)
+os.makedirs(REFERENCE_SOURCES_PATH, exist_ok=True)
 if os.getenv("ENABLE_OBSIDIAN_INBOX_POLLING", "false").lower() == "true":
     os.makedirs(INBOX_PATH, exist_ok=True)
     os.makedirs(INBOX_FAILED_PATH, exist_ok=True)

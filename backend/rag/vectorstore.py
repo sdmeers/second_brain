@@ -167,7 +167,7 @@ async def index_vault(force_reindex: bool = False):
     cursor = conn.cursor()
     
     # 1. Scan for all markdown files in active directories
-    target_dirs = ["02_Projects", "03_Areas", "04_Resources"]
+    target_dirs = ["02_Projects", "03_Areas", "04_Resources", "05_Archive"]
     indexed_files = set()
     
     for folder in target_dirs:

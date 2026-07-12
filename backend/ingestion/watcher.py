@@ -26,7 +26,7 @@ from backend.ingestion.queue import (
 )
 from backend.ingestion.classifier import classify_input
 from backend.processing.capture import process_capture_core, DuplicateURLError
-from backend.ingestion.telegram import poll_telegram, notify_via_telegram
+from backend.ingestion.telegram import poll_telegram, poll_telegram_qa, notify_via_telegram
 from backend.ingestion.gmail import poll_gmail
 
 # Specific Ingestion Handlers
@@ -211,6 +211,59 @@ async def process_queue_worker():
                 except Exception as ext_e:
                     print(f"Backend [Queue Worker]: Error extracting text for classification: {ext_e}")
                 
+        # Check if the file is an image file and needs OCR/text extraction
+        elif file_path and file_path.lower().endswith(('.png', '.jpg', '.jpeg', '.webp', '.tiff', '.bmp')):
+            print(f"Backend [Queue Worker]: Image file detected ({os.path.basename(file_path)}). Running multimodal text extraction...")
+            try:
+                # Determine MIME type
+                _, ext = os.path.splitext(file_path.lower())
+                mime_type = "image/png"
+                if ext in [".jpg", ".jpeg"]:
+                    mime_type = "image/jpeg"
+                elif ext == ".webp":
+                    mime_type = "image/webp"
+                
+                with open(file_path, "rb") as img_f:
+                    img_bytes = img_f.read()
+                    
+                from backend.config import GEMINI_MODEL
+                from google.genai import types
+                from backend.utils.gemini import call_gemini_with_retry
+                
+                image_part = types.Part.from_bytes(data=img_bytes, mime_type=mime_type)
+                
+                # If the user provided a caption or instruction, use it to guide extraction
+                if content_text.strip():
+                    prompt = (
+                        f"Analyze the image and follow this instruction: {content_text.strip()}\n"
+                        "Return only the extracted information requested."
+                    )
+                else:
+                    prompt = (
+                        "You are an OCR and document extraction system. Read this image and extract all text inside it.\n"
+                        "If it is an ID card, driving license, passport, receipt, or document, extract and list all fields clearly.\n"
+                        "Return only the extracted text, keeping the layout logical."
+                    )
+                
+                response = await call_gemini_with_retry(
+                    model=GEMINI_MODEL,
+                    contents=[image_part, prompt]
+                )
+                
+                extracted_text = response.text.strip()
+                if extracted_text:
+                    content_text = extracted_text
+                    # Update database record with the extracted text to cache it
+                    from backend.ingestion.queue import get_db_connection
+                    db_conn = get_db_connection()
+                    db_cursor = db_conn.cursor()
+                    db_cursor.execute("UPDATE ingestion_queue SET content_text = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (extracted_text, item_id))
+                    db_conn.commit()
+                    db_conn.close()
+                    print("Backend [Queue Worker]: Image text extraction completed and cached in database.")
+            except Exception as img_e:
+                print(f"Backend [Queue Worker]: Error extracting text from image: {img_e}")
+
         # Determine raw classification text
         classification_input = content_text
         if file_path and not classification_input:
@@ -642,6 +695,7 @@ async def watch_inbox_loop():
             
             if enable_telegram:
                 await poll_telegram()
+                await poll_telegram_qa()
                 
             if enable_gmail and (counter % 4 == 0):
                 await poll_gmail()

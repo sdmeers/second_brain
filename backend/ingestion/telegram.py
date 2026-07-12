@@ -4,6 +4,7 @@ from datetime import datetime
 import httpx
 from backend.config import (
     TELEGRAM_BOT_TOKEN,
+    TELEGRAM_QA_BOT_TOKEN,
     TELEGRAM_ALLOWED_CHAT_IDS,
     COMPLETED_MD_FILE,
     FAILED_MD_FILE
@@ -276,3 +277,97 @@ async def poll_telegram():
 
         except Exception as e:
             print(f"Backend [Telegram Watcher]: Error polling Telegram: {type(e).__name__} - {e}")
+
+
+async def process_telegram_message_qa(message: dict, token: str, http_client: httpx.AsyncClient):
+    chat_id = message["chat"]["id"]
+    text = message.get("text") or message.get("caption") or ""
+    
+    if not text.strip():
+        await http_client.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": "❓ Please send a text question to query your Second Brain."}
+        )
+        return
+        
+    await http_client.post(
+        f"https://api.telegram.org/bot{token}/sendMessage",
+        json={"chat_id": chat_id, "text": "🔍 Searching your Second Brain..."}
+    )
+    
+    try:
+        from backend.rag.chat import query_brain
+        result = await query_brain(text.strip())
+        answer = result["answer"]
+        
+        await http_client.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": answer}
+        )
+    except Exception as e:
+        print(f"Backend [Telegram Q&A]: Error answering query: {e}")
+        await http_client.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": f"❌ Error retrieving answer: {e}"}
+        )
+
+
+async def poll_telegram_qa():
+    token = TELEGRAM_QA_BOT_TOKEN
+    if not token:
+        return
+
+    allowed_chat_ids = TELEGRAM_ALLOWED_CHAT_IDS
+    offset_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".telegram_qa_offset")
+    offset = 0
+    if os.path.exists(offset_file):
+        try:
+            with open(offset_file, "r") as f:
+                offset = int(f.read().strip())
+        except Exception:
+            pass
+
+    async with httpx.AsyncClient() as client:
+        url = f"https://api.telegram.org/bot{token}/getUpdates"
+        params = {"timeout": 5}
+        if offset > 0:
+            params["offset"] = offset
+
+        try:
+            response = await client.get(url, params=params, timeout=10.0)
+            if response.status_code != 200:
+                print(f"Backend [Telegram Q&A Watcher]: Error getting updates: {response.status_code}")
+                return
+
+            data = response.json()
+            if not data.get("ok"):
+                print(f"Backend [Telegram Q&A Watcher]: API returned error: {data}")
+                return
+
+            updates = data.get("result", [])
+            if updates:
+                print(f"Backend [Telegram Q&A Watcher]: Fetched {len(updates)} update(s) from Telegram Q&A.")
+            for update in updates:
+                new_offset = update["update_id"] + 1
+                if new_offset > offset:
+                    offset = new_offset
+                    with open(offset_file, "w") as f:
+                        f.write(str(offset))
+
+                message = update.get("message") or update.get("channel_post")
+                if not message:
+                    continue
+
+                chat_id = message["chat"]["id"]
+                if allowed_chat_ids and chat_id not in allowed_chat_ids:
+                    print(f"Backend [Telegram Q&A Watcher]: Ignored message from unauthorized chat: {chat_id}")
+                    await client.post(
+                        f"https://api.telegram.org/bot{token}/sendMessage",
+                        json={"chat_id": chat_id, "text": f"Unauthorized chat ID ({chat_id}). Please add it to TELEGRAM_ALLOWED_CHAT_IDS in .env."}
+                    )
+                    continue
+
+                await process_telegram_message_qa(message, token, client)
+
+        except Exception as e:
+            print(f"Backend [Telegram Q&A Watcher]: Error polling Telegram Q&A: {type(e).__name__} - {e}")

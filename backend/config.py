@@ -58,6 +58,7 @@ for filepath in [INBOX_MD_FILE, COMPLETED_MD_FILE, FAILED_MD_FILE]:
 
 # Telegram Configuration
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_QA_BOT_TOKEN = os.getenv("TELEGRAM_QA_BOT_TOKEN")
 TELEGRAM_ALLOWED_CHAT_IDS = []
 allowed_chat_ids_str = os.getenv("TELEGRAM_ALLOWED_CHAT_IDS")
 if allowed_chat_ids_str:

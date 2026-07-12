@@ -250,6 +250,7 @@ async def process_queue_worker():
             pattern = re.compile(re.escape(trigger), re.IGNORECASE)
             clean_input = pattern.sub("", clean_input).strip()
             
+        saved_file_path = None
         if research_requested or classification.category == "deep_research" or (file_path and file_path.lower().endswith((".pdf", ".pptx"))):
             # Full Research Brain Deep Research workflow ONLY if explicitly requested, otherwise light capture
             target_url = url or f"https://local.brain/deep-research/{item_id}"
@@ -264,12 +265,14 @@ async def process_queue_worker():
                 deep_extraction=research_requested
             )
             result_title = result.get("title", target_title)
+            saved_file_path = result.get("node_path")
             success = True
             
         elif classification.category == "task":
             # Task Handler: extract check-items and append to Tasks.md
             msg = await process_task_item(classification_input, source_label)
             result_title = "Appended Task(s)"
+            saved_file_path = os.path.join(OBSIDIAN_VAULT_PATH, "Tasks.md")
             success = True
             
         elif classification.category == "voice_dump":
@@ -278,17 +281,8 @@ async def process_queue_worker():
             result_title = "Split Voice Dump"
             success = True
             
-        elif classification.category in ["meeting_transcript", "project_note"]:
-            # Project Handler: save note in matching 02_Projects folder
-            result = await process_project_item(
-                classification_input, source_label,
-                category=classification.category, raw_file_path=file_path
-            )
-            result_title = f"Project Note: {result.get('title')}"
-            success = True
-            
-        elif classification.category in ["quick_note", "idea", "reference"]:
-            # Quick Note/Idea/Reference: check if it matches an active project or area folder
+        elif classification.category in ["quick_note", "idea", "reference", "meeting_transcript", "project_note"]:
+            # Quick Note/Idea/Reference/Meeting/Project Note: check if it matches an active project or area folder
             # If yes: saves inside project or area. If no: saves as lightweight summary or future project idea
             from pydantic import BaseModel, Field
             class PARARoutingResult(BaseModel):
@@ -359,6 +353,7 @@ async def process_queue_worker():
                     matched_project=match.matched_name, matched_title=match.note_title
                 )
                 result_title = f"Project Note: {result.get('title')} ({match.matched_name})"
+                saved_file_path = result.get("file_path")
                 success = True
                 
             elif match.matched_type == "area" and match.matched_name in active_areas_map:
@@ -378,18 +373,19 @@ async def process_queue_worker():
                     
                 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 
-                # Copy raw source file if provided (e.g. audio, pdf)
+                # Copy raw source file if provided (excluding .md and .txt duplicates)
                 source_link = source_label
                 if file_path and os.path.exists(file_path):
-                    try:
-                        import shutil
-                        _, ext = os.path.splitext(file_path)
-                        raw_dest_name = f"{os.path.basename(file_path_dest).rsplit('.', 1)[0]}_raw{ext}"
-                        raw_dest_path = os.path.join(target_area_dir, raw_dest_name)
-                        shutil.copy2(file_path, raw_dest_path)
-                        source_link = f"[[{raw_dest_name}]]"
-                    except Exception as copy_e:
-                        print(f"Area Router: Failed to copy raw file: {copy_e}")
+                    _, ext = os.path.splitext(file_path.lower())
+                    if ext not in [".md", ".txt"]:
+                        try:
+                            import shutil
+                            raw_dest_name = f"{os.path.basename(file_path_dest).rsplit('.', 1)[0]}_raw{ext}"
+                            raw_dest_path = os.path.join(target_area_dir, raw_dest_name)
+                            shutil.copy2(file_path, raw_dest_path)
+                            source_link = f"[[{raw_dest_name}]]"
+                        except Exception as copy_e:
+                            print(f"Area Router: Failed to copy raw file: {copy_e}")
                         
                 file_content = f"""---
 title: "{match.note_title}"
@@ -409,6 +405,7 @@ tags: [area, {match.matched_name.lower().replace(' ', '_')}]
                 from backend.vault.writer import atomic_write
                 atomic_write(file_path_dest, file_content)
                 result_title = f"Area Note: {match.note_title} ({match.matched_name})"
+                saved_file_path = file_path_dest
                 success = True
                 
             elif classification.category == "idea":
@@ -427,18 +424,19 @@ tags: [area, {match.matched_name.lower().replace(' ', '_')}]
                 
                 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 
-                # Copy raw source file if provided (e.g. audio, pdf)
+                # Copy raw source file if provided (excluding .md and .txt duplicates)
                 source_link = source_label
                 if file_path and os.path.exists(file_path):
-                    try:
-                        import shutil
-                        _, ext = os.path.splitext(file_path)
-                        raw_dest_name = f"{os.path.basename(file_path_dest).rsplit('.', 1)[0]}_raw{ext}"
-                        raw_dest_path = os.path.join(ideas_dir, raw_dest_name)
-                        shutil.copy2(file_path, raw_dest_path)
-                        source_link = f"[[{raw_dest_name}]]"
-                    except Exception as copy_e:
-                        print(f"Project Router: Failed to copy raw idea file: {copy_e}")
+                    _, ext = os.path.splitext(file_path.lower())
+                    if ext not in [".md", ".txt"]:
+                        try:
+                            import shutil
+                            raw_dest_name = f"{os.path.basename(file_path_dest).rsplit('.', 1)[0]}_raw{ext}"
+                            raw_dest_path = os.path.join(ideas_dir, raw_dest_name)
+                            shutil.copy2(file_path, raw_dest_path)
+                            source_link = f"[[{raw_dest_name}]]"
+                        except Exception as copy_e:
+                            print(f"Project Router: Failed to copy raw idea file: {copy_e}")
                 
                 file_content = f"""---
 title: "{match.note_title}"
@@ -457,6 +455,7 @@ tags: [future_project, idea]
                 from backend.vault.writer import atomic_write
                 atomic_write(file_path_dest, file_content)
                 result_title = f"Future Project Idea: {match.note_title}"
+                saved_file_path = file_path_dest
                 success = True
                 
             else:
@@ -473,6 +472,7 @@ tags: [future_project, idea]
                     deep_extraction=False
                 )
                 result_title = result.get("title", target_title)
+                saved_file_path = result.get("node_path")
                 success = True
             
         elif classification.category == "url_capture" or url:
@@ -488,6 +488,7 @@ tags: [future_project, idea]
                 deep_extraction=False
             )
             result_title = result.get("title", target_title)
+            saved_file_path = result.get("node_path")
             success = True
             
         else:
@@ -501,8 +502,8 @@ tags: [future_project, idea]
                 deep_extraction=False
             )
             result_title = result.get("title", target_title)
+            saved_file_path = result.get("node_path")
             success = True
-
             
         if success:
             update_item_status(item_id, "completed")
@@ -532,10 +533,20 @@ tags: [future_project, idea]
             except Exception as git_e:
                 print(f"Backend [Queue Worker]: Git commit failed: {git_e}")
                 
+            # Extract display location relative to vault root
+            location_str = "Unknown"
+            if saved_file_path:
+                try:
+                    rel_path = os.path.relpath(saved_file_path, OBSIDIAN_VAULT_PATH)
+                    location_str = os.path.dirname(rel_path) or "root"
+                except Exception:
+                    pass
+                
             # Notify Steven
             await notify_via_telegram(
                 f"🧠✅ Processed: [[{result_title}]]\n"
                 f"Category: {classification.category} (conf: {classification.confidence})\n"
+                f"Location: {location_str}\n"
                 f"Reason: {classification.reasoning}"
             )
             

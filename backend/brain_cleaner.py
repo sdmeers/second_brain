@@ -20,9 +20,9 @@ GEMINI_MODEL = os.getenv("CLEANER_GEMINI_MODEL", os.getenv("GEMINI_MODEL", "gemi
 if not VAULT_PATH or not GEMINI_API_KEY:
     raise RuntimeError("Missing OBSIDIAN_VAULT_PATH or GEMINI_API_KEY in .env")
 
-SUMMARIES_DIR = os.path.join(VAULT_PATH, "04_Resources", "research_brain", "Summaries")
-ATLAS_DIR = os.path.join(VAULT_PATH, "04_Resources", "research_brain", "Atlas")
-CONCEPTS_DIR = os.path.join(VAULT_PATH, "04_Resources", "research_brain", "Concepts")
+SUMMARIES_DIR = os.path.join(VAULT_PATH, "04_Resources", "Research_Brain", "Summaries")
+ATLAS_DIR = os.path.join(VAULT_PATH, "04_Resources", "Research_Brain", "Atlas")
+CONCEPTS_DIR = os.path.join(VAULT_PATH, "04_Resources", "Research_Brain", "Concepts")
 
 client = genai.Client(api_key=GEMINI_API_KEY)
 

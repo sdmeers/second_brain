@@ -17,7 +17,7 @@ if not OBSIDIAN_VAULT_PATH:
     raise RuntimeError("CRITICAL: OBSIDIAN_VAULT_PATH missing from .env")
 
 # Ensure Obsidian folders exist (using P.A.R.A. folders)
-RESEARCH_BRAIN_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "04_Resources", "research_brain")
+RESEARCH_BRAIN_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "04_Resources", "Research_Brain")
 SUMMARIES_PATH = os.path.join(RESEARCH_BRAIN_PATH, "Summaries")
 SOURCES_PATH = os.path.join(RESEARCH_BRAIN_PATH, "Sources")
 ATLAS_PATH = os.path.join(RESEARCH_BRAIN_PATH, "Atlas")

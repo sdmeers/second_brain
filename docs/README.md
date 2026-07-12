@@ -12,7 +12,7 @@ All elements are stored as plain text markdown files in a standard P.A.R.A. fold
 2. **Local GPU Voice Note Transcription:** Uses `faster-whisper` (`large-v3` model) running directly on the homeserver's GTX 1070 GPU via CUDA for fast, zero-cost, private voice transcription.
 3. **Research Brain Ontology Pipeline:** Automatically extracts core concepts, summaries, wikilinks, and metadata from research papers, web articles, and books, building an interconnected knowledge graph.
 4. **Master Task Sorter & Archiver:** Running every 15 seconds, it automatically parses active tasks in `Tasks.md`, categorizes them into smart deadline sections (`🚨 Overdue`, `📅 Due Today`, `🗓️ Upcoming`, `🗃️ Backlog`), and archives completed items (`- [x]`) into `Completed_Tasks.md` with completion timestamps.
-5. **Fast RAG Vector Q&A:** Leverages `sqlite-vss` (vector search extension) to store chunked embeddings of your vault. Ask questions through Telegram or CLI to retrieve sourced citations. Operates in SQLite WAL (Write-Ahead Logging) mode to prevent concurrency locks.
+5. **Fast RAG Vector Q&A:** Leverages `sqlite-vss` (vector search extension) to store chunked embeddings of your vault. Ask questions through a dedicated prefix-free Q&A Telegram bot or CLI to retrieve sourced citations. Operates in SQLite WAL (Write-Ahead Logging) mode to prevent concurrency locks.
 6. **Robust Daemon Architecture:** Operates as a systemd user service with crash recovery, atomic write safety, and automatic Git commits on every successful ingestion.
 
 ---
@@ -77,7 +77,8 @@ This returns the current system status:
 Environment variables are managed in the `backend/.env` file:
 *   **`OBSIDIAN_VAULT_PATH`**: Path to your Obsidian vault directory (e.g. `/home/sdmeers/vault`).
 *   **`GEMINI_API_KEY`**: Google AI Studio API key.
-*   **`TELEGRAM_BOT_TOKEN`**: Bot token generated via BotFather for remote Telegram capture.
+*   **`TELEGRAM_BOT_TOKEN`**: Bot token generated via BotFather for the remote Ingest bot.
+*   **`TELEGRAM_QA_BOT_TOKEN`**: Bot token generated via BotFather for the prefix-free Q&A bot.
 *   **`PORT`**: HTTP Port for the API server (default: `8085`).
 *   **`ENABLE_OBSIDIAN_INBOX_POLLING`**: Scans the inbox folder for file drops (default: `True`).
 *   **`ENABLE_TELEGRAM_BOT`**: Actively polls Telegram for messages and voice notes (default: `True`).

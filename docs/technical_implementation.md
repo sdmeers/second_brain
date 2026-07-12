@@ -11,10 +11,13 @@ The orchestrator operates as a Python FastAPI daemon running under systemd. It h
 ```mermaid
 graph TD
     %% Inputs
-    Telegram[Telegram Channel] -->|Poll| Watcher
+    Telegram[Telegram Ingest Bot] -->|Poll| Watcher
     Gmail[Gmail Inbox] -->|IMAP| Watcher
     Folder[01_Inbox/ Directory] -->|Filesystem Event| Watcher
     Samba[Samba Share //homeserver/Inbox] -->|SMB Write| Folder
+    
+    %% Q&A Bot
+    TelegramQA[Telegram Q&A Bot] -->|Poll / Direct Query| RAGMod[RAG Chat Module]
 
     %% Core
     Watcher[Watcher Loop / FastAPI] -->|Enqueue| Queue[(SQLite Queue DB)]
@@ -38,6 +41,10 @@ graph TD
     %% Indexing
     TasksFile & ProjFolder & AreaFolder & Research & Reference -->|Hash Change| Indexer[Incremental Vector Indexer]
     Indexer -->|Gemini Embedding| VectorDB[(SQLite-VSS Vector DB)]
+    
+    %% Query Flow
+    RAGMod -->|Gemini Embedding| VectorDB
+    RAGMod -->|Synthesized Answer| TelegramQA
     
     %% Commits & Alerts
     Worker -->|Git Commit| Git[Git Repository]
@@ -105,17 +112,17 @@ CREATE VIRTUAL TABLE vss_brain_chunks USING vss0(
 
 ## 5. RAG Query Flow
 
-The retrieval augmented generation pipeline operates as follows:
+The retrieval augmented generation pipeline operates as follows (bypassing the ingestion queue entirely for instant responses):
 
 ```mermaid
 sequenceDiagram
     actor User
-    participant Bot as Telegram Bot / CLI
+    participant Bot as Telegram Q&A Bot / CLI
     participant RAG as RAG Chat Module
     participant DB as SQLite-VSS Database
     participant API as Gemini API
 
-    User->>Bot: Ask: "What is my laptop Syncthing ID?"
+    User->>Bot: Ask: "What is my laptop Syncthing ID?" (No prefix needed)
     Bot->>RAG: Pass query string
     RAG->>API: Generate query embedding (text-embedding-004)
     API-->>RAG: Return 3072-dimension vector

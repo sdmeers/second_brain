@@ -29,7 +29,7 @@ Unlike modern "walled garden" knowledge apps that store your thoughts in proprie
 ## 📥 Ingestion & Capture Interfaces
 
 The orchestrator monitors multiple low-friction entry points:
-*   **Telegram Bot Channel:** Send voice memos, paste links, type notes, or drop files directly from your phone while on the go.
+*   **Telegram Bot Channels:** Uses two dedicated private Telegram bots: one for Ingest (capturing links, voice notes, files, or quick text) and one for Q&A (allowing conversational prefix-free queries against your knowledge base).
 *   **Local Network Inbox Share:** Drop PDFs, PowerPoints, or text documents directly into your mounted Samba folder from your laptop's file manager.
 *   **Obsidian Inbox Drops:** Put files directly into `01_Inbox/` or append text blocks to `01_Inbox/Inbox.md`. The daemon sweeps the folder every 15 seconds.
 *   **Gmail/IMAP Polling:** Forward articles or emails to a designated inbox. The orchestrator automatically extracts the body and processes it.

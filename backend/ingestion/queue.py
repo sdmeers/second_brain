@@ -30,6 +30,8 @@ def init_queue_db():
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    # Reset any stuck 'processing' items back to 'pending' on startup
+    cursor.execute("UPDATE ingestion_queue SET status = 'pending' WHERE status = 'processing'")
     conn.commit()
     conn.close()
 

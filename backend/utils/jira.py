@@ -16,6 +16,11 @@ async def create_jira_issue(summary: str, description: str, project_key: str = N
     if not JIRA_USER_EMAIL or not JIRA_API_TOKEN:
         raise ValueError("JIRA_USER_EMAIL and JIRA_API_TOKEN must be configured in .env")
 
+    # Safeguard summary: Jira REST API strictly forbids newline characters in the summary field
+    clean_summary = summary.replace("\n", " ").replace("\r", " ").strip()
+    if not clean_summary:
+        clean_summary = "Second Brain Ingested Task"
+
     # Ensure URL starts with http(s)
     jira_url = JIRA_URL
     if not jira_url.startswith("http"):
@@ -39,7 +44,7 @@ async def create_jira_issue(summary: str, description: str, project_key: str = N
             "project": {
                 "key": pkey
             },
-            "summary": summary,
+            "summary": clean_summary,
             "description": description,
             "issuetype": {
                 "name": "Task"

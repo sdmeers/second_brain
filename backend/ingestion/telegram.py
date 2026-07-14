@@ -129,14 +129,19 @@ async def process_telegram_message(message: dict, token: str, http_client: httpx
             )
             
             try:
-                from backend.utils.jira import create_jira_issue
-                summary = jira_text
-                if len(jira_text) > 80:
-                    summary = jira_text[:77] + "..."
+                # Clean up and split lines to use the first line as summary
+                lines = [line.strip() for line in jira_text.splitlines() if line.strip()]
+                if not lines:
+                    raise ValueError("Task description is empty")
                 
+                summary = lines[0]
+                if len(summary) > 80:
+                    summary = summary[:77] + "..."
+                
+                from backend.utils.jira import create_jira_issue
                 issue_key = await create_jira_issue(
                     summary=summary,
-                    description=f"Created directly via Telegram /jira command.\n\nText: {jira_text}"
+                    description=jira_text
                 )
                 
                 await http_client.post(

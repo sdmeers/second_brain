@@ -4,20 +4,23 @@ This document outlines the roadmap and technical specifications for the upcoming
 
 ---
 
-## Phase 8: Intentional Jira Integration (Planned)
+## Phase 8: Intentional Jira Integration (Completed)
 
-The goal of this phase is to connect personal project notes and task lists to Atlassian Jira (`stevenmeers.atlassian.net`) while maintaining complete user control over what enters the corporate backlog.
+The goal of this phase was to connect personal project notes and task lists to Atlassian Jira (`stevenmeers.atlassian.net`) while maintaining complete user control over what enters the corporate backlog.
 
 ### 1. Intentional Backlog Injection
 *   **The Philosophy:** The system will **never** automatically push items to Jira. Any sync action must be explicitly triggered.
-*   **Command Triggers:**
-    *   **Telegram Command:** Type `/jira [task description]` or prefix a note with `/jira` to convert it into a Jira issue.
-    *   **Tag Triggers:** Marking a task in `Tasks.md` with a `#jira` tag (e.g., `- [ ] Sync this item #jira`) will flag it for synchronization.
-*   **Gemini Extraction:** When `/jira` is triggered, Gemini will parse the text to extract the appropriate **Jira Project Key** (e.g. `RAID`), **Issue Type** (Task, Bug, Story), and **Summary/Description** before calling the Jira REST API.
+*   **Completed Ingest Triggers:**
+    *   **Telegram Command:** Type `/jira [task description]` to immediately create a task in your Jira backlog.
+    *   **Telegram Inline Button:** Whenever the bot successfully ingests a note, voice memo, link, or document, it sends a confirmation message with an inline `📤 Send to Jira` button. Clicking this button grabs the generated note title and details, calls the Jira REST API, and updates the Telegram message inline with the ticket key (e.g. `RAID-101`).
+*   **Jira Backlog Placement:** Created tasks are filed under your default project (`RAID`) and automatically placed in the backlog.
 
-### 2. Bidirectional Task Transitions
-*   **Obsidian-to-Jira:** Checking off a synced task in Obsidian (`- [x]`) will automatically trigger a state transition in Jira (e.g., moving the ticket to `Done`).
-*   **Jira-to-Obsidian:** A nightly synchronization check will query Jira for updates on active keys. If a ticket is closed in Jira, the system will update the task state in `Tasks.md`.
+### 2. Configuration Options
+To run the integration, the following environment variables are loaded in `backend/.env`:
+*   `JIRA_URL`: The URL of your Jira Cloud instance (default: `https://stevenmeers.atlassian.net`).
+*   `JIRA_USER_EMAIL`: The email address associated with your Jira account.
+*   `JIRA_API_TOKEN`: Your Atlassian API token.
+*   `JIRA_DEFAULT_PROJECT_KEY`: The default project to file tickets under (default: `RAID`).
 
 ---
 

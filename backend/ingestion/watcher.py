@@ -344,7 +344,7 @@ async def process_queue_worker():
                 note_title: str = Field(description="A clean, descriptive title for this note (3 to 6 words).")
                 reasoning: str = Field(description="Brief explanation of the match.")
 
-            from backend.config import OBSIDIAN_VAULT_PATH, GEMINI_MODEL
+            from backend.config import GEMINI_MODEL
             from google.genai import types
             from backend.utils.gemini import call_gemini_with_retry
             from backend.utils.sanitize import sanitize_filename

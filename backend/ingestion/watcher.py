@@ -586,6 +586,14 @@ tags: [future_project, idea]
             except Exception as git_e:
                 print(f"Backend [Queue Worker]: Git commit failed: {git_e}")
                 
+            # Trigger incremental vector indexing
+            try:
+                from backend.rag.vectorstore import index_vault
+                print("Backend [Queue Worker]: Ingest complete. Running incremental vector indexer...")
+                await index_vault()
+            except Exception as index_e:
+                print(f"Backend [Queue Worker]: Incremental indexing failed: {index_e}")
+                
             # Extract display location relative to vault root
             location_str = "Unknown"
             if saved_file_path:

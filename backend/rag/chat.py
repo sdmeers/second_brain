@@ -28,7 +28,11 @@ async def query_brain(user_query: str, top_k: int = 5) -> dict:
         }
         
     # 3. Format the context and prepare system instruction
-    system_instruction = """You are Steven's personal knowledge librarian.
+    from datetime import datetime
+    current_date_str = datetime.now().strftime("%A, %B %d, %Y")
+    
+    system_instruction = f"""You are Steven's personal knowledge librarian.
+Today's date is {current_date_str}.
 Your goal is to answer Steven's question accurately using only the provided context chunks from his personal Obsidian vault.
 
 CRITICAL RULES:

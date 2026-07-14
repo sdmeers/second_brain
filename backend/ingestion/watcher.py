@@ -595,12 +595,45 @@ tags: [future_project, idea]
                 except Exception:
                     pass
                 
+            # Save the processed title and node path in raw_payload so callback/Jira can access it later
+            try:
+                import json
+                from backend.ingestion.queue import get_db_connection
+                db_conn = get_db_connection()
+                db_cursor = db_conn.cursor()
+                db_cursor.execute("SELECT raw_payload FROM ingestion_queue WHERE id = ?", (item_id,))
+                row = db_cursor.fetchone()
+                if row:
+                    payload_dict = json.loads(row["raw_payload"]) if row["raw_payload"] else {}
+                    payload_dict["processed_title"] = result_title
+                    payload_dict["saved_file_path"] = saved_file_path
+                    db_cursor.execute("UPDATE ingestion_queue SET raw_payload = ? WHERE id = ?", (json.dumps(payload_dict), item_id))
+                db_conn.commit()
+                db_conn.close()
+            except Exception as payload_e:
+                print(f"Backend [Queue Worker]: Failed to save processed_title in database: {payload_e}")
+
+            # Present a "Send to Jira" inline button
+            reply_markup = None
+            if item_id:
+                reply_markup = {
+                    "inline_keyboard": [
+                        [
+                            {
+                                "text": "📤 Send to Jira",
+                                "callback_data": f"jira:{item_id}"
+                            }
+                        ]
+                    ]
+                }
+
             # Notify Steven
             await notify_via_telegram(
                 f"🧠✅ Processed: [[{result_title}]]\n"
                 f"Category: {classification.category} (conf: {classification.confidence})\n"
                 f"Location: {location_str}\n"
-                f"Reason: {classification.reasoning}"
+                f"Reason: {classification.reasoning}",
+                reply_markup=reply_markup
             )
             
     except DuplicateURLError as e:

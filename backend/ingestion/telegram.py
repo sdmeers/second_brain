@@ -54,7 +54,7 @@ async def log_import_result(result: dict, source_url: str, chat_id: int, token: 
         json={"chat_id": chat_id, "text": f"✅ Successfully Ingested: [[{safe_title}]]"}
     )
 
-async def notify_via_telegram(message: str):
+async def notify_via_telegram(message: str, reply_markup: dict = None):
     """Send a notification message to the Telegram bot chat if configured."""
     token = TELEGRAM_BOT_TOKEN
     allowed_ids = os.getenv("TELEGRAM_ALLOWED_CHAT_IDS", "")
@@ -64,10 +64,14 @@ async def notify_via_telegram(message: str):
     if not chat_id:
         return
     try:
+        payload = {"chat_id": chat_id, "text": message}
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
+            
         async with httpx.AsyncClient() as client:
             await client.post(
                 f"https://api.telegram.org/bot{token}/sendMessage",
-                json={"chat_id": chat_id, "text": message}
+                json=payload
             )
     except Exception as e:
         print(f"Backend [Notify]: Failed to send Telegram notification: {e}")
@@ -108,6 +112,43 @@ async def process_telegram_message(message: dict, token: str, http_client: httpx
                 f"https://api.telegram.org/bot{token}/sendMessage",
                 json={"chat_id": chat_id, "text": answer}
             )
+            return
+
+        if text.startswith("/jira"):
+            jira_text = re.sub(r'^/jira\s*', '', text).strip()
+            if not jira_text:
+                await http_client.post(
+                    f"https://api.telegram.org/bot{token}/sendMessage",
+                    json={"chat_id": chat_id, "text": "❓ Please provide a task description, e.g. `/jira Fix the TF RAID configuration`"}
+                )
+                return
+                
+            await http_client.post(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                json={"chat_id": chat_id, "text": "⏳ Creating Jira issue..."}
+            )
+            
+            try:
+                from backend.utils.jira import create_jira_issue
+                summary = jira_text
+                if len(jira_text) > 80:
+                    summary = jira_text[:77] + "..."
+                
+                issue_key = await create_jira_issue(
+                    summary=summary,
+                    description=f"Created directly via Telegram /jira command.\n\nText: {jira_text}"
+                )
+                
+                await http_client.post(
+                    f"https://api.telegram.org/bot{token}/sendMessage",
+                    json={"chat_id": chat_id, "text": f"✅ Created Jira backlog issue: `{issue_key}`"}
+                )
+            except Exception as e:
+                print(f"Backend [Telegram /jira]: Failed to create Jira issue: {e}")
+                await http_client.post(
+                    f"https://api.telegram.org/bot{token}/sendMessage",
+                    json={"chat_id": chat_id, "text": f"❌ Jira creation failed: {e}"}
+                )
             return
 
         if voice or audio:
@@ -218,6 +259,91 @@ async def process_telegram_message(message: dict, token: str, http_client: httpx
         )
 
 
+async def handle_telegram_callback_query(callback_query: dict, token: str, http_client: httpx.AsyncClient):
+    chat_id = callback_query["message"]["chat"]["id"]
+    message_id = callback_query["message"]["message_id"]
+    callback_query_id = callback_query["id"]
+    data = callback_query.get("data", "")
+    
+    # 1. Immediately answer the callback query to stop loading spinner in Telegram
+    try:
+        await http_client.post(
+            f"https://api.telegram.org/bot{token}/answerCallbackQuery",
+            json={"callback_query_id": callback_query_id, "text": "Creating Jira issue..."}
+        )
+    except Exception as e:
+        print(f"Backend [Telegram callback]: Failed to answer callback query: {e}")
+        
+    if data.startswith("jira:"):
+        original_text = callback_query["message"]["text"]
+        try:
+            item_id = int(data.split(":")[1])
+            
+            # Fetch the queue item
+            from backend.ingestion.queue import get_queue_item
+            from backend.config import OBSIDIAN_VAULT_PATH
+            import json
+            
+            item = get_queue_item(item_id)
+            if not item:
+                raise ValueError(f"Queue item {item_id} not found in database")
+                
+            raw_payload = json.loads(item["raw_payload"]) if item["raw_payload"] else {}
+            processed_title = raw_payload.get("processed_title", "Ingested Task")
+            saved_file_path = raw_payload.get("saved_file_path", "")
+            
+            # Construct description
+            desc_parts = [
+                f"Source: Ingested via {item['source_type'].title()}"
+            ]
+            if item["content_text"]:
+                desc_parts.append(f"\nOriginal Content:\n{item['content_text'].strip()}")
+            if saved_file_path:
+                try:
+                    rel_path = os.path.relpath(saved_file_path, OBSIDIAN_VAULT_PATH)
+                    desc_parts.append(f"\nObsidian Vault Path: [[{rel_path}]]")
+                except Exception:
+                    pass
+            description = "\n".join(desc_parts)
+            
+            # Notify user we are sending it
+            # Edit original message to remove the button and show "Sending..."
+            await http_client.post(
+                f"https://api.telegram.org/bot{token}/editMessageText",
+                json={
+                    "chat_id": chat_id,
+                    "message_id": message_id,
+                    "text": f"{original_text}\n\n⏳ Sending to Jira backlog..."
+                }
+            )
+            
+            # 2. Call Jira API
+            from backend.utils.jira import create_jira_issue
+            
+            issue_key = await create_jira_issue(summary=processed_title, description=description)
+            
+            # 3. Edit message to indicate success
+            await http_client.post(
+                f"https://api.telegram.org/bot{token}/editMessageText",
+                json={
+                    "chat_id": chat_id,
+                    "message_id": message_id,
+                    "text": f"{original_text}\n\n📤 **Sent to Jira Backlog**\nTicket: `{issue_key}`"
+                }
+            )
+            
+        except Exception as err:
+            print(f"Backend [Telegram callback]: Error processing Jira callback: {err}")
+            await http_client.post(
+                f"https://api.telegram.org/bot{token}/editMessageText",
+                json={
+                    "chat_id": chat_id,
+                    "message_id": message_id,
+                    "text": f"{original_text}\n\n❌ **Jira Send Failed**\nError: `{str(err)}`"
+                }
+            )
+
+
 async def poll_telegram():
     token = TELEGRAM_BOT_TOKEN
     if not token:
@@ -259,6 +385,16 @@ async def poll_telegram():
                     offset = new_offset
                     with open(offset_file, "w") as f:
                         f.write(str(offset))
+
+                # Check for callback query first (inline button clicks)
+                callback_query = update.get("callback_query")
+                if callback_query:
+                    chat_id = callback_query["message"]["chat"]["id"]
+                    if allowed_chat_ids and chat_id not in allowed_chat_ids:
+                        print(f"Backend [Telegram Watcher]: Ignored callback query from unauthorized chat: {chat_id}")
+                        continue
+                    await handle_telegram_callback_query(callback_query, token, client)
+                    continue
 
                 message = update.get("message") or update.get("channel_post")
                 if not message:

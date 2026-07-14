@@ -80,3 +80,12 @@ def update_item_status(item_id: int, status: str, error_message: str = None):
         
     conn.commit()
     conn.close()
+
+def get_queue_item(item_id: int):
+    """Retrieves a single item from the queue by ID."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM ingestion_queue WHERE id = ?", (item_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return row

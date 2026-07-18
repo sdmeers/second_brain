@@ -560,6 +560,16 @@ tags: [future_project, idea]
             
         if success:
             update_item_status(item_id, "completed")
+            
+            # Extract display location relative to vault root
+            location_str = "Unknown"
+            if saved_file_path:
+                try:
+                    rel_path = os.path.relpath(saved_file_path, OBSIDIAN_VAULT_PATH)
+                    location_str = os.path.dirname(rel_path) or "root"
+                except Exception:
+                    pass
+
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             completed_entry = f"- [[{result_title}]] - {source_type.title()} Source (Processed on {timestamp})\n"
             
@@ -586,6 +596,17 @@ tags: [future_project, idea]
             except Exception as git_e:
                 print(f"Backend [Queue Worker]: Git commit failed: {git_e}")
                 
+            # Log to Librarian Activity Log
+            try:
+                from backend.utils.activity_log import log_librarian_activity
+                log_librarian_activity(
+                    title=result_title,
+                    location=location_str,
+                    source_type=f'{classification.category} via {source_type}'
+                )
+            except Exception as log_e:
+                print(f'Backend [Queue Worker]: Activity log write failed: {log_e}')
+                
             # Trigger incremental vector indexing
             try:
                 from backend.rag.vectorstore import index_vault
@@ -593,15 +614,6 @@ tags: [future_project, idea]
                 await index_vault()
             except Exception as index_e:
                 print(f"Backend [Queue Worker]: Incremental indexing failed: {index_e}")
-                
-            # Extract display location relative to vault root
-            location_str = "Unknown"
-            if saved_file_path:
-                try:
-                    rel_path = os.path.relpath(saved_file_path, OBSIDIAN_VAULT_PATH)
-                    location_str = os.path.dirname(rel_path) or "root"
-                except Exception:
-                    pass
                 
             # Save the processed title and node path in raw_payload so callback/Jira can access it later
             try:

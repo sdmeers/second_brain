@@ -16,7 +16,8 @@ from backend.config import (
     GMAIL_EMAIL,
     GMAIL_APP_PASSWORD,
     SOURCES_PATH,
-    OBSIDIAN_VAULT_PATH
+    OBSIDIAN_VAULT_PATH,
+    TASKS_MD_FILE
 )
 from backend.ingestion.queue import (
     init_queue_db,
@@ -325,7 +326,7 @@ async def process_queue_worker():
             # Task Handler: extract check-items and append to Tasks.md
             msg = await process_task_item(classification_input, source_label)
             result_title = "Tasks"
-            saved_file_path = os.path.join(OBSIDIAN_VAULT_PATH, "Tasks.md")
+            saved_file_path = TASKS_MD_FILE
             success = True
             
         elif classification.category == "voice_dump":

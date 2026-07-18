@@ -1,7 +1,7 @@
 import os
 import re
 from datetime import datetime
-from backend.config import OBSIDIAN_VAULT_PATH
+from backend.config import TASKS_MD_FILE
 from backend.utils.gemini import call_gemini_with_retry
 from backend.config import GEMINI_MODEL
 from google.genai import types
@@ -18,7 +18,7 @@ class TaskListExtraction(BaseModel):
 
 async def process_task_item(content_text: str, source_info: str) -> str:
     """Extracts tasks from the input text and appends them to Tasks.md."""
-    tasks_file = os.path.join(OBSIDIAN_VAULT_PATH, "Tasks.md")
+    tasks_file = TASKS_MD_FILE
     
     # 1. Use Gemini to extract structured tasks
     system_instruction = """You are a productivity organizer.

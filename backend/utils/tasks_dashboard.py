@@ -1,7 +1,7 @@
 import os
 import re
 from datetime import datetime, timedelta
-from backend.config import OBSIDIAN_VAULT_PATH
+from backend.config import TASKS_MD_FILE, COMPLETED_TASKS_MD_FILE
 from backend.vault.writer import atomic_write
 
 def parse_deadline(line: str) -> datetime:
@@ -44,11 +44,8 @@ def parse_deadline(line: str) -> datetime:
 async def maintain_tasks_dashboard():
     """Reads Tasks.md, moves completed tasks to Completed_Tasks.md,
     and reorganizes active tasks into Overdue, Due Today, Upcoming, and Backlog sections."""
-    if not OBSIDIAN_VAULT_PATH:
-        return
-        
-    tasks_file = os.path.join(OBSIDIAN_VAULT_PATH, "Tasks.md")
-    completed_file = os.path.join(OBSIDIAN_VAULT_PATH, "Completed_Tasks.md")
+    tasks_file = TASKS_MD_FILE
+    completed_file = COMPLETED_TASKS_MD_FILE
     
     if not os.path.exists(tasks_file):
         return

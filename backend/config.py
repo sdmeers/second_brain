@@ -8,6 +8,7 @@ load_dotenv(dotenv_path=dotenv_path)
 OBSIDIAN_VAULT_PATH = os.getenv("OBSIDIAN_VAULT_PATH")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
+WIKILINK_SIMILARITY_THRESHOLD = float(os.getenv('WIKILINK_SIMILARITY_THRESHOLD', '1.2'))
 
 if not GEMINI_API_KEY:
     print(f"CRITICAL: GEMINI_API_KEY not found in {dotenv_path}")

@@ -18,13 +18,13 @@ Elevate the AI Librarian from a simple organizer to a smart cataloger that autom
 
 **The Problem:** SQLite-VSS returns global nearest neighbours and cannot filter by path prefix during vector search. With 1,000+ concepts in the Research Brain, an unfiltered search would link almost everything to a concept and miss the more important project/area connections.
 
-**The Solution: Local Over-Fetch + Path-Filtered Post-Processing**
+**The Solution: Local Over-Fetch + Folder-Name Post-Processing**
 1.  Generate the embedding for the newly ingested note (free, local).
 2.  Query SQLite-VSS for the **top 200** nearest neighbours across the entire vault (all local, zero token cost).
-3.  In Python, post-filter the results into 3 buckets:
-    *   **Best Project Match:** The single closest result whose `file_path` matches a **project-level index note** (e.g. `02_Projects/Second Brain/Second Brain.md`, `02_Projects/TF RAID/TF RAID.md`). Individual sub-notes within project folders are excluded to avoid noisy matches.
-    *   **Best Area Match:** The single closest result whose `file_path` matches a **top-level area index note** (e.g. `03_Areas/Health/Health.md`). Same logic — match the area itself, not a random note buried inside it.
-    *   **Top 5 Concept Matches:** The 5 closest results from `04_Resources/`.
+3.  In Python, post-filter the results into 3 buckets using **folder-name grouping** (robust — works regardless of whether index notes exist):
+    *   **Best Project Match:** For each result whose `file_path` starts with `02_Projects/`, extract the project folder name (e.g. `Second Brain`, `TF RAID - AI Enabled Swarms`). Group by project and pick the project with the best average distance. Output the project folder name as the wikilink.
+    *   **Best Area Match:** Same logic for `03_Areas/` — extract the area folder name, group, and pick the best match.
+    *   **Top 5 Concept Matches:** The 5 closest individual results from `04_Resources/`.
 4.  Apply a configurable **similarity threshold** (`WIKILINK_SIMILARITY_THRESHOLD` in `.env`). Discard any candidate above this distance. Initial calibration: ingest 10 test items, log distances, set threshold at the empirical 70th percentile (likely ~0.85).
 5.  Pass the surviving candidates (max 7 titles) to Gemini. Gemini determines which are genuinely related and outputs only the meaningful ones as frontmatter:
     ```yaml
@@ -42,6 +42,11 @@ Gemini will automatically assign standardized nested tags to ingested notes:
 *   **Behavior:** Appends a clean, human-readable line to this file on every successful ingestion.
 *   **Example Log Entry:**
     *   `- **2026-07-18 10:43:** Ingested voice note [[Add Audio Responses to Bot]] to 02_Projects/Second Brain/Notes/ (transcribed from audio).`
+
+### 4. Project & Area Index Notes
+Each project and area folder should have a **same-named index note** (e.g. `02_Projects/Second Brain/Second Brain.md`, `03_Areas/Health/Health.md`). These serve as Obsidian "home pages" for navigation and provide rich context for future vector searches.
+*   **One-Time Backfill:** On first run, scan all project and area folders. For any folder missing an index note, auto-generate a lightweight template containing the folder name, creation date, and a placeholder description.
+*   **Auto-Creation Going Forward:** Whenever the AI Librarian creates a new project or area folder during ingestion, it will automatically generate an index note inside it.
 
 ---
 

@@ -424,19 +424,57 @@ async def process_telegram_message_qa(message: dict, token: str, http_client: ht
     chat_id = message["chat"]["id"]
     text = message.get("text") or message.get("caption") or ""
     
-    if not text.strip():
-        await http_client.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": chat_id, "text": "❓ Please send a text question to query your Second Brain."}
-        )
-        return
-        
-    await http_client.post(
-        f"https://api.telegram.org/bot{token}/sendMessage",
-        json={"chat_id": chat_id, "text": "🔍 Searching your Second Brain..."}
-    )
+    voice = message.get("voice")
+    audio = message.get("audio")
+    
+    staging_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "staging")
+    os.makedirs(staging_path, exist_ok=True)
+    
+    temp_file_path = None
     
     try:
+        if voice or audio:
+            voice_obj = voice or audio
+            file_id = voice_obj["file_id"]
+            mime_type = voice_obj.get("mime_type", "audio/ogg")
+            ext = "ogg" if "ogg" in mime_type else "mp3"
+            
+            await http_client.post(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                json={"chat_id": chat_id, "text": "🎤 Transcribing your voice query..."}
+            )
+            
+            # Download file
+            file_bytes = await download_telegram_file(file_id, token, http_client)
+            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            filename = f"telegram_qa_voice_{timestamp}.{ext}"
+            temp_file_path = os.path.join(staging_path, filename)
+            
+            with open(temp_file_path, "wb") as f:
+                f.write(file_bytes)
+                
+            # Transcribe audio file using local transcriber
+            from backend.processing.transcriber import transcribe_audio_local
+            text = await transcribe_audio_local(temp_file_path)
+            
+            # Notify the user what we transcribed
+            await http_client.post(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                json={"chat_id": chat_id, "text": f"✍️ Transcribed: \"{text}\""}
+            )
+            
+        if not text.strip():
+            await http_client.post(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                json={"chat_id": chat_id, "text": "❓ Please send a text or voice question to query your Second Brain."}
+            )
+            return
+            
+        await http_client.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": "🔍 Searching your Second Brain..."}
+        )
+        
         from backend.rag.chat import query_brain
         result = await query_brain(text.strip())
         answer = result["answer"]
@@ -451,6 +489,13 @@ async def process_telegram_message_qa(message: dict, token: str, http_client: ht
             f"https://api.telegram.org/bot{token}/sendMessage",
             json={"chat_id": chat_id, "text": f"❌ Error retrieving answer: {e}"}
         )
+    finally:
+        # Clean up temporary staged audio file immediately
+        if temp_file_path and os.path.exists(temp_file_path):
+            try:
+                os.remove(temp_file_path)
+            except Exception as cleanup_e:
+                print(f"Backend [Telegram Q&A]: Failed to clean up staging file {temp_file_path}: {cleanup_e}")
 
 
 async def poll_telegram_qa():

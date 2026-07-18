@@ -12,8 +12,8 @@ from backend.vault.writer import atomic_write
 class WikilinkResult(BaseModel):
     related: list[str] = Field(description='List of genuinely related note titles to link as [[Wikilinks]].')
 
-def find_related_candidates(note_text: str) -> dict:
-    embeddings = get_embeddings_batch([note_text])
+async def find_related_candidates(note_text: str) -> dict:
+    embeddings = await get_embeddings_batch([note_text])
     if not embeddings:
         return {'project': None, 'area': None, 'concepts': []}
     embedding = embeddings[0]
@@ -90,7 +90,7 @@ async def enrich_note_metadata(saved_file_path: str, note_text: str, classificat
     if is_research:
         return
         
-    candidates = find_related_candidates(note_text)
+    candidates = await find_related_candidates(note_text)
     
     candidate_titles = []
     if candidates['project']:

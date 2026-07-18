@@ -324,7 +324,7 @@ async def process_queue_worker():
         elif classification.category == "task":
             # Task Handler: extract check-items and append to Tasks.md
             msg = await process_task_item(classification_input, source_label)
-            result_title = "Appended Task(s)"
+            result_title = "Tasks"
             saved_file_path = os.path.join(OBSIDIAN_VAULT_PATH, "Tasks.md")
             success = True
             
@@ -405,7 +405,7 @@ async def process_queue_worker():
                     category=classification.category, raw_file_path=file_path,
                     matched_project=match.matched_name, matched_title=match.note_title
                 )
-                result_title = f"Project Note: {result.get('title')} ({match.matched_name})"
+                result_title = result.get('title')
                 saved_file_path = result.get("file_path")
                 success = True
                 
@@ -457,7 +457,7 @@ tags: [area, {match.matched_name.lower().replace(' ', '_')}]
 """
                 from backend.vault.writer import atomic_write
                 atomic_write(file_path_dest, file_content)
-                result_title = f"Area Note: {match.note_title} ({match.matched_name})"
+                result_title = match.note_title
                 saved_file_path = file_path_dest
                 success = True
                 
@@ -507,7 +507,7 @@ tags: [future_project, idea]
 """
                 from backend.vault.writer import atomic_write
                 atomic_write(file_path_dest, file_content)
-                result_title = f"Future Project Idea: {match.note_title}"
+                result_title = match.note_title
                 saved_file_path = file_path_dest
                 success = True
                 

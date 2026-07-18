@@ -82,6 +82,7 @@ Each digest will consist of:
 
 ### 3. Daily Brain Cleaning & Audio Retention Policy
 The nightly run will also execute maintenance tasks:
+*   **Vault Index Autoupdate:** Scan `02_Projects/` and `03_Areas/` folders on disk and dynamically rewrite the respective sections in `00_System/_INDEX.md` to keep the vault directory structurally accurate.
 *   **30-Day Audio Cleanup:** Scan your vault for raw voice files (`*_raw.ogg`) that are **older than 30 days and delete them** to prevent storage bloat, leaving the text transcripts intact.
 *   Clean up dangling files and tmp folders in `01_Inbox/` and `staging/`.
 *   Re-index the vector DB for any modified files.

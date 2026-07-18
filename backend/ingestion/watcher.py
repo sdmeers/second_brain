@@ -615,6 +615,20 @@ tags: [future_project, idea]
             except Exception as index_e:
                 print(f"Backend [Queue Worker]: Incremental indexing failed: {index_e}")
                 
+            # Enrich note with tags and wikilinks
+            try:
+                from backend.utils.librarian import enrich_note_metadata
+                if saved_file_path and saved_file_path.endswith('.md'):
+                    print('Backend [Queue Worker]: Enriching note with tags and wikilinks...')
+                    await enrich_note_metadata(
+                        saved_file_path=saved_file_path,
+                        note_text=clean_input,
+                        classification_category=classification.category,
+                        is_research=research_requested
+                    )
+            except Exception as enrich_e:
+                print(f'Backend [Queue Worker]: Note enrichment failed (non-fatal): {enrich_e}')
+                
             # Save the processed title and node path in raw_payload so callback/Jira can access it later
             try:
                 import json

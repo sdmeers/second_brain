@@ -5,11 +5,21 @@ import asyncio
 import time
 import json
 import hashlib
+import sqlite3
+import httpx
+from datetime import datetime, timedelta
 from pathlib import Path
 from dotenv import load_dotenv
-from logger import log_action
+
+# Existing relative imports
+from backend.logger import log_action
 from google import genai
 from google.genai import types
+
+from backend.vault.writer import atomic_write
+from backend.rag.vectorstore import index_vault
+from backend.config import TELEGRAM_QA_BOT_TOKEN
+
 
 dotenv_path = os.path.join(os.path.dirname(__file__), ".env")
 load_dotenv(dotenv_path=dotenv_path)
@@ -71,23 +81,6 @@ def load_state():
             return json.load(f)
     return {"processed_groups": [], "refactored_hashes": {}}
 
-def atomic_write(file_path: str, content: str):
-    """Writes content to a temporary file first, then renames it atomically to prevent corruption."""
-    temp_path = f"{file_path}.tmp"
-    dir_name = os.path.dirname(file_path)
-    if dir_name:
-        os.makedirs(dir_name, exist_ok=True)
-    try:
-        with open(temp_path, "w", encoding="utf-8") as f:
-            f.write(content)
-        os.replace(temp_path, file_path)
-    except Exception as e:
-        if os.path.exists(temp_path):
-            try:
-                os.remove(temp_path)
-            except Exception:
-                pass
-        raise e
 
 def save_state(state):
     temp_file = f"{STATE_FILE}.tmp"
@@ -448,5 +441,242 @@ Here is the concept page content:
     print("✨ Vault clean-up, auto-healing, and refactoring complete.")
     log_action("Lint", f"Brain cleaner pass: {dedup_count} deduped, {manifested_count} concepts healed, {refactored_count} refactored, {len(orphans)} orphans detected.")
 
-if __name__ == "__main__":
+
+
+async def run_sqlite_checkpoint():
+    print("🗄️ Checkpointing sqlite databases...")
+    for db_name in ["second_brain.db", "brain_vectors.db"]:
+        db_path = os.path.join(os.path.dirname(__file__), db_name)
+        if os.path.exists(db_path):
+            try:
+                with sqlite3.connect(db_path) as conn:
+                    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            except Exception as e:
+                print(f"Failed to checkpoint {db_name}: {e}")
+
+async def clean_staging_and_inbox():
+    print("🗑️ Cleaning staging and inbox...")
+    # Staging
+    staging_dir = os.path.join(os.path.dirname(__file__), "staging")
+    if os.path.exists(staging_dir):
+        for f in os.listdir(staging_dir):
+            p = os.path.join(staging_dir, f)
+            if os.path.isfile(p):
+                os.remove(p)
+    # Inbox
+    inbox_dir = os.path.join(VAULT_PATH, "01_Inbox")
+    keep = {"Inbox.md", "Completed.md", "Failed.md"}
+    if os.path.exists(inbox_dir):
+        for f in os.listdir(inbox_dir):
+            if f not in keep:
+                p = os.path.join(inbox_dir, f)
+                if os.path.isfile(p):
+                    os.remove(p)
+
+async def auto_update_index():
+    print("🗂️ Updating _INDEX.md...")
+    projects_dir = os.path.join(VAULT_PATH, "02_Projects")
+    areas_dir = os.path.join(VAULT_PATH, "03_Areas")
+    
+    projects = [d for d in os.listdir(projects_dir) if os.path.isdir(os.path.join(projects_dir, d)) and not d.startswith(('.', '_'))] if os.path.exists(projects_dir) else []
+    areas = [d for d in os.listdir(areas_dir) if os.path.isdir(os.path.join(areas_dir, d)) and not d.startswith(('.', '_'))] if os.path.exists(areas_dir) else []
+    
+    index_file = os.path.join(VAULT_PATH, "00_System", "_INDEX.md")
+    if not os.path.exists(index_file):
+        return
+        
+    with open(index_file, "r", encoding="utf-8") as f:
+        content = f.read()
+        
+    proj_text = "## 02_Projects/\n" + "\n".join(f"- `{p}`" for p in sorted(projects)) + "\n"
+    area_text = "## 03_Areas/\n" + "\n".join(f"- `{a}`" for p in sorted(areas) for a in [p]) + "\n" # formatting trick to get loop variable
+    area_text = "## 03_Areas/\n" + "\n".join(f"- `{a}`" for a in sorted(areas)) + "\n"
+    
+    # Replace sections
+    content = re.sub(r'## 02_Projects/.*?(?=## |\\Z)', proj_text + "\n", content, flags=re.DOTALL)
+    content = re.sub(r'## 03_Areas/.*?(?=## |\\Z)', area_text + "\n", content, flags=re.DOTALL)
+    
+    atomic_write(index_file, content)
+
+async def cleanup_old_audio():
+    print("🎧 Cleaning old raw audio files...")
+    cutoff = datetime.now() - timedelta(days=30)
+    for root, dirs, files in os.walk(VAULT_PATH):
+        for f in files:
+            if "_raw.ogg" in f or "_raw." in f:
+                p = os.path.join(root, f)
+                if datetime.fromtimestamp(os.path.getmtime(p)) < cutoff:
+                    os.remove(p)
+
+async def generate_daily_digest():
+    print("🌅 Generating daily digest...")
+    yesterday = datetime.now() - timedelta(days=1)
+    
+    new_notes = []
+    # Find yesterday's notes
+    for root, dirs, files in os.walk(VAULT_PATH):
+        if "00_System" in root or "01_Inbox" in root:
+            continue
+        for f in files:
+            if f.endswith(".md") and f not in ["_INDEX.md", "Librarian_Activity.md"]:
+                p = os.path.join(root, f)
+                try:
+                    mtime = datetime.fromtimestamp(os.path.getmtime(p))
+                    ctime = datetime.fromtimestamp(os.path.getctime(p))
+                    if mtime > yesterday or ctime > yesterday:
+                        with open(p, "r", encoding="utf-8") as file_obj:
+                            new_notes.append({"name": f, "content": file_obj.read()})
+                except Exception:
+                    pass
+
+    # Stagnant tasks
+    tasks_file = os.path.join(VAULT_PATH, "00_System", "Tasks.md")
+    stagnant_tasks = []
+    fourteen_days_ago = datetime.now() - timedelta(days=14)
+    if os.path.exists(tasks_file):
+        with open(tasks_file, "r", encoding="utf-8") as f:
+            for line in f:
+                if "- [ ]" in line:
+                    m = re.search(r'\(Captured from .*? on (\d{4}-\d{2}-\d{2})\)', line)
+                    if m:
+                        cap_date = datetime.strptime(m.group(1), "%Y-%m-%d")
+                        if cap_date < fourteen_days_ago:
+                            stagnant_tasks.append(line.strip())
+
+    # Stagnant ideas
+    seven_days_ago = datetime.now() - timedelta(days=7)
+    stagnant_ideas = []
+    ideas_dir = os.path.join(VAULT_PATH, "02_Projects", "Ideas")
+    if os.path.exists(ideas_dir):
+        for f in os.listdir(ideas_dir):
+            if f.endswith(".md"):
+                p = os.path.join(ideas_dir, f)
+                if datetime.fromtimestamp(os.path.getmtime(p)) < seven_days_ago:
+                    stagnant_ideas.append(f"[[{f.replace('.md', '')}]]")
+
+    for root, dirs, files in os.walk(VAULT_PATH):
+        for f in files:
+            if f.endswith(".md"):
+                p = os.path.join(root, f)
+                if datetime.fromtimestamp(os.path.getmtime(p)) < seven_days_ago:
+                    try:
+                        with open(p, "r", encoding="utf-8") as file_obj:
+                            if "status/to-review" in file_obj.read():
+                                stagnant_ideas.append(f"[[{f.replace('.md', '')}]]")
+                    except Exception:
+                        pass
+    stagnant_ideas = list(set(stagnant_ideas))
+
+    digest_content = f"# Daily Digest - {datetime.now().strftime('%Y-%m-%d')}\n\n"
+    
+    if not new_notes:
+        digest_content += "No new notes captured yesterday.\n\n"
+    else:
+        # VSS
+        db_path = os.path.join(os.path.dirname(__file__), "brain_vectors.db")
+        vss_matches = []
+        try:
+            from backend.rag.embeddings import get_embeddings_batch
+            from backend.rag.vectorstore import search_similar_chunks
+            
+            texts = [note['content'][:2000] for note in new_notes]
+            if texts:
+                embs = await get_embeddings_batch(texts)
+                for emb in embs:
+                    if emb:
+                        results = await search_similar_chunks(emb, top_k=5)
+                        for r in results:
+                            path = r['file_path']
+                            if "04_Resources/Concepts/" in path or "Summaries/" in path:
+                                vss_matches.append(path)
+        except Exception as e:
+            print(f"VSS error: {e}")
+
+        prompt = f"""Analyze these notes from yesterday:
+{[n['name'] for n in new_notes]}
+
+Matches from DB:
+{set(vss_matches)}
+
+If there are strong, high-signal conceptual connections to older files/concepts, write a "🔍 Conceptual Connections" section.
+If any yesterday's notes represent ideas (#type/idea or in Ideas/), choose one and draft 2-3 concrete steps to build on it in a "💡 Idea Builder" section.
+Otherwise, omit the sections. Make it beautiful markdown.
+"""
+        try:
+            resp = call_gemini_with_retry(GEMINI_MODEL, prompt)
+            digest_content += resp.text + "\n\n"
+        except Exception as e:
+            digest_content += f"Failed to generate Gemini synthesis: {e}\n\n"
+
+    if stagnant_tasks:
+        digest_content += "## ⏳ Stagnant Tasks (> 14 days)\n" + "\n".join(stagnant_tasks) + "\n\n"
+    if stagnant_ideas:
+        digest_content += "## 🕸️ Stagnant Ideas (> 7 days)\n" + "\n".join(stagnant_ideas) + "\n\n"
+
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    digest_path = os.path.join(VAULT_PATH, "00_System", "Internal", "Digests", f"{date_str}.md")
+    os.makedirs(os.path.dirname(digest_path), exist_ok=True)
+    atomic_write(digest_path, digest_content)
+    
+    daily_digest_path = os.path.join(VAULT_PATH, "00_System", "Daily_Digest.md")
+    atomic_write(daily_digest_path, digest_content)
+
+    return digest_content
+
+async def send_telegram_briefing(digest_content):
+    print("📲 Sending Telegram briefing...")
+    if not TELEGRAM_QA_BOT_TOKEN:
+        print("No QA bot token found.")
+        return
+        
+    prompt = "Create a concise, punchy 3-bullet summary of this digest for a Telegram message. Start with 'Today\'s Highlights:'.\n\n" + digest_content
+    try:
+        resp = call_gemini_with_retry(GEMINI_MODEL, prompt)
+        summary = resp.text.strip()
+        
+        # Assuming allowed chat IDs are available or we just use TELEGRAM_QA_BOT_TOKEN.
+        # Let's get the chat ID. We can import it.
+        from backend.config import TELEGRAM_ALLOWED_CHAT_IDS
+        if TELEGRAM_ALLOWED_CHAT_IDS:
+            chat_id = TELEGRAM_ALLOWED_CHAT_IDS[0]
+            url = f"https://api.telegram.org/bot{TELEGRAM_QA_BOT_TOKEN}/sendMessage"
+            async with httpx.AsyncClient() as client:
+                await client.post(url, json={"chat_id": chat_id, "text": summary, "parse_mode": "Markdown"})
+    except Exception as e:
+        print(f"Failed to send Telegram briefing: {e}")
+
+async def rolling_retention():
+    print("🧹 Rolling retention for old digests...")
+    digests_dir = os.path.join(VAULT_PATH, "00_System", "Internal", "Digests")
+    if not os.path.exists(digests_dir):
+        return
+    cutoff = datetime.now() - timedelta(days=14)
+    for f in os.listdir(digests_dir):
+        if f.endswith(".md"):
+            p = os.path.join(digests_dir, f)
+            if datetime.fromtimestamp(os.path.getmtime(p)) < cutoff:
+                os.remove(p)
+
+async def main():
+    print("🚀 Starting Phase 11 Brain Cleaner Tasks...")
+    await clean_staging_and_inbox()
+    await run_sqlite_checkpoint()
+    try:
+        await index_vault()
+    except Exception as e:
+        print(f"Failed to index vault: {e}")
+        
+    await auto_update_index()
+    await cleanup_old_audio()
+    digest = await generate_daily_digest()
+    await send_telegram_briefing(digest)
+    await rolling_retention()
+    
+    # Run the old sync brain cleaner tasks
+    # run_brain_cleaner() takes a while, we can run it in a thread or just call it
     run_brain_cleaner()
+    
+    print("✅ All Brain Cleaner Tasks Completed.")
+
+if __name__ == "__main__":
+    asyncio.run(main())

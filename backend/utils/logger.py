@@ -13,7 +13,7 @@ def log_action(action_type: str, details: str, concepts: list[str] = None):
         print("Logger: OBSIDIAN_VAULT_PATH not set, skipping log.")
         return
         
-    log_file_path = os.path.join(OBSIDIAN_VAULT_PATH, "00_System", "log.md")
+    log_file_path = os.path.join(OBSIDIAN_VAULT_PATH, "00_System", "Internal", "log.md")
     
     now = datetime.now()
     date_str = now.strftime("%Y-%m-%d")

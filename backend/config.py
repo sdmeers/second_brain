@@ -38,9 +38,12 @@ COMPLETED_MD_FILE = os.path.join(IMPORT_PATH, "Completed.md")
 FAILED_MD_FILE = os.path.join(IMPORT_PATH, "Failed.md")
 
 # Task paths
-TASKS_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "00_System", "Tasks")
+TASKS_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "00_System")
 TASKS_MD_FILE = os.path.join(TASKS_PATH, "Tasks.md")
 COMPLETED_TASKS_MD_FILE = os.path.join(TASKS_PATH, "Completed_Tasks.md")
+
+# System internal paths
+INTERNAL_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "00_System", "Internal")
 
 os.makedirs(SUMMARIES_PATH, exist_ok=True)
 os.makedirs(SOURCES_PATH, exist_ok=True)
@@ -48,7 +51,7 @@ os.makedirs(ATLAS_PATH, exist_ok=True)
 os.makedirs(CONCEPTS_PATH, exist_ok=True)
 os.makedirs(REFERENCE_NOTES_PATH, exist_ok=True)
 os.makedirs(REFERENCE_SOURCES_PATH, exist_ok=True)
-os.makedirs(TASKS_PATH, exist_ok=True)
+os.makedirs(INTERNAL_PATH, exist_ok=True)
 if os.getenv("ENABLE_OBSIDIAN_INBOX_POLLING", "false").lower() == "true":
     os.makedirs(INBOX_PATH, exist_ok=True)
     os.makedirs(INBOX_FAILED_PATH, exist_ok=True)

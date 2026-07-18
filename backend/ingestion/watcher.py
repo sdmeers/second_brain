@@ -747,6 +747,15 @@ async def watch_inbox_loop():
             # Scan for Syncthing conflicts
             await scan_for_syncthing_conflicts()
             
+            # Periodically run incremental vector indexing (every 2 minutes)
+            if counter % 8 == 0:
+                try:
+                    from backend.rag.vectorstore import index_vault
+                    print("Backend [Watcher]: Running periodic incremental vector indexer...")
+                    await index_vault()
+                except Exception as index_e:
+                    print(f"Backend [Watcher]: Periodic indexing failed: {index_e}")
+            
             # Reorganize Tasks.md dashboard and archive completed items
             try:
                 from backend.utils.tasks_dashboard import maintain_tasks_dashboard

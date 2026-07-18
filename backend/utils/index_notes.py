@@ -1,6 +1,7 @@
 import os
 from datetime import datetime
 from backend.vault.writer import atomic_write
+from backend.config import OBSIDIAN_VAULT_PATH
 
 def ensure_index_note(folder_path: str, folder_type: str = 'project'):
     folder_name = os.path.basename(folder_path)
@@ -34,7 +35,7 @@ tags: [{tag}]
         print(f"Created {folder_type} index note: {index_note_path}")
 
 def backfill_index_notes():
-    vault_path = '/home/sdmeers/vault'
+    vault_path = OBSIDIAN_VAULT_PATH
     projects_dir = os.path.join(vault_path, '02_Projects')
     areas_dir = os.path.join(vault_path, '03_Areas')
     

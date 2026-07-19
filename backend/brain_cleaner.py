@@ -505,33 +505,19 @@ async def cleanup_old_audio():
         for f in files:
             if "_raw.ogg" in f or "_raw." in f:
                 p = os.path.join(root, f)
-                if datetime.fromtimestamp(os.path.getmtime(p)) < cutoff:
-                    os.remove(p)
-
-async def generate_daily_digest():
-    print("🌅 Generating daily digest...")
-    yesterday = datetime.now() - timedelta(days=1)
-    
-    new_notes = []
-    # Find yesterday's notes
-    for root, dirs, files in os.walk(VAULT_PATH):
-        if "00_System" in root or "01_Inbox" in root:
-            continue
-        for f in files:
-            if f.endswith(".md") and f not in ["_INDEX.md", "Librarian_Activity.md"]:
-                p = os.path.join(root, f)
                 try:
-                    mtime = datetime.fromtimestamp(os.path.getmtime(p))
-                    ctime = datetime.fromtimestamp(os.path.getctime(p))
-                    if mtime > yesterday or ctime > yesterday:
-                        with open(p, "r", encoding="utf-8") as file_obj:
-                            new_notes.append({"name": f, "content": file_obj.read()})
+                    if datetime.fromtimestamp(os.path.getmtime(p)) < cutoff:
+                        os.remove(p)
                 except Exception:
                     pass
 
-    # Stagnant tasks
+async def generate_daily_digest():
+    print("🌅 Generating daily digest...")
+    
+    # --- Part 1: Tasks Summary ---
     tasks_file = os.path.join(VAULT_PATH, "00_System", "Tasks.md")
-    stagnant_tasks = []
+    overdue_tasks = []
+    active_tasks = []
     fourteen_days_ago = datetime.now() - timedelta(days=14)
     if os.path.exists(tasks_file):
         with open(tasks_file, "r", encoding="utf-8") as f:
@@ -539,79 +525,137 @@ async def generate_daily_digest():
                 if "- [ ]" in line:
                     m = re.search(r'\(Captured from .*? on (\d{4}-\d{2}-\d{2})\)', line)
                     if m:
-                        cap_date = datetime.strptime(m.group(1), "%Y-%m-%d")
-                        if cap_date < fourteen_days_ago:
-                            stagnant_tasks.append(line.strip())
+                        try:
+                            cap_date = datetime.strptime(m.group(1), "%Y-%m-%d")
+                            if cap_date < fourteen_days_ago:
+                                overdue_tasks.append(line.strip())
+                            else:
+                                active_tasks.append(line.strip())
+                        except ValueError:
+                            active_tasks.append(line.strip())
+                    else:
+                        active_tasks.append(line.strip())
 
-    # Stagnant ideas
+    # --- Part 2 & 3: Recent Activity and Recent Ideas (Last 7 Days) ---
     seven_days_ago = datetime.now() - timedelta(days=7)
-    stagnant_ideas = []
-    ideas_dir = os.path.join(VAULT_PATH, "02_Projects", "Ideas")
-    if os.path.exists(ideas_dir):
-        for f in os.listdir(ideas_dir):
-            if f.endswith(".md"):
-                p = os.path.join(ideas_dir, f)
-                if datetime.fromtimestamp(os.path.getmtime(p)) < seven_days_ago:
-                    stagnant_ideas.append(f"[[{f.replace('.md', '')}]]")
+    recent_activity = {}
+    recent_activity_notes = []
+    recent_ideas = []
 
     for root, dirs, files in os.walk(VAULT_PATH):
-        for f in files:
-            if f.endswith(".md"):
-                p = os.path.join(root, f)
-                if datetime.fromtimestamp(os.path.getmtime(p)) < seven_days_ago:
-                    try:
-                        with open(p, "r", encoding="utf-8") as file_obj:
-                            if "status/to-review" in file_obj.read():
-                                stagnant_ideas.append(f"[[{f.replace('.md', '')}]]")
-                    except Exception:
-                        pass
-    stagnant_ideas = list(set(stagnant_ideas))
+        rel_root = os.path.relpath(root, VAULT_PATH).replace("\\", "/")
+        if rel_root.startswith("00_System") or rel_root.startswith("01_Inbox") or rel_root.startswith("."):
+            continue
 
+        for f in files:
+            if f.endswith(".md") and f not in ["_INDEX.md", "Librarian_Activity.md"]:
+                p = os.path.join(root, f)
+                try:
+                    mtime = datetime.fromtimestamp(os.path.getmtime(p))
+                    ctime = datetime.fromtimestamp(os.path.getctime(p))
+                    if mtime > seven_days_ago or ctime > seven_days_ago:
+                        # Part 2
+                        if rel_root not in recent_activity:
+                            recent_activity[rel_root] = []
+                        recent_activity[rel_root].append(f)
+                        
+                        with open(p, "r", encoding="utf-8") as file_obj:
+                            content = file_obj.read()
+                            recent_activity_notes.append({"name": f, "content": content})
+
+                        # Part 3
+                        is_idea = False
+                        if "02_Projects/Ideas" in rel_root:
+                            is_idea = True
+                        elif "#type/idea" in content:
+                            is_idea = True
+                            
+                        if is_idea:
+                            recent_ideas.append(f)
+                except Exception:
+                    pass
+
+    # --- Part 4: AI Synthesis & Suggestions ---
+    db_path = os.path.join(os.path.dirname(__file__), "brain_vectors.db")
+    vss_matches = []
+    try:
+        from backend.rag.embeddings import get_embeddings_batch
+        from backend.rag.vectorstore import search_similar_chunks
+        
+        texts = [note['content'][:2000] for note in recent_activity_notes if note['content'].strip()]
+        if texts:
+            embs = await get_embeddings_batch(texts)
+            for emb in embs:
+                if emb:
+                    results = await search_similar_chunks(emb, top_k=5)
+                    for r in results:
+                        path = r['file_path']
+                        if "04_Resources/" in path.replace("\\", "/"):
+                            vss_matches.append(path)
+    except Exception as e:
+        print(f"VSS error: {e}")
+
+    vss_matches_unique = list(set(vss_matches))
+    prompt = f"""You are a creative co-creation partner and brainstorming assistant for the user's Second Brain.
+Analyze the user's activity over the last 7 days:
+
+Recent Notes:
+{[n['name'] for n in recent_activity_notes]}
+
+Recent Ideas:
+{recent_ideas}
+
+VSS Matches (Existing concepts/summaries in the Research Brain):
+{vss_matches_unique}
+
+Your goal is to act as a thoughtful, technical peer who helps the user refine their ideas and find hidden connections. Please structure your response with:
+
+1. 🔍 Blind Spots & Refinements:
+Pick 1 or 2 of the "Recent Ideas" above. Identify practical things the user might have forgotten or overlooked (e.g. edge cases, deployment friction, security, or simple design additions). Offer concrete, technical ways to improve or address them.
+
+2. 💡 Creative Cross-Pollination:
+Suggest 1 or 2 unexpected, creative ways to combine different ideas, projects, or areas of the user's life listed above. For example, how can their coding/simulator projects cross-pollinate with their family planning, home server setup, or theoretical concepts from the Research Brain (VSS Matches)? Think outside the box to spark new creativity.
+
+Strictly avoid academic/corporate jargon, general AI platitudes, and abstract fluff. Be highly specific, conversational, and direct.
+"""
+    try:
+        resp = call_gemini_with_retry(GEMINI_MODEL, prompt)
+        ai_synthesis = resp.text.strip()
+    except Exception as e:
+        ai_synthesis = f"Failed to generate AI synthesis: {e}"
+
+    # Assemble Digest
     digest_content = f"# Daily Digest - {datetime.now().strftime('%Y-%m-%d')}\n\n"
     
-    if not new_notes:
-        digest_content += "No new notes captured yesterday.\n\n"
+    digest_content += "## Part 1: Tasks Summary\n"
+    if overdue_tasks:
+        digest_content += "### Overdue/Stagnant Tasks (>14 days)\n" + "\n".join(overdue_tasks) + "\n\n"
+    if active_tasks:
+        digest_content += f"### Active Backlog Tasks ({len(active_tasks)} tasks)\n" + "\n".join(active_tasks[:10])
+        if len(active_tasks) > 10:
+             digest_content += f"\n... and {len(active_tasks) - 10} more.\n"
+    digest_content += "\n\n"
+    
+    digest_content += "## Part 2: Recent Activity (Last 7 Days)\n"
+    if recent_activity:
+        for folder, files in recent_activity.items():
+            digest_content += f"### {folder}\n"
+            for f in files:
+                digest_content += f"- {f}\n"
     else:
-        # VSS
-        db_path = os.path.join(os.path.dirname(__file__), "brain_vectors.db")
-        vss_matches = []
-        try:
-            from backend.rag.embeddings import get_embeddings_batch
-            from backend.rag.vectorstore import search_similar_chunks
-            
-            texts = [note['content'][:2000] for note in new_notes]
-            if texts:
-                embs = await get_embeddings_batch(texts)
-                for emb in embs:
-                    if emb:
-                        results = await search_similar_chunks(emb, top_k=5)
-                        for r in results:
-                            path = r['file_path']
-                            if "04_Resources/Concepts/" in path or "Summaries/" in path:
-                                vss_matches.append(path)
-        except Exception as e:
-            print(f"VSS error: {e}")
-
-        prompt = f"""Analyze these notes from yesterday:
-{[n['name'] for n in new_notes]}
-
-Matches from DB:
-{set(vss_matches)}
-
-If there are strong, high-signal conceptual connections to older files/concepts, write a "🔍 Conceptual Connections" section.
-If any yesterday's notes represent ideas (#type/idea or in Ideas/), choose one and draft 2-3 concrete steps to build on it in a "💡 Idea Builder" section.
-Otherwise, omit the sections. Make it beautiful markdown.
-"""
-        try:
-            resp = call_gemini_with_retry(GEMINI_MODEL, prompt)
-            digest_content += resp.text + "\n\n"
-        except Exception as e:
-            digest_content += f"Failed to generate Gemini synthesis: {e}\n\n"
-
-    if stagnant_tasks:
-        digest_content += "## ⏳ Stagnant Tasks (> 14 days)\n" + "\n".join(stagnant_tasks) + "\n\n"
-    if stagnant_ideas:
-        digest_content += "## 🕸️ Stagnant Ideas (> 7 days)\n" + "\n".join(stagnant_ideas) + "\n\n"
+        digest_content += "No recent activity.\n"
+    digest_content += "\n"
+    
+    digest_content += "## Part 3: Recent Ideas\n"
+    if recent_ideas:
+        for idea in recent_ideas:
+            digest_content += f"- {idea}\n"
+    else:
+        digest_content += "No recent ideas.\n"
+    digest_content += "\n"
+    
+    digest_content += "## Part 4: AI Synthesis & Suggestions\n"
+    digest_content += ai_synthesis + "\n"
 
     date_str = datetime.now().strftime("%Y-%m-%d")
     digest_path = os.path.join(VAULT_PATH, "00_System", "Internal", "Digests", f"{date_str}.md")
@@ -623,25 +667,45 @@ Otherwise, omit the sections. Make it beautiful markdown.
 
     return digest_content
 
+
 async def send_telegram_briefing(digest_content):
     print("📲 Sending Telegram briefing...")
     if not TELEGRAM_QA_BOT_TOKEN:
         print("No QA bot token found.")
         return
         
-    prompt = "Create a concise, punchy 3-bullet summary of this digest for a Telegram message. Start with 'Today\'s Highlights:'.\n\n" + digest_content
+    prompt = """Create a Telegram summary of this daily digest following exactly this plain text structure (without markdown * or ** asterisks, use standard hyphens - for bullets):
+
+Today's Highlights:
+
+Part 1: Tasks
+[Concise summary of active/stagnant tasks]
+
+Part 2: Recent Activity
+[Summary list of folders/notes worked on in the last 7 days]
+
+Part 3: Recent Ideas
+[List of recently captured ideas]
+
+Part 4: AI Insights
+[AI synthesis and actionable suggestions for your ideas]
+
+Here is the digest to summarize:
+""" + digest_content
+
     try:
         resp = call_gemini_with_retry(GEMINI_MODEL, prompt)
         summary = resp.text.strip()
         
-        # Assuming allowed chat IDs are available or we just use TELEGRAM_QA_BOT_TOKEN.
-        # Let's get the chat ID. We can import it.
+        summary = summary.replace("*", "")
+        
         from backend.config import TELEGRAM_ALLOWED_CHAT_IDS
         if TELEGRAM_ALLOWED_CHAT_IDS:
             chat_id = TELEGRAM_ALLOWED_CHAT_IDS[0]
             url = f"https://api.telegram.org/bot{TELEGRAM_QA_BOT_TOKEN}/sendMessage"
             async with httpx.AsyncClient() as client:
-                await client.post(url, json={"chat_id": chat_id, "text": summary, "parse_mode": "Markdown"})
+                r = await client.post(url, json={"chat_id": chat_id, "text": summary})
+                r.raise_for_status()
     except Exception as e:
         print(f"Failed to send Telegram briefing: {e}")
 

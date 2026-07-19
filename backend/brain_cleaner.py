@@ -25,19 +25,89 @@ dotenv_path = os.path.join(os.path.dirname(__file__), ".env")
 load_dotenv(dotenv_path=dotenv_path)
 VAULT_PATH = os.getenv("OBSIDIAN_VAULT_PATH")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL = os.getenv("CLEANER_GEMINI_MODEL", os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite"))
+from backend.config import (
+    LLM_PROVIDER, LLM_MODEL,
+    EMBEDDING_PROVIDER, EMBEDDING_MODEL,
+    OPENAI_API_KEY, OLLAMA_BASE_URL
+)
 
-if not VAULT_PATH or not GEMINI_API_KEY:
-    raise RuntimeError("Missing OBSIDIAN_VAULT_PATH or GEMINI_API_KEY in .env")
+if not VAULT_PATH:
+    raise RuntimeError("Missing OBSIDIAN_VAULT_PATH in config")
 
 SUMMARIES_DIR = os.path.join(VAULT_PATH, "04_Resources", "Research_Brain", "Summaries")
 ATLAS_DIR = os.path.join(VAULT_PATH, "04_Resources", "Research_Brain", "Atlas")
 CONCEPTS_DIR = os.path.join(VAULT_PATH, "04_Resources", "Research_Brain", "Concepts")
 
-client = genai.Client(api_key=GEMINI_API_KEY)
+client = None
+if GEMINI_API_KEY:
+    try:
+        client = genai.Client(api_key=GEMINI_API_KEY)
+    except Exception:
+        pass
+
+class SyncMockResponse:
+    def __init__(self, text):
+        self.text = text
 
 def call_gemini_with_retry(model, contents, config=None, max_retries=5):
-    """Synchronous wrapper to call Gemini API with exponential backoff for 429 and 503 errors."""
+    """Synchronous wrapper to call LLM API with exponential backoff, supporting multiple providers."""
+    from backend.config import LLM_PROVIDER
+    if LLM_PROVIDER != "gemini":
+        import openai
+        from backend.config import OPENAI_API_KEY, OLLAMA_BASE_URL
+        
+        client_to_use = None
+        if LLM_PROVIDER == "openai":
+            client_to_use = openai.OpenAI(api_key=OPENAI_API_KEY)
+        elif LLM_PROVIDER == "ollama":
+            client_to_use = openai.OpenAI(base_url=f"{OLLAMA_BASE_URL}/v1", api_key="ollama")
+        else:
+            raise ValueError(f"Unsupported LLM_PROVIDER: {LLM_PROVIDER}")
+            
+        system_instruction = None
+        temperature = 0.1
+        response_schema = None
+        
+        if config:
+            system_instruction = getattr(config, "system_instruction", None)
+            temperature = getattr(config, "temperature", 0.1)
+            response_schema = getattr(config, "response_schema", None)
+            
+        messages = []
+        if system_instruction:
+            messages.append({"role": "system", "content": system_instruction})
+        messages.append({"role": "user", "content": str(contents)})
+        
+        kwargs = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature
+        }
+        if response_schema:
+            kwargs["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": response_schema.__name__,
+                    "schema": response_schema.model_json_schema()
+                }
+            }
+            
+        for attempt in range(max_retries):
+            try:
+                response = client_to_use.chat.completions.create(**kwargs)
+                text = response.choices[0].message.content
+                return SyncMockResponse(text)
+            except Exception as e:
+                error_str = str(e)
+                if "429" in error_str or "503" in error_str or "rate_limit" in error_str.lower():
+                    wait_time = (2 ** attempt) + 2
+                    print(f"Cleaner [LLM]: Encountered rate limit or server error. Retrying in {wait_time}s... (Attempt {attempt+1}/{max_retries})")
+                    time.sleep(wait_time)
+                else:
+                    raise e
+        raise RuntimeError(f"Failed to generate completion after {max_retries} attempts.")
+
+    # Original Gemini implementation
     for attempt in range(max_retries):
         try:
             return client.models.generate_content(

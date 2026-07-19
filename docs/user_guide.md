@@ -50,7 +50,7 @@ This guide outlines the day-to-day workflows for using your Second Brain orchest
 
 ## 📋 Master Tasks Management
 
-Your tasks are managed dynamically by the system loop in your main [Tasks.md](file:///home/sdmeers/vault/Tasks.md) file:
+Your tasks are managed dynamically by the system loop in your main [Tasks.md](file:///home/sdmeers/vault/00_System/Tasks.md) file:
 *   **Extraction:** Tasks are extracted from voice notes, emails, and dropped documents.
 *   **Filing format:** The system writes tasks in standard Obsidian format:
     ```markdown
@@ -58,6 +58,17 @@ Your tasks are managed dynamically by the system loop in your main [Tasks.md](fi
     ```
 *   **Smart Dashboard sorting:** Every 15 seconds, the backend reads `Tasks.md`, parses deadline dates (resolving relative text like `📅 tomorrow` relative to creation time), and divides your tasks into `## 🚨 Overdue`, `## 📅 Due Today`, `## 🗓️ Upcoming`, and `## 🗃️ Backlog` sections.
 *   **Completed Tasks Archiving:** When you check off a task (`- [x]`), the sorter automatically cuts it from `Tasks.md` and appends it to `Completed_Tasks.md` in your vault, adding a completion date tag and striking it through (e.g. `~~checked task~~ [completed: 2026-07-12]`).
+
+---
+
+## 🌅 Daily Briefing & Cognitive Synthesis
+
+Every night at **2:00 AM**, a background systemd timer runs the cognitive synthesis pipeline, writing today's briefing to `00_System/Daily_Digest.md` (and a rolling 14-day history in `00_System/Internal/Digests/`):
+1.  **Part 1: Tasks Summary:** Lists active/stagnant tasks (>14 days) and your recent backlog size.
+2.  **Part 2: Recent Activity (Last 7 Days):** Aggregates folder directories and files modified to give you a structural view of where you focused.
+3.  **Part 3: Recent Ideas:** Collects notes tagged `#type/idea` or added to `02_Projects/Ideas/` recently.
+4.  **Part 4: AI Synthesis & Suggestions:** Gemini acts as a co-creation peer to outline blind spots/refinements for your active ideas, and suggests cross-pollinations between different domains (e.g. merging coding simulator dashboards with server telemetry).
+5.  **Telegram Briefing:** A structured plain-text 4-part summary of these highlights is sent to your Telegram bot.
 
 ---
 

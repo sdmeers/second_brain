@@ -29,8 +29,70 @@ def save_cache_metadata(metadata):
     except Exception as e:
         print(f"Error saving cache metadata: {e}")
 
-async def call_gemini_with_retry(model: str, contents, config: types.GenerateContentConfig = None, max_retries: int = 5):
-    """Wrapper to call Gemini API with exponential backoff for 429 and 503 errors."""
+class MockResponse:
+    def __init__(self, text):
+        self.text = text
+
+async def call_gemini_with_retry(model: str, contents, config = None, max_retries: int = 5):
+    """Wrapper to call LLM API, routing to OpenAI or Ollama if configured."""
+    from backend.config import LLM_PROVIDER
+    
+    if LLM_PROVIDER != "gemini":
+        from openai import AsyncOpenAI
+        from backend.config import OPENAI_API_KEY, OLLAMA_BASE_URL
+        
+        client_to_use = None
+        if LLM_PROVIDER == "openai":
+            client_to_use = AsyncOpenAI(api_key=OPENAI_API_KEY)
+        elif LLM_PROVIDER == "ollama":
+            client_to_use = AsyncOpenAI(base_url=f"{OLLAMA_BASE_URL}/v1", api_key="ollama")
+        else:
+            raise ValueError(f"Unsupported LLM_PROVIDER: {LLM_PROVIDER}")
+            
+        system_instruction = None
+        temperature = 0.1
+        response_schema = None
+        
+        if config:
+            system_instruction = getattr(config, "system_instruction", None)
+            temperature = getattr(config, "temperature", 0.1)
+            response_schema = getattr(config, "response_schema", None)
+            
+        messages = []
+        if system_instruction:
+            messages.append({"role": "system", "content": system_instruction})
+        messages.append({"role": "user", "content": str(contents)})
+        
+        kwargs = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature
+        }
+        if response_schema:
+            kwargs["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": response_schema.__name__,
+                    "schema": response_schema.model_json_schema()
+                }
+            }
+            
+        for attempt in range(max_retries):
+            try:
+                response = await client_to_use.chat.completions.create(**kwargs)
+                text = response.choices[0].message.content
+                return MockResponse(text)
+            except Exception as e:
+                error_str = str(e)
+                if "429" in error_str or "503" in error_str or "rate_limit" in error_str.lower():
+                    wait_time = (2 ** attempt) + 2
+                    print(f"Backend [LLM]: Encountered rate limit or server error. Retrying in {wait_time}s... (Attempt {attempt+1}/{max_retries})")
+                    await asyncio.sleep(wait_time)
+                else:
+                    raise e
+        raise RuntimeError(f"Failed to generate completion after {max_retries} attempts.")
+
+    # Original Gemini implementation
     for attempt in range(max_retries):
         try:
             return await client.aio.models.generate_content(
@@ -56,6 +118,9 @@ async def get_or_create_context_cache(model: str, system_instruction: str) -> Op
     it creates a new cache.
     Returns the cache name or None.
     """
+    from backend.config import LLM_PROVIDER
+    if LLM_PROVIDER != "gemini":
+        return None
     try:
         token_res = await client.aio.models.count_tokens(
             model=model,

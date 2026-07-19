@@ -2,16 +2,19 @@ import asyncio
 from google.genai import types
 from backend.utils.gemini import client
 
-EMBEDDING_MODEL = "gemini-embedding-2"
-
 async def get_embedding(text: str) -> list[float]:
-    """Generates a 3072-dimension vector embedding for a single text string using Gemini."""
+    """Generates a vector embedding for a single text string."""
+    from backend.config import EMBEDDING_PROVIDER
+    if EMBEDDING_PROVIDER != "gemini":
+        from backend.utils.llm_client import get_embedding as client_get_embedding
+        return await client_get_embedding(text)
+        
+    from backend.config import EMBEDDING_MODEL
     try:
         response = await client.aio.models.embed_content(
             model=EMBEDDING_MODEL,
             contents=text
         )
-        # response.embeddings contains the list of embeddings
         if response.embeddings:
             return response.embeddings[0].values
         raise ValueError("No embeddings returned from Gemini API.")
@@ -21,6 +24,12 @@ async def get_embedding(text: str) -> list[float]:
 
 async def get_embeddings_batch(texts: list[str], batch_size: int = 100) -> list[list[float]]:
     """Generates vector embeddings for a list of texts in batches to respect API limits."""
+    from backend.config import EMBEDDING_PROVIDER
+    if EMBEDDING_PROVIDER != "gemini":
+        from backend.utils.llm_client import get_embeddings_batch as client_batch
+        return await client_batch(texts)
+        
+    from backend.config import EMBEDDING_MODEL
     embeddings = []
     
     for i in range(0, len(texts), batch_size):
@@ -39,7 +48,6 @@ async def get_embeddings_batch(texts: list[str], batch_size: int = 100) -> list[
             print(f"RAG [Embeddings]: Error in batch embeddings generation: {e}")
             raise e
             
-        # Throttling to prevent hitting embedding API rate limits (1500 RPM is very high, but 0.2s sleep is safe)
         await asyncio.sleep(0.1)
         
     return embeddings

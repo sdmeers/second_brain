@@ -17,4 +17,5 @@ dependencies = [
     "sqlite-vss>=0.1.2",
     "uvicorn>=0.42.0",
     "yt-dlp>=2026.3.17",
+    "openai>=1.60.0",
 ]

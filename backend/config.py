@@ -7,12 +7,26 @@ load_dotenv(dotenv_path=dotenv_path)
 
 OBSIDIAN_VAULT_PATH = os.getenv("OBSIDIAN_VAULT_PATH")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
+
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "gemini").lower()
+LLM_MODEL = os.getenv("LLM_MODEL", "gemini-3.1-flash-lite")
+EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "gemini").lower()
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "gemini-embedding-2")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+
+GEMINI_MODEL = LLM_MODEL # Keeping for backwards compatibility
 WIKILINK_SIMILARITY_THRESHOLD = float(os.getenv('WIKILINK_SIMILARITY_THRESHOLD', '1.2'))
 
-if not GEMINI_API_KEY:
-    print(f"CRITICAL: GEMINI_API_KEY not found in {dotenv_path}")
-    raise RuntimeError(f"CRITICAL: GEMINI_API_KEY missing from {dotenv_path}")
+if LLM_PROVIDER == "gemini" or EMBEDDING_PROVIDER == "gemini":
+    if not GEMINI_API_KEY:
+        print(f"CRITICAL: GEMINI_API_KEY not found in {dotenv_path}")
+        raise RuntimeError(f"CRITICAL: GEMINI_API_KEY missing from {dotenv_path}")
+
+if LLM_PROVIDER == "openai" or EMBEDDING_PROVIDER == "openai":
+    if not OPENAI_API_KEY:
+        print(f"CRITICAL: OPENAI_API_KEY not found in {dotenv_path}")
+        raise RuntimeError(f"CRITICAL: OPENAI_API_KEY missing from {dotenv_path}")
 
 if not OBSIDIAN_VAULT_PATH:
     raise RuntimeError("CRITICAL: OBSIDIAN_VAULT_PATH missing from .env")

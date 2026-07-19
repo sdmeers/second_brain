@@ -38,3 +38,12 @@ sources_all.txt
 
 # Archive folder
 docs/archive/
+
+# Databases and cache files
+*.db
+*-journal
+*.db-journal
+.cache_metadata.json
+.telegram_offset
+.telegram_qa_offset
+.brain_cleaner_state.json

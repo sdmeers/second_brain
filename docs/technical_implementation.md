@@ -32,7 +32,7 @@ graph TD
     Router -->|Deep Research| ResearchHandler[Research Ingestion]
     
     %% Destinations
-    TaskHandler -->|Atomic Write| TasksFile[Tasks.md]
+    TaskHandler -->|Atomic Write| TasksFile[00_System/Tasks.md]
     PARAHandler -->|Project Match| ProjFolder[02_Projects/]
     PARAHandler -->|Area Match| AreaFolder[03_Areas/]
     ResearchHandler -->|Explicit Tag: /research| Research[04_Resources/Research_Brain/]
@@ -40,10 +40,10 @@ graph TD
     
     %% Indexing
     TasksFile & ProjFolder & AreaFolder & Research & Reference -->|Hash Change| Indexer[Incremental Vector Indexer]
-    Indexer -->|Gemini Embedding| VectorDB[(SQLite-VSS Vector DB)]
+    Indexer -->|LLM Client Embedding| VectorDB[(SQLite-VSS Vector DB)]
     
     %% Query Flow
-    RAGMod -->|Gemini Embedding| VectorDB
+    RAGMod -->|LLM Client Embedding| VectorDB
     RAGMod -->|Synthesized Answer| TelegramQA
     
     %% Commits & Alerts
@@ -156,3 +156,15 @@ To protect your vault markdown files from truncation or corruption if the homese
 2.  The file handle is closed, guaranteeing that the write to disk is complete.
 3.  `os.replace()` is called to swap the `.tmp` file with the target file.
 4.  On Unix/Linux, `os.replace` is an atomic system call, meaning the note is either fully written or completely unchanged.
+
+---
+
+## 8. Model Agnosticism (Multi-Provider Support)
+
+To prevent locking the Second Brain into Google's Gemini platform, the backend utilizes a decoupled adapter model managed in `backend/utils/llm_client.py`:
+*   **Decoupled Text & Vector Interfaces:** Standardized async functions (`generate_text`, `generate_structured_output`, `get_embedding`, `get_embeddings_batch`) wrap client instantiations.
+*   **Supported Providers:**
+    *   `gemini`: Native `google-genai` client, maintaining advanced features like display-named Context Caches.
+    *   `openai`: Async completions and embeddings using official OpenAI endpoints and API keys.
+    *   `ollama`: Routes completion/embeddings calls to local models (e.g. LLaMA3, Mistral) by mapping to a standard local `OpenAI` client pointing to your local Ollama port `/v1` endpoint.
+*   **Backwards Compatibility:** The legacy `call_gemini_with_retry` function acts as a wrapper that automatically translates prompt structures and matches JSON schemas using standard `response_format` schemas for non-Gemini providers, ensuring zero changes were needed in ingestion/routing files.

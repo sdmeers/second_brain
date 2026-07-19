@@ -27,17 +27,26 @@ The solution consists of three primary components:
 1.  **Chrome Extension:** A lightweight capture tool that extracts clean text from articles or triggers the backend to fetch transcripts from YouTube and process full PDFs.
 2.  **FastAPI Backend:** A Python service that orchestrates the heavy lifting:
     *   Full-text extraction from multi-page PDFs.
-    *   Strategic summarization using the Gemini API.
+    *   Strategic summarization using LLMs.
     *   **Proactive Deduplication:** Uses RAG (Retrieval-Augmented Generation) by injecting your existing concept dictionary into the prompt to prevent creating redundant synonyms during ingestion.
+    *   **Model Agnosticism:** Uses a generic LLM wrapper (`llm_client.py`) supporting Gemini, OpenAI, and Ollama out of the box.
     *   API Throttling & Quota Management to respect free-tier limits.
-3.  **Obsidian Vault:** The destination for all captured knowledge, structured into `Summaries`, `Atlas` (themes), and `Concepts`.
+3.  **Obsidian Vault:** Organized according to the **P.A.R.A.** system:
+    *   `00_System/` — Task dashboards (`Tasks.md`, `Completed_Tasks.md`), daily briefs (`Daily_Digest.md`), unified activity logs (`Librarian_Activity.md`), and cache directories (`Internal/`).
+    *   `02_Projects/` — Active deliverables and project notes.
+    *   `03_Areas/` — Ongoing long-term responsibilities (Family, Cookery, Health, Coding).
+    *   `04_Resources/` — Reference materials and the structured Research Brain.
+    *   `05_Archive/` — Completed work and reference materials.
 
 ## 🚀 Key Features
 
-*   **Full PDF Ingestion:** The backend processes every page of a document, ensuring deep analysis of long-form reports.
-*   **Agentic Concept Mapping:** For every source ingested, the system identifies 5-15 highly specific concepts and automatically updates their dedicated pages in your vault with backlinks and contextual snippets.
-*   **Mobile Ingestion Queue (Offline-Friendly):** Background watcher polls the `00 System/Import/Inbox.md` file in your Obsidian vault. Using tools like Obsidian's *Remotely Save* plugin, you can append URLs and notes to this single file from your mobile browser or note-taker, and the backend will asynchronously ingest them on your laptop, scrape the targets, link concepts, and log them under `Completed.md` or `Failed.md` automatically.
-*   **Auto-Healing Brain Cleaner:** A maintenance script (`brain_cleaner.py`) that periodically scans your vault to:
+*   **Model Agnosticism:** The backend is fully provider-independent. Switch between Google Gemini, OpenAI, or a local LLaMA instance running via Ollama simply by toggling `.env` settings.
+*   **Full PDF & Presentation Ingestion:** Backend extracts and processes every page of PDF documents and PPTX presentation slides (including speaker notes).
+*   **Local Audio Transcription:** Integrated local **Faster Whisper** pipeline running on CUDA GPU (with CPU fallbacks) for high-fidelity offline voice notes transcription.
+*   **Agentic Concept Mapping:** The system automatically extracts 5-15 highly specific concepts per source and links them bidirectionally in the Research Brain.
+*   **Daily Briefing & Synthesis:** A systemd-timer triggers a nightly synthesis run at **2:00 AM** to generate a structured 4-part **Daily Digest**, clean up raw voice notes older than 30 days, update directory indexes, and push a plain-text briefing to your Telegram Bot.
+*   **Mobile Ingestion Queue (Offline-Friendly):** Background watcher polls the `01_Inbox/Inbox.md` file. Add URLs or notes via Syncthing on mobile, and the server processes them asynchronously, filing them to the right project/area automatically.
+*   **Auto-Healing Brain Cleaner:** A maintenance script (`brain_cleaner.py`) running overnight to:
     *   **Deduplicate & Merge:** Intelligently synthesizes overlapping concepts (e.g., "AI" vs "Artificial Intelligence") into single canonical pages while healing all links vault-wide.
     *   **Link Healing:** Automatically updates wikilinks and detects "orphaned" mentions to generate new concept pages.
     *   **Hash-based State Tracking:** Prevents redundant refactoring and "semantic smoothing" by only re-processing files that have actually changed since the last pass.

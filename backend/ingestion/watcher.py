@@ -181,9 +181,17 @@ async def process_queue_worker():
                 db_cursor = db_conn.cursor()
                 db_cursor.execute("UPDATE ingestion_queue SET content_text = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (transcription, item_id))
                 db_conn.commit()
-                db_conn.close()
-                print("Backend [Queue Worker]: Transcription completed and cached in database.")
-                
+                # If transcription is blank/silent, drop item safely to prevent creating spurious notes
+                if not content_text.strip():
+                    print(f"Backend [Queue Worker]: Audio transcription for {os.path.basename(file_path)} was blank/silent. Skipping ingestion.")
+                    update_item_status(item_id, "completed", error_msg="Blank/silent voice note ignored.")
+                    if os.path.exists(file_path) and ("staging" in file_path or "01_Inbox" in file_path):
+                        try:
+                            os.remove(file_path)
+                        except Exception:
+                            pass
+                    return
+
         # Check if the file is a PDF or PPTX and needs text extraction for classification
         elif file_path and file_path.lower().endswith(('.pdf', '.pptx')):
             if not content_text.strip():

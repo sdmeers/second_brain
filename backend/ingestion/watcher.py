@@ -343,6 +343,13 @@ async def process_queue_worker():
             result_title = "Split Voice Dump"
             success = True
             
+        elif classification.category == "instruction":
+            # Vault Instruction Handler: execute agentic commands on vault notes, tasks, or structure
+            from backend.ingestion.handlers.instruction import process_vault_instruction
+            msg = await process_vault_instruction(classification_input, source_label)
+            result_title = "Vault Instruction Executed"
+            success = True
+
         elif classification.category in ["quick_note", "idea", "reference", "meeting_transcript", "project_note"]:
             # Quick Note/Idea/Reference/Meeting/Project Note: check if it matches an active project or area folder
             # If yes: saves inside project or area. If no: saves as lightweight summary or future project idea
@@ -671,13 +678,16 @@ tags: [future_project, idea]
                 }
 
             # Notify Steven
-            await notify_via_telegram(
-                f"🧠✅ Processed: [[{result_title}]]\n"
-                f"Category: {classification.category} (conf: {classification.confidence})\n"
-                f"Location: {location_str}\n"
-                f"Reason: {classification.reasoning}",
-                reply_markup=reply_markup
-            )
+            if classification.category == "instruction":
+                await notify_via_telegram(msg)
+            else:
+                await notify_via_telegram(
+                    f"🧠✅ Processed: [[{result_title}]]\n"
+                    f"Category: {classification.category} (conf: {classification.confidence})\n"
+                    f"Location: {location_str}\n"
+                    f"Reason: {classification.reasoning}",
+                    reply_markup=reply_markup
+                )
             
     except DuplicateURLError as e:
         update_item_status(item_id, "completed")

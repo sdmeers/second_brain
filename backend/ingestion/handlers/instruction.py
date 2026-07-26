@@ -25,7 +25,7 @@ class VaultAction(BaseModel):
     action_type: str = Field(
         description="One of: 'delete_task', 'complete_task', 'update_task', 'convert_task_to_note', "
                     "'move_note', 'rename_note', 'delete_note', 'reclassify_note', 'merge_notes', "
-                    "'append_to_note', 'update_frontmatter', 'add_tag', 'remove_tag', 'reindex', 'run_cleaner'."
+                    "'append_to_note', 'update_frontmatter', 'add_tag', 'remove_tag', 'reindex', 'run_cleaner', 'get_sitrep'."
     )
     target: TargetSelector
     destination: Optional[str] = Field(default="", description="Destination path or folder (e.g. '03_Areas/Reading', '02_Projects/Hermes', '05_Archive').")
@@ -41,6 +41,7 @@ SYSTEM_INSTRUCTION = """You are an expert agentic command interpreter for Steven
 Analyze the user's natural language instruction and translate it into a structured InstructionPlan consisting of one or more discrete VaultAction steps.
 
 AVAILABLE ACTION PRIMITIVES:
+- 'get_sitrep': Generate and return a real-time summary / SITREP of tasks, recent activity, and ideas (triggered by queries like "Give me a SITREP", "What is the current summary?", "What happened this week?", "Status report").
 - 'delete_task': Remove matching pending task line(s) from Tasks.md.
 - 'complete_task': Mark matching task line(s) as '- [x]' in Tasks.md and archive them to Completed_Tasks.md.
 - 'update_task': Edit task text, deadline, or priority of matching task line(s) in Tasks.md.
@@ -57,9 +58,10 @@ AVAILABLE ACTION PRIMITIVES:
 - 'run_cleaner': Trigger vault cleaner run.
 
 RULES:
-1. For instructions asking to "reclassify task X as a book", use 'convert_task_to_note' with target query "X" and destination "03_Areas/Reading".
-2. Break multi-part instructions into separate actions in the plan.
-3. Be precise with search queries so target verification can accurately locate items on disk.
+1. For queries asking for a summary or SITREP (e.g. "What is the current summary?", "Give me a SITREP", "What happened yesterday?"), output an action with primitive 'get_sitrep'.
+2. For instructions asking to "reclassify task X as a book", use 'convert_task_to_note' with target query "X" and destination "03_Areas/Reading".
+3. Break multi-part instructions into separate actions in the plan.
+4. Be precise with search queries so target verification can accurately locate items on disk.
 """
 
 async def parse_instruction_plan(instruction_text: str) -> InstructionPlan:
@@ -324,10 +326,14 @@ async def handle_note_content_action(action: VaultAction) -> str:
     return f"⚠️ Unsupported note content action: {action_type}"
 
 async def handle_system_action(action: VaultAction) -> str:
-    """Executes system operations (reindex, run_cleaner)."""
+    """Executes system operations (reindex, run_cleaner, get_sitrep)."""
     action_type = action.action_type
     
-    if action_type == "reindex":
+    if action_type in ["get_sitrep", "run_summary"]:
+        from backend.brain_cleaner import generate_sitrep_summary
+        return await generate_sitrep_summary()
+        
+    elif action_type == "reindex":
         from backend.rag.vectorstore import index_vault
         await index_vault()
         return "✓ Triggered vector database re-indexing."
@@ -349,7 +355,7 @@ async def execute_vault_action(action: VaultAction) -> str:
         return await handle_note_file_action(action)
     elif action_type in ["append_to_note", "update_frontmatter", "add_tag", "remove_tag"]:
         return await handle_note_content_action(action)
-    elif action_type in ["reindex", "run_cleaner"]:
+    elif action_type in ["reindex", "run_cleaner", "get_sitrep"]:
         return await handle_system_action(action)
     else:
         return f"⚠️ Unknown action type '{action_type}'"
@@ -367,13 +373,29 @@ async def process_vault_instruction(instruction_text: str, source_info: str = ""
     if not plan.actions:
         return "⚠️ Instruction Handler: No valid vault actions identified."
         
+    # If the single action is getting a SITREP/Summary, return the SITREP directly!
+    if len(plan.actions) == 1 and plan.actions[0].action_type in ["get_sitrep", "run_summary"]:
+        return await handle_system_action(plan.actions[0])
+        
     results = []
+    mutated_vault = False
     print(f"Backend [Instruction Handler]: Executing plan: '{plan.summary}' ({len(plan.actions)} actions)")
     
     for i, action in enumerate(plan.actions, start=1):
         print(f"  Action {i}/{len(plan.actions)} [{action.action_type}] Target: '{action.target.query}' -> Reasoning: {action.reasoning}")
         res = await execute_vault_action(action)
         results.append(res)
+        if action.action_type not in ["get_sitrep", "reindex"]:
+            mutated_vault = True
+            
+    # If vault content was modified, update vector index immediately
+    if mutated_vault:
+        try:
+            from backend.rag.vectorstore import index_vault
+            print("Backend [Instruction Handler]: Vault content mutated. Triggering incremental vector indexing...")
+            await index_vault()
+        except Exception as idx_e:
+            print(f"Backend [Instruction Handler]: Incremental indexing warning: {idx_e}")
         
     # Build human-readable execution receipt
     receipt_lines = [

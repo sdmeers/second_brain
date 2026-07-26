@@ -646,56 +646,7 @@ async def generate_daily_digest():
                 except Exception:
                     pass
 
-    # --- Part 4: AI Synthesis & Suggestions ---
-    db_path = os.path.join(os.path.dirname(__file__), "brain_vectors.db")
-    vss_matches = []
-    try:
-        from backend.rag.embeddings import get_embeddings_batch
-        from backend.rag.vectorstore import search_similar_chunks
-        
-        texts = [note['content'][:2000] for note in recent_activity_notes if note['content'].strip()]
-        if texts:
-            embs = await get_embeddings_batch(texts)
-            for emb in embs:
-                if emb:
-                    results = await search_similar_chunks(emb, top_k=5)
-                    for r in results:
-                        path = r['file_path']
-                        if "04_Resources/" in path.replace("\\", "/"):
-                            vss_matches.append(path)
-    except Exception as e:
-        print(f"VSS error: {e}")
-
-    vss_matches_unique = list(set(vss_matches))
-    prompt = f"""You are a creative co-creation partner and brainstorming assistant for the user's Second Brain.
-Analyze the user's activity over the last 7 days:
-
-Recent Notes:
-{[n['name'] for n in recent_activity_notes]}
-
-Recent Ideas:
-{recent_ideas}
-
-VSS Matches (Existing concepts/summaries in the Research Brain):
-{vss_matches_unique}
-
-Your goal is to act as a thoughtful, technical peer who helps the user refine their ideas and find hidden connections. Please structure your response with:
-
-1. 🔍 Blind Spots & Refinements:
-Pick 1 or 2 of the "Recent Ideas" above. Identify practical things the user might have forgotten or overlooked (e.g. edge cases, deployment friction, security, or simple design additions). Offer concrete, technical ways to improve or address them.
-
-2. 💡 Creative Cross-Pollination:
-Suggest 1 or 2 unexpected, creative ways to combine different ideas, projects, or areas of the user's life listed above. For example, how can their coding/simulator projects cross-pollinate with their family planning, home server setup, or theoretical concepts from the Research Brain (VSS Matches)? Think outside the box to spark new creativity.
-
-Strictly avoid academic/corporate jargon, general AI platitudes, and abstract fluff. Be highly specific, conversational, and direct.
-"""
-    try:
-        resp = call_gemini_with_retry(GEMINI_MODEL, prompt)
-        ai_synthesis = resp.text.strip()
-    except Exception as e:
-        ai_synthesis = f"Failed to generate AI synthesis: {e}"
-
-    # Assemble Digest
+    # Assemble Digest (Parts 1, 2, 3 only)
     digest_content = f"# Daily Digest - {datetime.now().strftime('%Y-%m-%d')}\n\n"
     
     digest_content += "## Part 1: Tasks Summary\n"
@@ -714,7 +665,7 @@ Strictly avoid academic/corporate jargon, general AI platitudes, and abstract fl
             for f in files:
                 digest_content += f"- {f}\n"
     else:
-        digest_content += "No recent activity.\n"
+        digest_content += "No recent activity recorded in the last 7 days.\n"
     digest_content += "\n"
     
     digest_content += "## Part 3: Recent Ideas\n"
@@ -722,11 +673,8 @@ Strictly avoid academic/corporate jargon, general AI platitudes, and abstract fl
         for idea in recent_ideas:
             digest_content += f"- {idea}\n"
     else:
-        digest_content += "No recent ideas.\n"
+        digest_content += "No recent ideas captured.\n"
     digest_content += "\n"
-    
-    digest_content += "## Part 4: AI Synthesis & Suggestions\n"
-    digest_content += ai_synthesis + "\n"
 
     date_str = datetime.now().strftime("%Y-%m-%d")
     digest_path = os.path.join(VAULT_PATH, "00_System", "Internal", "Digests", f"{date_str}.md")
@@ -739,46 +687,32 @@ Strictly avoid academic/corporate jargon, general AI platitudes, and abstract fl
     return digest_content
 
 
-async def send_telegram_briefing(digest_content):
-    print("📲 Sending Telegram briefing...")
-    if not TELEGRAM_QA_BOT_TOKEN:
-        print("No QA bot token found.")
-        return
-        
-    prompt = """Create a Telegram summary of this daily digest following exactly this plain text structure (without markdown * or ** asterisks, use standard hyphens - for bullets):
+async def generate_sitrep_summary() -> str:
+    """Generates a real-time SITREP digest and formats a 3-part summary for Telegram."""
+    digest_content = await generate_daily_digest()
+    
+    prompt = """Create a concise, punchy Telegram SITREP summary of this digest following EXACTLY this plain text structure (without markdown * or ** asterisks, use standard hyphens - for bullets):
 
-Today's Highlights:
+📊 SITREP / Summary:
 
 Part 1: Tasks
-[Concise summary of active/stagnant tasks]
+[Concise summary of active and stagnant/overdue tasks]
 
 Part 2: Recent Activity
-[Summary list of folders/notes worked on in the last 7 days]
+[Summary list of folders and notes worked on in the last 7 days]
 
 Part 3: Recent Ideas
 [List of recently captured ideas]
 
-Part 4: AI Insights
-[AI synthesis and actionable suggestions for your ideas]
-
-Here is the digest to summarize:
+Here is the digest content to summarize:
 """ + digest_content
 
     try:
         resp = call_gemini_with_retry(GEMINI_MODEL, prompt)
-        summary = resp.text.strip()
-        
-        summary = summary.replace("*", "")
-        
-        from backend.config import TELEGRAM_ALLOWED_CHAT_IDS
-        if TELEGRAM_ALLOWED_CHAT_IDS:
-            chat_id = TELEGRAM_ALLOWED_CHAT_IDS[0]
-            url = f"https://api.telegram.org/bot{TELEGRAM_QA_BOT_TOKEN}/sendMessage"
-            async with httpx.AsyncClient() as client:
-                r = await client.post(url, json={"chat_id": chat_id, "text": summary})
-                r.raise_for_status()
+        summary = resp.text.strip().replace("*", "")
+        return summary
     except Exception as e:
-        print(f"Failed to send Telegram briefing: {e}")
+        return f"📊 SITREP / Summary:\n\n{digest_content}"
 
 async def rolling_retention():
     print("🧹 Rolling retention for old digests...")
@@ -803,12 +737,10 @@ async def main():
         
     await auto_update_index()
     await cleanup_old_audio()
-    digest = await generate_daily_digest()
-    await send_telegram_briefing(digest)
+    await generate_daily_digest()
     await rolling_retention()
     
-    # Run the old sync brain cleaner tasks
-    # run_brain_cleaner() takes a while, we can run it in a thread or just call it
+    # Run sync vault maintenance
     run_brain_cleaner()
     
     print("✅ All Brain Cleaner Tasks Completed.")

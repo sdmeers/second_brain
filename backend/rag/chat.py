@@ -25,19 +25,47 @@ async def query_brain(user_query: str, top_k: int = 5) -> dict:
     
     chunks = await search_similar_chunks(query_vector, top_k=effective_k)
     
-    # Hybrid Retrieval: If asking about books or reading list, include all note files in 03_Areas/Reading/
-    if any(kw in query_lower for kw in ["book", "reading", "to read"]):
-        from backend.config import OBSIDIAN_VAULT_PATH
-        reading_dir = os.path.join(OBSIDIAN_VAULT_PATH, "03_Areas", "Reading")
-        if os.path.exists(reading_dir):
-            for file in os.listdir(reading_dir):
+    # Hybrid Retrieval: Dynamically scan matching P.A.R.A Projects or Areas directories
+    from backend.config import OBSIDIAN_VAULT_PATH
+    matched_para_dirs = []
+    
+    if OBSIDIAN_VAULT_PATH:
+        for parent_folder in ["02_Projects", "03_Areas"]:
+            parent_path = os.path.join(OBSIDIAN_VAULT_PATH, parent_folder)
+            if os.path.exists(parent_path):
+                for sub in os.listdir(parent_path):
+                    full_sub = os.path.join(parent_path, sub)
+                    if os.path.isdir(full_sub) and not sub.startswith((".", "_")):
+                        sub_clean = sub.lower()
+                        # Match if subfolder name or key words appear in query
+                        if sub_clean in query_lower or any(w in query_lower for w in sub_clean.split() if len(w) > 3):
+                            matched_para_dirs.append((parent_folder, sub, full_sub))
+                            
+        # Explicit query keyword aliases
+        if any(kw in query_lower for kw in ["book", "books", "reading", "to read"]):
+            reading_dir = os.path.join(OBSIDIAN_VAULT_PATH, "03_Areas", "Reading")
+            if os.path.exists(reading_dir) and not any(d[1] == "Reading" for d in matched_para_dirs):
+                matched_para_dirs.append(("03_Areas", "Reading", reading_dir))
+                
+        if any(kw in query_lower for kw in ["project", "projects", "active projects"]):
+            proj_dir = os.path.join(OBSIDIAN_VAULT_PATH, "02_Projects")
+            if os.path.exists(proj_dir):
+                for sub in os.listdir(proj_dir):
+                    full_sub = os.path.join(proj_dir, sub)
+                    if os.path.isdir(full_sub) and not sub.startswith((".", "_")):
+                        if not any(d[2] == full_sub for d in matched_para_dirs):
+                            matched_para_dirs.append(("02_Projects", sub, full_sub))
+                            
+        # Append note contents from all matched P.A.R.A folders to context
+        for parent_name, folder_name, folder_path in matched_para_dirs:
+            for file in os.listdir(folder_path):
                 if file.endswith(".md") and not file.startswith("."):
-                    rel_path = f"03_Areas/Reading/{file}"
+                    rel_path = f"{parent_name}/{folder_name}/{file}"
                     if not any(c["file_path"] == rel_path for c in chunks):
-                        file_full = os.path.join(reading_dir, file)
+                        file_full = os.path.join(folder_path, file)
                         try:
                             with open(file_full, "r", encoding="utf-8") as f:
-                                txt = f.read()[:1000]
+                                txt = f.read()[:1200]
                             chunks.append({
                                 "file_path": rel_path,
                                 "chunk_index": 0,

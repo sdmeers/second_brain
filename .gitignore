@@ -43,6 +43,10 @@ docs/archive/
 *.db
 *-journal
 *.db-journal
+*-shm
+*-wal
+*.db-shm
+*.db-wal
 .cache_metadata.json
 .telegram_offset
 .telegram_qa_offset

@@ -183,9 +183,9 @@ async def index_vault(force_reindex: bool = False):
                     rel_path = os.path.relpath(full_path, OBSIDIAN_VAULT_PATH)
                     rel_path_normalized = rel_path.replace("\\", "/")
                     
-                    # Strict Safety Filter: Exclude internal system directories (Internal, Logs, Templates, Inbox)
+                    # Strict Safety Filter: Exclude internal system directories (Internal, Logs, Templates, Inbox, Librarian_Activity)
                     if rel_path_normalized.startswith("00_System/"):
-                        if any(skip_part in rel_path_normalized for skip_part in ["/Internal/", "/Logs/", "/Templates/", "/Inbox/", "/.git"]):
+                        if "Librarian_Activity.md" in rel_path_normalized or any(skip_part in rel_path_normalized for skip_part in ["/Internal/", "/Logs/", "/Templates/", "/Inbox/", "/.git"]):
                             continue
                     
                     try:

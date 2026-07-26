@@ -14,6 +14,7 @@ def log_librarian_activity(title: str, location: str, source_type: str, extra: s
     else:
         link_str = title
         
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     entry = f'- **{timestamp}:** Ingested {link_str} to `{location}` ({source_type}){" — " + extra if extra else ""}\n'
     
     existing = ''

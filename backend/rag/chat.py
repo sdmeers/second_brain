@@ -18,9 +18,35 @@ async def query_brain(user_query: str, top_k: int = 5) -> dict:
             "sources": []
         }
         
-    # 2. Search for similar chunks
-    chunks = await search_similar_chunks(query_vector, top_k=top_k)
+    # 2. Search for similar chunks (increase k for list/enumeration queries)
+    query_lower = user_query.lower()
+    is_list_query = any(kw in query_lower for kw in ["list", "all", "books", "reading", "projects", "overview", "show me"])
+    effective_k = 25 if is_list_query else top_k
     
+    chunks = await search_similar_chunks(query_vector, top_k=effective_k)
+    
+    # Hybrid Retrieval: If asking about books or reading list, include all note files in 03_Areas/Reading/
+    if any(kw in query_lower for kw in ["book", "reading", "to read"]):
+        from backend.config import OBSIDIAN_VAULT_PATH
+        reading_dir = os.path.join(OBSIDIAN_VAULT_PATH, "03_Areas", "Reading")
+        if os.path.exists(reading_dir):
+            for file in os.listdir(reading_dir):
+                if file.endswith(".md") and not file.startswith("."):
+                    rel_path = f"03_Areas/Reading/{file}"
+                    if not any(c["file_path"] == rel_path for c in chunks):
+                        file_full = os.path.join(reading_dir, file)
+                        try:
+                            with open(file_full, "r", encoding="utf-8") as f:
+                                txt = f.read()[:1000]
+                            chunks.append({
+                                "file_path": rel_path,
+                                "chunk_index": 0,
+                                "text": txt,
+                                "distance": 0.0
+                            })
+                        except Exception:
+                            pass
+                            
     if not chunks:
         return {
             "answer": "No relevant context found in your second brain notes to answer this question.",

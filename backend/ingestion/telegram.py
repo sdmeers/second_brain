@@ -54,13 +54,27 @@ async def log_import_result(result: dict, source_url: str, chat_id: int, token: 
         json={"chat_id": chat_id, "text": f"✅ Successfully Ingested: [[{safe_title}]]"}
     )
 
+def markdown_to_telegram_html(text: str) -> str:
+    """Converts standard markdown (**bold**, `code`) into safe Telegram HTML."""
+    if not text:
+        return ""
+    # 1. Escape HTML special characters
+    t = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    # 2. Convert **bold** to <b>bold</b>
+    t = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', t)
+    # 3. Convert `code` to <code>code</code>
+    t = re.sub(r'`(.*?)`', r'<code>\1</code>', t)
+    return t
+
 async def send_telegram_message_safe(client, token: str, chat_id: int | str, text: str, reply_markup: dict = None):
-    """Sends a Telegram message with Markdown formatting enabled, falling back to plain text if parsing fails."""
+    """Sends a Telegram message with HTML formatting enabled, falling back to plain text if parsing fails."""
     url = f"https://api.telegram.org/bot{token}/sendMessage"
+    html_text = markdown_to_telegram_html(text)
+    
     payload = {
         "chat_id": chat_id,
-        "text": text,
-        "parse_mode": "Markdown"
+        "text": html_text,
+        "parse_mode": "HTML"
     }
     if reply_markup:
         payload["reply_markup"] = reply_markup
@@ -68,7 +82,9 @@ async def send_telegram_message_safe(client, token: str, chat_id: int | str, tex
     try:
         res = await client.post(url, json=payload, timeout=10.0)
         if res.status_code != 200:
-            # Fallback to plain text if Telegram rejects Markdown entities
+            print(f"Backend [Telegram]: HTML parse status {res.status_code}: {res.text}. Falling back to plain text...")
+            # Fallback to plain text if HTML parsing fails
+            payload["text"] = text
             payload.pop("parse_mode", None)
             await client.post(url, json=payload, timeout=10.0)
     except Exception as e:

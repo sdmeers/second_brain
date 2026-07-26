@@ -79,21 +79,37 @@ async def parse_instruction_plan(instruction_text: str) -> InstructionPlan:
     return InstructionPlan.model_validate_json(response.text.strip())
 
 def find_matching_tasks(query: str, lines: list[str]) -> list[tuple[int, str]]:
-    """Finds line indices and task strings matching a search query using fuzzy and substring matching."""
+    """Finds line indices and task strings matching a search query using fuzzy, token prefix, and substring matching."""
     matches = []
     query_clean = re.sub(r'[\'\"\[\]]', '', query.lower().strip())
+    query_words = [w for w in re.findall(r'\w+', query_clean) if len(w) > 3]
     
     for i, line in enumerate(lines):
         if line.strip().startswith("- [") or line.strip().startswith("- [x]"):
             line_clean = re.sub(r'[\'\"\[\]]', '', line.lower().strip())
-            # Substring match
-            if query_clean in line_clean or any(word in line_clean for word in query_clean.split() if len(word) > 4):
+            
+            # 1. Direct substring match
+            if query_clean in line_clean or line_clean in query_clean:
                 matches.append((i, line))
                 continue
                 
-            # Ratio match
-            ratio = difflib.SequenceMatcher(None, query_clean, line_clean).ratio()
-            if ratio > 0.5:
+            # 2. Token overlap or prefix matching (e.g. Anatheman -> Anathem)
+            line_words = [w for w in re.findall(r'\w+', line_clean) if len(w) > 3]
+            word_match = False
+            for qw in query_words:
+                for lw in line_words:
+                    if qw in lw or lw in qw or qw[:5] == lw[:5] or difflib.SequenceMatcher(None, qw, lw).ratio() > 0.65:
+                        word_match = True
+                        break
+                if word_match:
+                    break
+                    
+            if word_match:
+                matches.append((i, line))
+                continue
+                
+            # 3. Overall ratio match
+            if difflib.SequenceMatcher(None, query_clean, line_clean).ratio() > 0.45:
                 matches.append((i, line))
                 
     return matches
@@ -102,6 +118,7 @@ def find_matching_notes(query: str) -> list[str]:
     """Finds relative note paths matching a title or query across the vault."""
     matches = []
     query_clean = re.sub(r'[\'\"\[\]]', '', query.lower().strip())
+    query_words = [w for w in re.findall(r'\w+', query_clean) if len(w) > 3]
     
     for root, _, files in os.walk(OBSIDIAN_VAULT_PATH):
         if any(skip in root for skip in [".git", "00_System/Internal"]):
@@ -112,8 +129,12 @@ def find_matching_notes(query: str) -> list[str]:
                 rel_path = os.path.relpath(os.path.join(root, file), OBSIDIAN_VAULT_PATH)
                 if query_clean in file_name_clean:
                     matches.append(rel_path)
-                elif difflib.SequenceMatcher(None, query_clean, file_name_clean).ratio() > 0.6:
-                    matches.append(rel_path)
+                else:
+                    file_words = [w for w in re.findall(r'\w+', file_name_clean) if len(w) > 3]
+                    for qw in query_words:
+                        if any(qw in fw or fw in qw or qw[:5] == fw[:5] for fw in file_words):
+                            matches.append(rel_path)
+                            break
                     
     return matches
 
@@ -129,7 +150,14 @@ async def handle_task_action(action: VaultAction) -> str:
     matches = find_matching_tasks(query, lines)
     
     if not matches:
-        return f"⚠️ Target Verification: No task matching '{query}' found in Tasks.md."
+        # Cross-Fallback: Check if target exists as a note file in vault!
+        matching_notes = find_matching_notes(query)
+        if matching_notes:
+            print(f"Backend [Instruction Handler]: Target task '{query}' not in Tasks.md, but matched note file in vault! Cross-routing to handle_note_file_action.")
+            if action.action_type == "convert_task_to_note":
+                action.action_type = "move_note"
+            return await handle_note_file_action(action)
+        return f"⚠️ Target Verification: No task or note matching '{query}' found in Tasks.md or vault."
         
     action_type = action.action_type
     
@@ -173,6 +201,9 @@ async def handle_task_action(action: VaultAction) -> str:
             raw_text = re.sub(r'^- \[[ x]\]\s*', '', line.strip())
             raw_text = re.sub(r'📅.*', '', raw_text).strip()
             raw_text = re.sub(r'\(Captured from.*?\)', '', raw_text).strip()
+            raw_text = re.sub(r'#\w+', '', raw_text).strip()
+            raw_text = re.sub(r'^(Add|Read|Buy|Check|Get)\s+', '', raw_text, flags=re.IGNORECASE).strip()
+            raw_text = re.sub(r'\s+(to|on)\s+(the\s+)?reading\s+list.*$', '', raw_text, flags=re.IGNORECASE).strip()
             
             note_title = sanitize_filename(action.new_content.strip() or raw_text)
             note_path = os.path.join(dest_dir, f"{note_title}.md")
@@ -217,7 +248,19 @@ async def handle_note_file_action(action: VaultAction) -> str:
     matching_notes = find_matching_notes(query)
     
     if not matching_notes:
-        return f"⚠️ Target Verification: No note matching '{query}' found in vault."
+        # Cross-Fallback: Check if target exists as a task line in Tasks.md!
+        if os.path.exists(TASKS_PATH):
+            with open(TASKS_PATH, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+            matching_tasks = find_matching_tasks(query, lines)
+            if matching_tasks:
+                print(f"Backend [Instruction Handler]: Target note '{query}' not found as file, but matched {len(matching_tasks)} task(s) in Tasks.md! Routing to convert_task_to_note.")
+                action.action_type = "convert_task_to_note"
+                if not action.destination or action.destination in ["03_Areas", ""]:
+                    action.destination = "03_Areas/Reading"
+                return await handle_task_action(action)
+                
+        return f"⚠️ Target Verification: No note or task matching '{query}' found in vault."
         
     action_type = action.action_type
     

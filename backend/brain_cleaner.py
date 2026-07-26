@@ -676,6 +676,32 @@ async def generate_daily_digest():
         digest_content += "No recent ideas captured.\n"
     digest_content += "\n"
 
+    # --- Part 4: AI Synthesis & Suggestions (Commented out - preserved for future adaptation) ---
+    # vss_matches = []
+    # try:
+    #     from backend.rag.embeddings import get_embeddings_batch
+    #     from backend.rag.vectorstore import search_similar_chunks
+    #     texts = [note['content'][:2000] for note in recent_activity_notes if note['content'].strip()]
+    #     if texts:
+    #         embs = await get_embeddings_batch(texts)
+    #         for emb in embs:
+    #             if emb:
+    #                 results = await search_similar_chunks(emb, top_k=5)
+    #                 for r in results:
+    #                     path = r['file_path']
+    #                     if "04_Resources/" in path.replace("\\", "/"):
+    #                         vss_matches.append(path)
+    # except Exception as e:
+    #     print(f"VSS error: {e}")
+    #
+    # prompt = f"""Analyze recent activity and ideas..."""
+    # try:
+    #     resp = call_gemini_with_retry(GEMINI_MODEL, prompt)
+    #     ai_synthesis = resp.text.strip()
+    #     digest_content += "## Part 4: AI Synthesis & Suggestions\n" + ai_synthesis + "\n"
+    # except Exception as e:
+    #     pass
+
     date_str = datetime.now().strftime("%Y-%m-%d")
     digest_path = os.path.join(VAULT_PATH, "00_System", "Internal", "Digests", f"{date_str}.md")
     os.makedirs(os.path.dirname(digest_path), exist_ok=True)

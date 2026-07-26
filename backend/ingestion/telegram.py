@@ -54,6 +54,26 @@ async def log_import_result(result: dict, source_url: str, chat_id: int, token: 
         json={"chat_id": chat_id, "text": f"✅ Successfully Ingested: [[{safe_title}]]"}
     )
 
+async def send_telegram_message_safe(client, token: str, chat_id: int | str, text: str, reply_markup: dict = None):
+    """Sends a Telegram message with Markdown formatting enabled, falling back to plain text if parsing fails."""
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "Markdown"
+    }
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
+        
+    try:
+        res = await client.post(url, json=payload, timeout=10.0)
+        if res.status_code != 200:
+            # Fallback to plain text if Telegram rejects Markdown entities
+            payload.pop("parse_mode", None)
+            await client.post(url, json=payload, timeout=10.0)
+    except Exception as e:
+        print(f"Backend [Telegram]: Error sending message: {e}")
+
 async def notify_via_telegram(message: str, reply_markup: dict = None):
     """Send a notification message to the Telegram bot chat if configured."""
     token = TELEGRAM_BOT_TOKEN
@@ -64,15 +84,8 @@ async def notify_via_telegram(message: str, reply_markup: dict = None):
     if not chat_id:
         return
     try:
-        payload = {"chat_id": chat_id, "text": message}
-        if reply_markup:
-            payload["reply_markup"] = reply_markup
-            
         async with httpx.AsyncClient() as client:
-            await client.post(
-                f"https://api.telegram.org/bot{token}/sendMessage",
-                json=payload
-            )
+            await send_telegram_message_safe(client, token, chat_id, message, reply_markup=reply_markup)
     except Exception as e:
         print(f"Backend [Notify]: Failed to send Telegram notification: {e}")
 
@@ -479,10 +492,7 @@ async def process_telegram_message_qa(message: dict, token: str, http_client: ht
         result = await query_brain(text.strip())
         answer = result["answer"]
         
-        await http_client.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": chat_id, "text": answer}
-        )
+        await send_telegram_message_safe(http_client, token, chat_id, answer)
     except Exception as e:
         print(f"Backend [Telegram Q&A]: Error answering query: {e}")
         await http_client.post(

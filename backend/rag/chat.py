@@ -7,8 +7,17 @@ from backend.rag.vectorstore import search_similar_chunks
 
 async def query_brain(user_query: str, top_k: int = 5) -> dict:
     """Performs vector search on the vault context and uses Gemini to answer a conversational query."""
-    print(f"RAG [Query]: Querying brain for: '{user_query}'...")
+    query_lower = user_query.lower().strip()
     
+    # Intercept SITREP and Daily Summary queries directly
+    if any(kw in query_lower for kw in ["sitrep", "daily summary", "daily digest", "current summary", "status report", "what happened today", "what happened this week"]):
+        from backend.brain_cleaner import generate_sitrep_summary
+        sitrep_text = await generate_sitrep_summary()
+        return {
+            "answer": sitrep_text,
+            "sources": ["00_System/Daily_Digest.md"]
+        }
+
     # 1. Embed the query
     try:
         query_vector = await get_embedding(user_query)

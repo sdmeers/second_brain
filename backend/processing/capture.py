@@ -175,7 +175,7 @@ async def process_capture_core(
         else:
             print(f"Backend [Stage 5]: Skipping concept page creation (Lightweight / 0 concepts).")
             
-        # Log the ingestion
+        # Log the ingestion to Librarian Activity Log and system log
         themes = []
         primary_match = re.search(r'theme_primary:\s*"(.*?)"', brain_node_markdown)
         if primary_match:
@@ -187,6 +187,14 @@ async def process_capture_core(
             themes.extend([t for t in related_themes if t])
             
         log_action("Ingested", f'Source: "{safe_title}"', concepts=themes)
+        
+        try:
+            from backend.utils.activity_log import log_librarian_activity
+            loc_str = os.path.dirname(os.path.relpath(node_path, OBSIDIAN_VAULT_PATH)) if node_path else "04_Resources"
+            capture_label = "deep_research" if deep_extraction else "reference / url_capture"
+            log_librarian_activity(title=safe_title, location=loc_str, source_type=f"{capture_label} capture")
+        except Exception as log_e:
+            print(f"Backend [Capture]: Failed to update Librarian Activity log: {log_e}")
             
         print(f"<<< Backend: Request Complete: {safe_title}")
         return {"status": "success", "title": safe_title, "node_path": node_path}

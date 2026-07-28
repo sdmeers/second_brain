@@ -107,9 +107,47 @@ async def extract_youtube_transcript(url: str) -> str:
         print(f"Backend [Transcript]: ERROR: {e}")
         raise ValueError(f"Failed to extract transcript: {str(e)}")
 
+def is_cookie_or_consent_wall(text: str) -> bool:
+    """Generic detection for cookie consent walls, privacy banners, Cloudflare checks, and JS rendering blocks across all providers."""
+    if not text or len(text) < 30:
+        return False
+        
+    lower = text.lower()
+    
+    # Provider-agnostic cookie / privacy / consent patterns
+    generic_consent_patterns = [
+        r"cookie\s*(policy|settings|preferences|banner|notice|consent)",
+        r"accept\s*(all\s*)?cookies",
+        r"reject\s*(all\s*)?non-essential",
+        r"agree\s*to\s*(our\s*)?(terms|privacy|cookies)",
+        r"before\s*you\s*continue",
+        r"we\s*(use|value)\s*(cookies|your\s*privacy)",
+        r"manage\s*(your\s*)?(privacy|consent|cookie)",
+        r"enable\s*javascript\s*to\s*(run|view|use)",
+        r"javascript\s*is\s*required",
+        r"checking\s*your\s*browser\s*before\s*accessing",
+        r"verify\s*you\s*are\s*human",
+        r"privacy\s*policy\s*and\s*terms\s*of\s*service"
+    ]
+    
+    match_count = sum(1 for pattern in generic_consent_patterns if re.search(pattern, lower))
+    
+    if match_count >= 2:
+        return True
+        
+    # Density check: short scraped pages dominated by consent/privacy words
+    words = lower.split()
+    if len(words) < 250 and match_count >= 1:
+        consent_words = ["cookie", "cookies", "privacy", "consent", "terms", "javascript", "browser", "policy"]
+        consent_ratio = sum(1 for w in words if any(cw in w for cw in consent_words)) / max(len(words), 1)
+        if consent_ratio > 0.12:
+            return True
+            
+    return False
+
 def extract_web_text(url: str) -> str:
     """Fetches a URL and extracts readable text using BeautifulSoup."""
-    headers = {"User-Agent": "Mozilla/5.0"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
     response = httpx.get(url, follow_redirects=True, timeout=30.0, headers=headers)
     response.raise_for_status()
     
@@ -122,9 +160,13 @@ def extract_web_text(url: str) -> str:
     
     lines = (line.strip() for line in text.splitlines())
     chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-    text = '\n'.join(chunk for chunk in chunks if chunk)
+    cleaned_text = '\n'.join(chunk for chunk in chunks if chunk).strip()
     
-    return text.strip()
+    if is_cookie_or_consent_wall(cleaned_text):
+        print(f"Backend [Extractor]: Warning - Scraped text from {url} is a generic consent/privacy wall.")
+        raise ValueError("The provided URL returned a privacy/cookie consent wall rather than the actual content. If capturing a private or shared AI chat link, please copy and paste the chat transcript text directly into the bot.")
+        
+    return cleaned_text
 
 def fetch_cover(url: str, is_youtube: bool) -> str:
     """Attempts to find a suitable cover image URL."""

@@ -316,7 +316,7 @@ async def process_queue_worker():
         if research_requested or classification.category == "deep_research" or (file_path and file_path.lower().endswith((".pdf", ".pptx"))):
             # Full Research Brain Deep Research workflow ONLY if explicitly requested, otherwise light capture
             target_url = url or f"https://local.brain/deep-research/{item_id}"
-            target_title = raw_payload.get("title") or os.path.basename(file_path or "").rsplit(".", 1)[0] or "Deep Research Capture"
+            target_title = raw_payload.get("title") or (os.path.basename(file_path).rsplit(".", 1)[0] if file_path else "")
             notes = clean_input.replace(target_url, "").strip() if target_url in clean_input else clean_input
             
             result = await process_capture_core(

@@ -146,6 +146,13 @@ async def process_capture_core(
             
         # Strip browser notification counts like (1) or (1234) from the start
         real_title = re.sub(r'^\(\d+\)\s*', '', real_title)
+        
+        # Strip generic "Deep Research Capture" prefix if present
+        real_title = re.sub(r'^(📄|🎞️|🏛️|📖)?\s*Deep\s+Research\s+Capture\s*[-:\s]*', r'\1 ', real_title, flags=re.IGNORECASE).strip()
+        
+        # If title is empty or generic, ensure we don't fall back to "Deep Research Capture"
+        if not real_title or real_title.strip() in ["📄", "🎞️", "🏛️", "📖", "Deep Research Capture"]:
+            real_title = title if title and title != "Untitled Capture" else "Untitled Article"
             
         safe_title = sanitize_filename(real_title)
         print(f"Backend [Stage 4]: Determined Title: {safe_title}")

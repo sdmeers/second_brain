@@ -116,28 +116,59 @@ def find_matching_tasks(query: str, lines: list[str]) -> list[tuple[int, str]]:
                 
     return matches
 
-def find_matching_notes(query: str) -> list[str]:
-    """Finds relative note paths matching a title or query across the vault."""
-    matches = []
-    query_clean = re.sub(r'[\'\"\[\]]', '', query.lower().strip())
-    query_words = [w for w in re.findall(r'\w+', query_clean) if len(w) > 3]
+def get_most_recent_user_note() -> str | None:
+    """Finds the relative path of the most recently created or modified user note in the vault."""
+    latest_file = None
+    latest_mtime = 0
     
     for root, _, files in os.walk(OBSIDIAN_VAULT_PATH):
-        if any(skip in root for skip in [".git", "00_System/Internal"]):
+        if any(skip in root for skip in [".git", "00_System/Internal", "00_System/Logs", "01_Inbox", "05_Archive/Trash"]):
+            continue
+        for file in files:
+            if file.endswith(".md") and not file.startswith(".") and file not in ["_INDEX.md", "Librarian_Activity.md", "Tasks.md", "Completed_Tasks.md", "Daily_Digest.md", "Completed.md", "Failed.md", "Inbox.md"]:
+                full_path = os.path.join(root, file)
+                try:
+                    mtime = os.path.getmtime(full_path)
+                    if mtime > latest_mtime:
+                        latest_mtime = mtime
+                        latest_file = os.path.relpath(full_path, OBSIDIAN_VAULT_PATH)
+                except Exception:
+                    pass
+    return latest_file
+
+def find_matching_notes(query: str) -> list[str]:
+    """Finds relative note paths matching a title or query across the vault with strict target matching."""
+    query_clean = re.sub(r'[\'\"\[\]]', '', query.lower().strip())
+    
+    # 1. Context Reference Resolution ("previous record", "last note", "latest capture", "latest_note")
+    relative_triggers = ["previous record", "previous note", "last record", "last note", "latest note", "latest capture", "last file", "previous file", "latest_note", "that file", "that note", "that record"]
+    if any(trigger in query_clean for trigger in relative_triggers):
+        recent_note = get_most_recent_user_note()
+        if recent_note:
+            print(f"Backend [Instruction Handler]: Resolved relative reference '{query}' -> '{recent_note}'")
+            return [recent_note]
+            
+    matches = []
+    query_words = [w for w in re.findall(r'\w+', query_clean) if len(w) > 3]
+    
+    # 2. Strict matching against vault filenames
+    for root, _, files in os.walk(OBSIDIAN_VAULT_PATH):
+        if any(skip in root for skip in [".git", "00_System/Internal", "05_Archive/Trash"]):
             continue
         for file in files:
             if file.endswith(".md"):
                 file_name_clean = re.sub(r'[\'\"\[\]]', '', file[:-3].lower())
                 rel_path = os.path.relpath(os.path.join(root, file), OBSIDIAN_VAULT_PATH)
-                if query_clean in file_name_clean:
+                
+                # Direct substring match
+                if query_clean in file_name_clean or file_name_clean in query_clean:
                     matches.append(rel_path)
-                else:
+                elif query_words:
+                    # Multi-word queries MUST match ALL query words in the target filename to prevent false bulk moves!
                     file_words = [w for w in re.findall(r'\w+', file_name_clean) if len(w) > 3]
-                    for qw in query_words:
-                        if any(qw in fw or fw in qw or qw[:5] == fw[:5] for fw in file_words):
-                            matches.append(rel_path)
-                            break
-                    
+                    if file_words and all(any(qw in fw or fw in qw or (len(qw) >= 5 and qw[:5] == fw[:5]) for fw in file_words) for qw in query_words):
+                        matches.append(rel_path)
+                        
     return matches
 
 async def handle_task_action(action: VaultAction) -> str:
@@ -287,6 +318,22 @@ async def handle_note_file_action(action: VaultAction) -> str:
             full_dest = os.path.join(full_dest_dir, os.path.basename(rel_path))
             shutil.move(full_src, full_dest)
             moved.append(os.path.basename(rel_path))
+            
+            # Check if an associated source material (PDF/audio/text) exists in Sources/ or directory
+            src_dir = os.path.dirname(full_src)
+            stem = os.path.splitext(os.path.basename(rel_path))[0]
+            for candidate_dir in [src_dir, os.path.join(src_dir, "Sources")]:
+                if os.path.exists(candidate_dir):
+                    for f in os.listdir(candidate_dir):
+                        if f.startswith(stem) and not f.endswith(".md"):
+                            src_file = os.path.join(candidate_dir, f)
+                            dst_file = os.path.join(full_dest_dir, f)
+                            try:
+                                shutil.move(src_file, dst_file)
+                                print(f"Backend [Instruction Handler]: Moved associated source file {f} -> {dest_folder}")
+                            except Exception as move_e:
+                                print(f"Backend [Instruction Handler]: Failed to move source file {f}: {move_e}")
+                                
         return f"✓ Moved {len(moved)} note(s) to '{dest_folder}': {', '.join(moved)}."
         
     elif action_type == "rename_note":

@@ -206,8 +206,26 @@ document.addEventListener('DOMContentLoaded', async () => {
             console.log("Extraction returned no content, falling back to backend fetch.");
           }
         } catch (e) {
-          console.log("Content script connection failed (try refreshing the page):", e);
-          markdownText = "";
+          console.log("Content script connection failed, running direct DOM script fallback:", e);
+          try {
+            const [{ result }] = await chrome.scripting.executeScript({
+              target: { tabId: currentTab.id },
+              func: () => {
+                const articleEl = document.querySelector('article') || document.querySelector('[role="article"]') || document.querySelector('main') || document.body;
+                return {
+                  text: articleEl ? articleEl.innerText : document.body.innerText,
+                  title: document.title
+                };
+              }
+            });
+            if (result && result.text) {
+              markdownText = result.text;
+              if (result.title) extractedTitle = result.title;
+            }
+          } catch (scriptErr) {
+            console.error("Direct DOM script fallback failed:", scriptErr);
+            markdownText = "";
+          }
         }
       }
 

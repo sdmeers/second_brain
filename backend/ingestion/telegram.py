@@ -278,9 +278,13 @@ async def process_telegram_message(message: dict, token: str, http_client: httpx
             }
             add_to_queue(source_type="telegram", raw_payload=payload, content_text=text)
             
+            msg = "🧠 Message received and queued."
+            if len(text) > 3200:
+                msg += "\n💡 Tip: For long web articles or multi-page text, using the Second Brain Chrome Extension (or sending a .txt / .md document attachment) ensures 100% full-document formatting without splitting."
+                
             await http_client.post(
                 f"https://api.telegram.org/bot{token}/sendMessage",
-                json={"chat_id": chat_id, "text": "🧠 Message received and queued."}
+                json={"chat_id": chat_id, "text": msg}
             )
 
     except Exception as e:

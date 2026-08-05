@@ -23,8 +23,8 @@ class TargetSelector(BaseModel):
 
 class VaultAction(BaseModel):
     action_type: str = Field(
-        description="One of: 'delete_task', 'complete_task', 'update_task', 'convert_task_to_note', "
-                    "'move_note', 'rename_note', 'delete_note', 'reclassify_note', 'merge_notes', "
+        description="One of: 'delete_task', 'complete_task', 'update_task', 'add_task', 'convert_task_to_note', "
+                    "'create_project', 'move_note', 'rename_note', 'delete_note', 'reclassify_note', 'merge_notes', "
                     "'append_to_note', 'update_frontmatter', 'add_tag', 'remove_tag', 'reindex', 'run_cleaner', 'get_sitrep'."
     )
     target: TargetSelector
@@ -42,6 +42,8 @@ Analyze the user's natural language instruction and translate it into a structur
 
 AVAILABLE ACTION PRIMITIVES:
 - 'get_sitrep': Generate and return a real-time summary / SITREP of tasks, recent activity, and ideas (triggered by queries like "Give me a SITREP", "What is the current summary?", "What happened this week?", "Status report").
+- 'create_project': Create a new project folder structure under '02_Projects/Personal/' or '02_Projects/Professional/' containing master project note (triggered by instructions like "create a new project called Garage").
+- 'add_task': Append a new pending task line to Tasks.md (triggered by instructions like "Add a task to paint doors", "Remind me to call John").
 - 'delete_task': Remove matching pending task line(s) from Tasks.md.
 - 'complete_task': Mark matching task line(s) as '- [x]' in Tasks.md and archive them to Completed_Tasks.md.
 - 'update_task': Edit task text, deadline, or priority of matching task line(s) in Tasks.md.
@@ -58,10 +60,11 @@ AVAILABLE ACTION PRIMITIVES:
 - 'run_cleaner': Trigger vault cleaner run.
 
 RULES:
-1. For queries asking for a summary or SITREP (e.g. "What is the current summary?", "Give me a SITREP", "What happened yesterday?"), output an action with primitive 'get_sitrep'.
-2. For instructions asking to "reclassify task X as a book", use 'convert_task_to_note' with target query "X" and destination "03_Areas/Reading".
-3. Break multi-part instructions into separate actions in the plan.
-4. Be precise with search queries so target verification can accurately locate items on disk.
+1. For instructions asking to "create a new project called X", use 'create_project' with target query "X".
+2. For instructions asking to "add a task X" or "remind me to X", use 'add_task' with target query "X".
+3. For queries asking for a summary or SITREP (e.g. "What is the current summary?", "Give me a SITREP"), use 'get_sitrep'.
+4. For instructions asking to "reclassify task X as a book", use 'convert_task_to_note' with target query "X" and destination "03_Areas/Reading".
+5. Break multi-part instructions into separate actions in the plan.
 """
 
 async def parse_instruction_plan(instruction_text: str) -> InstructionPlan:
@@ -160,13 +163,15 @@ def find_matching_notes(query: str) -> list[str]:
                 file_name_clean = re.sub(r'[\'\"\[\]]', '', file[:-3].lower())
                 rel_path = os.path.relpath(os.path.join(root, file), OBSIDIAN_VAULT_PATH)
                 
-                # Direct substring match
-                if query_clean in file_name_clean or file_name_clean in query_clean:
+                # Direct match (require minimum word length for reverse substring match to avoid "rag" in "garage" false positives)
+                if query_clean == file_name_clean or query_clean in file_name_clean:
+                    matches.append(rel_path)
+                elif len(file_name_clean) >= 4 and file_name_clean in query_clean:
                     matches.append(rel_path)
                 elif query_words:
                     # Multi-word queries MUST match ALL query words in the target filename to prevent false bulk moves!
                     file_words = [w for w in re.findall(r'\w+', file_name_clean) if len(w) > 3]
-                    if file_words and all(any(qw in fw or fw in qw or (len(qw) >= 5 and qw[:5] == fw[:5]) for fw in file_words) for qw in query_words):
+                    if file_words and all(any(qw == fw or (len(qw) >= 4 and qw in fw) or (len(fw) >= 4 and fw in qw) or (len(qw) >= 5 and qw[:5] == fw[:5]) for fw in file_words) for qw in query_words):
                         matches.append(rel_path)
                         
     return matches
@@ -179,6 +184,24 @@ async def handle_task_action(action: VaultAction) -> str:
     with open(TASKS_PATH, "r", encoding="utf-8") as f:
         lines = f.readlines()
         
+    action_type = action.action_type
+    
+    if action_type == "add_task":
+        task_desc = action.target.query.strip() or action.new_content.strip()
+        if not task_desc:
+            return "⚠️ Task description required for add_task."
+            
+        dest_tag = f" #{action.destination.strip()}" if action.destination else ""
+        date_str = datetime.now().strftime("%Y-%m-%d")
+        task_line = f"- [ ] {task_desc}{dest_tag} 📅 {date_str} (Captured via instruction on {date_str})\n"
+        
+        os.makedirs(os.path.dirname(TASKS_PATH), exist_ok=True)
+        with open(TASKS_PATH, "a", encoding="utf-8") as tf:
+            tf.write(task_line)
+            
+        log_action("Instruction Executed", f"Added task: {task_desc}")
+        return f"✓ Added task to Tasks.md: '{task_desc}'."
+
     query = action.target.query.strip()
     matches = find_matching_tasks(query, lines)
     
@@ -278,6 +301,49 @@ Converted from task: *"{line.strip()}"*
 async def handle_note_file_action(action: VaultAction) -> str:
     """Executes note file primitive operations (move, rename, delete, reclassify)."""
     query = action.target.query.strip()
+    action_type = action.action_type
+    
+    if action_type == "create_project":
+        project_name = sanitize_filename(query or action.new_content.strip())
+        if not project_name:
+            return "⚠️ Project name is required to create a new project."
+            
+        parent_cat = "Professional" if action.destination and "Professional" in action.destination else "Personal"
+        project_dir = os.path.join(OBSIDIAN_VAULT_PATH, "02_Projects", parent_cat, project_name)
+        os.makedirs(project_dir, exist_ok=True)
+        os.makedirs(os.path.join(project_dir, "Notes"), exist_ok=True)
+        os.makedirs(os.path.join(project_dir, "Meetings"), exist_ok=True)
+        os.makedirs(os.path.join(project_dir, "Outputs"), exist_ok=True)
+        
+        master_note = os.path.join(project_dir, f"{project_name}.md")
+        now_str = datetime.now().strftime("%Y-%m-%d")
+        body = f"""---
+title: "{project_name}"
+type: project
+date_created: "{now_str}"
+status: "active"
+tags:
+  - project
+---
+# 🚀 Project: {project_name}
+
+## 🎯 Goal & Objective
+{action.reasoning or 'Project created via Second Brain instruction.'}
+
+## 📋 Action Items
+- [ ] Initial project setup 📅 {now_str}
+
+## 📁 Key Links & Outputs
+- [[Notes]]
+- [[Meetings]]
+- [[Outputs]]
+"""
+        if not os.path.exists(master_note):
+            atomic_write(master_note, body)
+            
+        log_action("Instruction Executed", f"Created new project: {project_name} in 02_Projects/{parent_cat}")
+        return f"✓ Created new project folder and master note at '02_Projects/{parent_cat}/{project_name}'."
+
     matching_notes = find_matching_notes(query)
     
     if not matching_notes:

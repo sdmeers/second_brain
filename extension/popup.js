@@ -1,5 +1,37 @@
 // popup.js - Second Brain
-let API_BASE = "http://localhost:8085"; // Local FastAPI port for Second Brain
+
+async function getApiBase() {
+  const stored = await new Promise(res => chrome.storage.local.get(['apiBase'], res));
+  if (stored && stored.apiBase) {
+    try {
+      const controller = new AbortController();
+      const id = setTimeout(() => controller.abort(), 800);
+      const res = await fetch(`${stored.apiBase}/health`, { signal: controller.signal });
+      clearTimeout(id);
+      if (res.ok) return stored.apiBase;
+    } catch (e) {}
+  }
+  
+  const candidates = [
+    "http://100.86.195.104:8085",
+    "http://192.168.50.101:8085",
+    "http://localhost:8085"
+  ];
+  
+  for (const candidate of candidates) {
+    try {
+      const controller = new AbortController();
+      const id = setTimeout(() => controller.abort(), 800);
+      const res = await fetch(`${candidate}/health`, { signal: controller.signal });
+      clearTimeout(id);
+      if (res.ok) {
+        chrome.storage.local.set({ apiBase: candidate });
+        return candidate;
+      }
+    } catch (e) {}
+  }
+  return "http://100.86.195.104:8085";
+}
 
 document.addEventListener('DOMContentLoaded', async () => {
   const btnCapture = document.getElementById('btn-preview'); 
@@ -181,7 +213,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       // Send to Backend
       statusMessage.textContent = "Generating Brain Node...";
-      const response = await fetch(`${API_BASE}/process`, {
+      const targetApiBase = await getApiBase();
+      const response = await fetch(`${targetApiBase}/process`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 

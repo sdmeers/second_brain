@@ -10,5 +10,5 @@ from backend.api.routes import app
 from backend.config import PORT
 
 if __name__ == "__main__":
-    # Run the server natively
-    uvicorn.run("backend.main:app", host="127.0.0.1", port=PORT, reload=True)
+    # Run the server natively (listening on 0.0.0.0 for localhost & Tailscale access)
+    uvicorn.run("backend.main:app", host="0.0.0.0", port=PORT, reload=True)

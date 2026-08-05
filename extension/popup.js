@@ -1,5 +1,5 @@
-// popup.js - Centaur Brain
-const API_BASE = "http://localhost:8080"; // Local FastAPI port
+// popup.js - Second Brain
+let API_BASE = "http://localhost:8085"; // Local FastAPI port for Second Brain
 
 document.addEventListener('DOMContentLoaded', async () => {
   const btnCapture = document.getElementById('btn-preview'); 

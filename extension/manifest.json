@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Centaur Brain",
+  "name": "Second Brain",
   "version": "3.0",
   "description": "Capture articles and YouTube transcripts into a local Obsidian Vault with AI.",
   "permissions": [
@@ -12,7 +12,9 @@
     "https://*.youtube.com/*",
     "https://*.google.com/*",
     "https://*.googlevideo.com/*",
-    "http://localhost:8080/*"
+    "http://localhost:8085/*",
+    "http://127.0.0.1:8085/*",
+    "http://100.86.195.104:8085/*"
   ],
   "action": {
     "default_popup": "popup.html",

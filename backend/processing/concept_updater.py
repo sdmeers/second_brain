@@ -4,16 +4,25 @@ from backend.utils.sanitize import sanitize_filename
 from backend.utils.gemini import call_gemini_with_retry
 from backend.utils.logger import log_action
 
+def resolve_concept_path(directory: str, clean_concept: str) -> str:
+    """Resolves target concept filepath, matching existing files case-insensitively."""
+    target_filename = f"{clean_concept}.md"
+    if os.path.exists(directory):
+        for existing in os.listdir(directory):
+            if existing.lower() == target_filename.lower():
+                return os.path.join(directory, existing)
+    return os.path.join(directory, target_filename)
+
 async def update_concept_page(concept_name: str, new_summary: str, source_title: str):
     """Updates an existing concept page or creates a new one, prioritizing Atlas themes."""
     clean_concept = sanitize_filename(concept_name.replace('[[', '').replace(']]', ''))
     
-    atlas_path = os.path.join(ATLAS_PATH, f"{clean_concept}.md")
-    concept_path = os.path.join(CONCEPTS_PATH, f"{clean_concept}.md")
+    atlas_path = resolve_concept_path(ATLAS_PATH, clean_concept)
+    concept_path = resolve_concept_path(CONCEPTS_PATH, clean_concept)
     
     # Prioritize Atlas over Concepts
     target_path = atlas_path if os.path.exists(atlas_path) else concept_path
-    is_atlas = target_path == atlas_path
+    is_atlas = target_path.startswith(ATLAS_PATH) and os.path.exists(target_path)
     
     if os.path.exists(target_path):
         print(f"Backend [Concept]: Updating existing {'atlas' if is_atlas else 'concept'} [[{clean_concept}]]")

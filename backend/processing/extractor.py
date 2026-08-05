@@ -166,6 +166,13 @@ def extract_web_text(url: str) -> str:
         print(f"Backend [Extractor]: Warning - Scraped text from {url} is a generic consent/privacy wall.")
         raise ValueError("The provided URL returned a privacy/cookie consent wall rather than the actual content. If capturing a private or shared AI chat link, please copy and paste the chat transcript text directly into the bot.")
         
+    # Check for X.com / Twitter unauthenticated stubs
+    url_lower = url.lower()
+    if ("x.com" in url_lower or "twitter.com" in url_lower):
+        if any(stub in cleaned_text for stub in ["Log in or sign up for X", "See what’s happening", "Continue with phone or Log in"]):
+            print(f"Backend [Extractor]: Warning - Scraped text from {url} is an unauthenticated X.com stub.")
+            raise ValueError("X.com (Twitter) requires an authenticated browser session to view long-form X Articles and threads. Please use the Second Brain Chrome Extension while viewing the article in your browser, or copy and paste the text directly into the bot.")
+            
     return cleaned_text
 
 def fetch_cover(url: str, is_youtube: bool) -> str:

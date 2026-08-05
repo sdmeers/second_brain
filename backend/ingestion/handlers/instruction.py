@@ -25,7 +25,7 @@ class VaultAction(BaseModel):
     action_type: str = Field(
         description="One of: 'delete_task', 'complete_task', 'update_task', 'add_task', 'convert_task_to_note', "
                     "'create_project', 'move_note', 'rename_note', 'delete_note', 'reclassify_note', 'merge_notes', "
-                    "'append_to_note', 'update_frontmatter', 'add_tag', 'remove_tag', 'reindex', 'run_cleaner', 'get_sitrep'."
+                    "'append_to_note', 'update_frontmatter', 'add_tag', 'remove_tag', 'reindex', 'run_cleaner', 'get_sitrep', 'undo_last_action'."
     )
     target: TargetSelector
     destination: Optional[str] = Field(default="", description="Destination path or folder (e.g. '03_Areas/Reading', '02_Projects/Hermes', '05_Archive').")
@@ -41,6 +41,7 @@ SYSTEM_INSTRUCTION = """You are an expert agentic command interpreter for Steven
 Analyze the user's natural language instruction and translate it into a structured InstructionPlan consisting of one or more discrete VaultAction steps.
 
 AVAILABLE ACTION PRIMITIVES:
+- 'undo_last_action': Revert or undo the most recent automated vault action (triggered by instructions like "Undo that change", "Undo last action", "Revert that", "Undo").
 - 'get_sitrep': Generate and return a real-time summary / SITREP of tasks, recent activity, and ideas (triggered by queries like "Give me a SITREP", "What is the current summary?", "What happened this week?", "Status report").
 - 'create_project': Create a new project folder structure under '02_Projects/Personal/' or '02_Projects/Professional/' containing master project note (triggered by instructions like "create a new project called Garage").
 - 'add_task': Append a new pending task line to Tasks.md (triggered by instructions like "Add a task to paint doors", "Remind me to call John").
@@ -60,11 +61,12 @@ AVAILABLE ACTION PRIMITIVES:
 - 'run_cleaner': Trigger vault cleaner run.
 
 RULES:
-1. For instructions asking to "create a new project called X", use 'create_project' with target query "X".
-2. For instructions asking to "add a task X" or "remind me to X", use 'add_task' with target query "X".
-3. For queries asking for a summary or SITREP (e.g. "What is the current summary?", "Give me a SITREP"), use 'get_sitrep'.
-4. For instructions asking to "reclassify task X as a book", use 'convert_task_to_note' with target query "X" and destination "03_Areas/Reading".
-5. Break multi-part instructions into separate actions in the plan.
+1. For instructions asking to "undo", "undo that change", or "revert last action", use 'undo_last_action'.
+2. For instructions asking to "create a new project called X", use 'create_project' with target query "X".
+3. For instructions asking to "add a task X" or "remind me to X", use 'add_task' with target query "X".
+4. For queries asking for a summary or SITREP (e.g. "What is the current summary?", "Give me a SITREP"), use 'get_sitrep'.
+5. For instructions asking to "reclassify task X as a book", use 'convert_task_to_note' with target query "X" and destination "03_Areas/Reading".
+6. Break multi-part instructions into separate actions in the plan.
 """
 
 async def parse_instruction_plan(instruction_text: str) -> InstructionPlan:
@@ -445,6 +447,24 @@ async def handle_system_action(action: VaultAction) -> str:
     if action_type in ["get_sitrep", "run_summary"]:
         from backend.brain_cleaner import generate_sitrep_summary
         return await generate_sitrep_summary()
+        
+    elif action_type == "undo_last_action":
+        try:
+            import subprocess
+            res = subprocess.run(["git", "-C", OBSIDIAN_VAULT_PATH, "log", "-n", "1", "--format=%s"], capture_output=True, text=True)
+            last_msg = res.stdout.strip() or "last commit"
+            
+            rev = subprocess.run(["git", "-C", OBSIDIAN_VAULT_PATH, "revert", "HEAD", "--no-edit"], capture_output=True, text=True)
+            if rev.returncode == 0:
+                log_action("Instruction Executed", f"Undid last action: {last_msg}")
+                return f"✓ Undid last vault action: '{last_msg}'. Reverted vault to previous state."
+            else:
+                subprocess.run(["git", "-C", OBSIDIAN_VAULT_PATH, "checkout", "HEAD~1", "--", "."], check=True)
+                log_action("Instruction Executed", "Reverted vault files to HEAD~1")
+                return f"✓ Reverted vault files to state before last action."
+        except Exception as err:
+            print(f"Backend [Undo]: Error reverting vault action: {err}")
+            return f"⚠️ Failed to undo last action: {err}"
         
     elif action_type == "reindex":
         from backend.rag.vectorstore import index_vault

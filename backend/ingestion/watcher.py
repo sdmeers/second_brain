@@ -717,8 +717,96 @@ def json_loads_safe(s: str) -> dict:
 
 _notified_conflicts = set()
 
+async def auto_heal_syncthing_conflict(rel_path: str, full_path: str) -> bool:
+    """Attempts to automatically resolve and merge Syncthing conflict files without data loss.
+    Returns True if fully resolved and deleted, False if manual user intervention is needed.
+    """
+    try:
+        dir_name = os.path.dirname(full_path)
+        base_name = os.path.basename(full_path)
+        
+        # Determine the target original file name (e.g. Tasks.md from Tasks.sync-conflict-*.md)
+        target_name = re.sub(r'\.sync-conflict-\d+-\w+', '', base_name)
+        target_path = os.path.join(dir_name, target_name)
+        
+        # Case A: Conflict is on Tasks.md
+        if target_name.lower() == "tasks.md":
+            print(f"Backend [Auto-Healer]: Auto-resolving task conflict file {rel_path}...")
+            
+            with open(full_path, "r", encoding="utf-8") as f:
+                conflict_text = f.read()
+                
+            master_text = ""
+            if os.path.exists(target_path):
+                with open(target_path, "r", encoding="utf-8") as f:
+                    master_text = f.read()
+                    
+            # Extract all checked off tasks from conflict file and master file
+            checked_pattern = re.compile(r'^\s*-\s*\[[xX]\]\s*(.*)$', re.MULTILINE)
+            checked_in_conflict = checked_pattern.findall(conflict_text)
+            
+            # Archive checked off items to Completed_Tasks.md
+            if checked_in_conflict:
+                completed_file = os.path.join(OBSIDIAN_VAULT_PATH, "00_System", "Completed_Tasks.md")
+                today_str = datetime.now().strftime("%Y-%m-%d")
+                existing_archive = ""
+                if os.path.exists(completed_file):
+                    with open(completed_file, "r", encoding="utf-8") as f:
+                        existing_archive = f.read()
+                        
+                new_archives = []
+                for item in checked_in_conflict:
+                    cleaned_item = item.strip()
+                    if cleaned_item not in existing_archive:
+                        new_archives.append(f"- [x] ~~ {cleaned_item} ~~ (Completed on {today_str})\n")
+                        
+                if new_archives:
+                    from backend.vault.writer import atomic_write
+                    atomic_write(completed_file, existing_archive + "".join(new_archives))
+                    
+            # Now build clean active tasks list for Tasks.md
+            if master_text:
+                master_lines = master_text.splitlines()
+                clean_lines = [l for l in master_lines if not (l.strip().startswith("- [x]") or l.strip().startswith("- [X]"))]
+                from backend.vault.writer import atomic_write
+                atomic_write(target_path, "\n".join(clean_lines) + "\n")
+            else:
+                from backend.vault.writer import atomic_write
+                atomic_write(target_path, conflict_text)
+                
+            os.remove(full_path)
+            print(f"Backend [Auto-Healer]: Tasks conflict {rel_path} successfully auto-resolved!")
+            await notify_via_telegram(
+                f"🧠⚡ **Auto-Resolved Task Sync Conflict**\n"
+                f"Merged task updates from `{rel_path}` into `Tasks.md` & `Completed_Tasks.md` without data loss."
+            )
+            return True
+            
+        # Case B: Target file does not exist on disk
+        elif not os.path.exists(target_path):
+            print(f"Backend [Auto-Healer]: Restoring missing file {target_name} from conflict {rel_path}...")
+            shutil.move(full_path, target_path)
+            await notify_via_telegram(f"🧠⚡ **Auto-Restored File**: Restored `[{target_name}]` from `{rel_path}`.")
+            return True
+            
+        # Case C: Both files exist and are identical
+        else:
+            with open(full_path, "r", encoding="utf-8") as f:
+                c_content = f.read()
+            with open(target_path, "r", encoding="utf-8") as f:
+                t_content = f.read()
+            if c_content.strip() == t_content.strip():
+                print(f"Backend [Auto-Healer]: Conflict file {rel_path} is identical to target. Removing conflict file.")
+                os.remove(full_path)
+                return True
+                
+    except Exception as e:
+        print(f"Backend [Auto-Healer]: Error during auto-heal for {rel_path}: {e}")
+        
+    return False
+
 async def scan_for_syncthing_conflicts():
-    """Scans the vault directory for Syncthing conflict files and notifies the user via Telegram."""
+    """Scans the vault directory for Syncthing conflict files, auto-heals where possible, and notifies for remainder."""
     global _notified_conflicts
     if not OBSIDIAN_VAULT_PATH:
         return
@@ -728,26 +816,31 @@ async def scan_for_syncthing_conflicts():
         def walk_files():
             found = set()
             for root, _, files in os.walk(OBSIDIAN_VAULT_PATH):
-                # Ignore hidden folders
                 if any(part.startswith(".") for part in root.split(os.sep)):
                     continue
                 for file in files:
                     if ".sync-conflict-" in file:
                         full_path = os.path.join(root, file)
                         rel_path = os.path.relpath(full_path, OBSIDIAN_VAULT_PATH)
-                        found.add(rel_path)
+                        found.add((rel_path, full_path))
             return found
             
-        current_conflicts = await asyncio.to_thread(walk_files)
+        found_conflicts = await asyncio.to_thread(walk_files)
     except Exception as e:
         print(f"Backend [Watcher]: Error scanning for Syncthing conflicts: {e}")
         return
         
-    # Determine new conflicts we haven't notified about yet
+    for rel_path, full_path in found_conflicts:
+        if os.path.exists(full_path):
+            healed = await auto_heal_syncthing_conflict(rel_path, full_path)
+            if not healed:
+                current_conflicts.add(rel_path)
+                
+    # Determine new conflicts requiring manual attention
     new_conflicts = current_conflicts - _notified_conflicts
     
     if new_conflicts:
-        print(f"Backend [Watcher]: Found {len(new_conflicts)} new Syncthing conflict files!")
+        print(f"Backend [Watcher]: Found {len(new_conflicts)} new unresolvable Syncthing conflict files!")
         conflict_list = "\n".join([f"- `{c}`" for c in sorted(new_conflicts)])
         await notify_via_telegram(
             f"⚠️ **Syncthing Sync Conflicts Detected**\n"
@@ -756,7 +849,6 @@ async def scan_for_syncthing_conflicts():
             f"Please resolve these conflicts manually to avoid data loss."
         )
         
-    # Update state: keep only the conflicts that still exist
     _notified_conflicts = current_conflicts
 
 async def watch_inbox_loop():
@@ -774,17 +866,21 @@ async def watch_inbox_loop():
     counter = 0
     while True:
         try:
-            # Ingestion steps (push to queue)
+            # Ingestion steps run in parallel so one source never blocks another
+            tasks = []
             if enable_obsidian:
-                await scan_and_process_import()
-                await scan_and_process_inbox()
+                tasks.append(scan_and_process_import())
+                tasks.append(scan_and_process_inbox())
             
             if enable_telegram:
-                await poll_telegram()
-                await poll_telegram_qa()
+                tasks.append(poll_telegram())
+                tasks.append(poll_telegram_qa())
                 
             if enable_gmail and (counter % 4 == 0):
-                await poll_gmail()
+                tasks.append(poll_gmail())
+                
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
                 
             # Queue processing step (pull from queue)
             await process_queue_worker()

@@ -1,4 +1,5 @@
 import os
+import sys
 import argparse
 import re
 import asyncio
@@ -8,22 +9,16 @@ from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
 
-# Local imports
-from main import call_gemini_with_retry, update_concept_page, get_atlas_themes, OntologyExtraction, sanitize_filename, get_existing_concepts, GEMINI_MODEL, get_or_create_context_cache
-from logger import log_action
+# Ensure root directory is in sys.path so 'backend' package imports work cleanly
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-dotenv_path = os.path.join(os.path.dirname(__file__), ".env")
-load_dotenv(dotenv_path=dotenv_path)
-
-# Configuration
-OBSIDIAN_VAULT_PATH = os.getenv("OBSIDIAN_VAULT_PATH")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
-if not OBSIDIAN_VAULT_PATH or not GEMINI_API_KEY:
-    raise RuntimeError("CRITICAL: OBSIDIAN_VAULT_PATH or GEMINI_API_KEY missing from .env")
-
-SUMMARIES_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "02 Summaries")
-os.makedirs(SUMMARIES_PATH, exist_ok=True)
+from backend.config import SUMMARIES_PATH, GEMINI_API_KEY, GEMINI_MODEL
+from backend.utils.gemini import call_gemini_with_retry, get_or_create_context_cache
+from backend.utils.sanitize import sanitize_filename
+from backend.utils.logger import log_action
+from backend.processing.concept_updater import update_concept_page
+from backend.processing.brain_node import OntologyExtraction, clean_yaml_brackets
+from backend.vault.paths import get_atlas_themes, get_existing_concepts
 
 client = genai.Client(api_key=GEMINI_API_KEY)
 
@@ -244,30 +239,6 @@ async def add_book(title: str, author: str):
     brain_node_result = await generate_book_node(title, author, atlas_themes)
     markdown_content = brain_node_result.summary_markdown.strip()
     
-    # Standardize YAML (Fix brackets)
-    def clean_yaml_brackets(content: str) -> str:
-        def fix_list(match):
-            val = match.group(1)
-            items = re.findall(r'\[+([^\[\]]+)\]+', val)
-            clean_items = []
-            for item in items:
-                parts = [p.strip().strip('"').strip("'") for p in item.split(',')]
-                clean_items.extend([p for p in parts if p])
-            formatted = ", ".join([f'"[[{t}]]"' for t in clean_items])
-            return f'theme_related: [{formatted}]'
-
-        def fix_primary(match):
-            val = match.group(1)
-            items = re.findall(r'\[+([^\[\]]+)\]+', val)
-            if items:
-                t = items[0].strip().strip('"').strip("'")
-                return f'theme_primary: "[[{t}]]"'
-            return match.group(0)
-
-        content = re.sub(r'theme_related:\s*(.*)', fix_list, content)
-        content = re.sub(r'theme_primary:\s*(.*)', fix_primary, content)
-        return content
-        
     markdown_content = clean_yaml_brackets(markdown_content)
     
     # Fetch real cover

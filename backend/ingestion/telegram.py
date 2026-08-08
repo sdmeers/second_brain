@@ -158,15 +158,19 @@ async def process_telegram_message(message: dict, token: str, http_client):
         # Slash Command Router
         if text.startswith("/"):
             cmd_part = text.split()[0].lower()
-            if cmd_part == "/in":
-                capture_text = text[4:].strip()
+            if cmd_part in ["/in", "/capture"]:
+                capture_text = text[len(cmd_part):].strip()
+                if not capture_text:
+                    await http_client.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": chat_id, "text": "Please provide text to capture."})
+                    return
                 from datetime import datetime
                 from backend.config import OBSIDIAN_VAULT_PATH
                 
-                timestamp_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-                filename = f"{timestamp_str}_capture.md"
                 inbox_path = os.path.join(OBSIDIAN_VAULT_PATH, "00_System", "Inbox")
                 os.makedirs(inbox_path, exist_ok=True)
+                
+                timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+                filename = f"{timestamp}_capture.md"
                 file_path = os.path.join(inbox_path, filename)
                 with open(file_path, "w", encoding="utf-8") as f:
                     f.write(capture_text)
@@ -204,6 +208,7 @@ async def process_telegram_message(message: dict, token: str, http_client):
                 help_text = """🧠 Second Brain — Your GTD + PARA Digital Assistant
 
 ━━━ CAPTURE ━━━
+  /capture <text>     Explicit capture to Captured.md (awaits /clarify)
   /in <text/voice>    Quick capture (or just send a voice note)
   /research <URL>     Deep research ingestion with concept extraction
 

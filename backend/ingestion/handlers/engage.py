@@ -111,12 +111,22 @@ async def handle_project_command(chat_id: int, text: str, token: str, http_clien
     # Find project note
     found_path = None
     proj_dir = os.path.join(OBSIDIAN_VAULT_PATH, "02_Projects")
+    # 1. Exact match pass
     for root, dirs, files in os.walk(proj_dir):
         for f in files:
-            if proj_query.lower() in f.lower() and f.endswith(".md"):
+            if f.lower() == f"{proj_query.lower()}.md":
                 found_path = os.path.join(root, f)
                 break
         if found_path: break
+        
+    # 2. Substring match fallback
+    if not found_path:
+        for root, dirs, files in os.walk(proj_dir):
+            for f in files:
+                if proj_query.lower() in f.lower() and f.endswith(".md"):
+                    found_path = os.path.join(root, f)
+                    break
+            if found_path: break
         
     if not found_path:
         # Check if project folder exists or auto-create project note in Personal

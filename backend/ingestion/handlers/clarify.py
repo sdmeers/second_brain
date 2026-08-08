@@ -135,11 +135,18 @@ def ensure_project_note_exists(project_name: str) -> str:
     proj_clean = project_name.strip().title()
     proj_dir = os.path.join(OBSIDIAN_VAULT_PATH, "02_Projects")
     
-    # Search for existing note
+    # 1. First pass: exact filename match (e.g. Garage.md)
     for root, dirs, files in os.walk(proj_dir):
         for f in files:
-            if proj_clean.lower() in f.lower() and f.endswith(".md"):
+            if f.lower() == f"{proj_clean.lower()}.md":
                 return os.path.join(root, f)
+                
+    # 2. Second pass: exact directory name match (e.g. folder named Garage)
+    for root, dirs, files in os.walk(proj_dir):
+        if os.path.basename(root).lower() == proj_clean.lower():
+            target_md = os.path.join(root, f"{proj_clean}.md")
+            if os.path.exists(target_md):
+                return target_md
                 
     # If not found, create under Personal
     personal_dir = os.path.join(proj_dir, "Personal")

@@ -230,6 +230,7 @@ async def process_telegram_message(message: dict, token: str, http_client):
   /ask <question>      Ask anything (or just type naturally)
 
 ━━━ SYSTEM ━━━
+  /status (/sitrep)             System status (list counts & active projects)
   /project <name> add <step>    Add step to project roadmap
   /undo                         Revert last vault change
   /help                         This message"""
@@ -239,7 +240,7 @@ async def process_telegram_message(message: dict, token: str, http_client):
                 from backend.ingestion.handlers.clarify import handle_clarify_command
                 await handle_clarify_command(chat_id, token, http_client)
                 return
-            elif cmd_part in ["/next", "/waiting", "/project", "/done", "/tickle", "/reflect"]:
+            elif cmd_part in ["/next", "/waiting", "/project", "/done", "/tickle", "/reflect", "/status", "/sitrep"]:
                 from backend.ingestion.handlers.engage import handle_engage_commands
                 await handle_engage_commands(chat_id, text, token, http_client)
                 return

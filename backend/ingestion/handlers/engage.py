@@ -267,13 +267,54 @@ async def handle_done_command(chat_id: int, text: str, token: str, http_client: 
 async def handle_tickle_command(chat_id: int, text: str, token: str, http_client: httpx.AsyncClient):
     await send_msg(chat_id, token, http_client, "✅ Tickle command handled (simplified implementation for phase 4).")
 
-async def handle_reflect_command(chat_id: int, token: str, http_client: httpx.AsyncClient):
-    await send_msg(chat_id, token, http_client, "🔍 Reflect (Guided Review) started. Please check daily digest.")
+async def handle_status_command(chat_id: int, token: str, http_client: httpx.AsyncClient):
+    tasks_dir = os.path.join(OBSIDIAN_VAULT_PATH, "01_Tasks")
+    proj_dir = os.path.join(OBSIDIAN_VAULT_PATH, "02_Projects")
+    
+    counts = {"Captured": 0, "Next Actions": 0, "Waiting For": 0, "Someday/Maybe": 0, "Completed": 0}
+    
+    for filename, key in [
+        ("Captured.md", "Captured"),
+        ("Next_Actions.md", "Next Actions"),
+        ("Waiting_For.md", "Waiting For"),
+        ("Someday_Maybe.md", "Someday/Maybe"),
+        ("z_Completed.md", "Completed")
+    ]:
+        fp = os.path.join(tasks_dir, filename)
+        if os.path.exists(fp):
+            with open(fp, "r", encoding="utf-8") as f:
+                counts[key] = sum(1 for line in f if line.strip().startswith("- [ ]") or line.strip().startswith("- [x]"))
+                
+    msg = "📊 <b>GTD System Status</b>\n\n"
+    msg += f"📥 <b>Captured:</b> {counts['Captured']} item(s)\n"
+    msg += f"⚡ <b>Next Actions:</b> {counts['Next Actions']} item(s)\n"
+    msg += f"⏳ <b>Waiting For:</b> {counts['Waiting For']} item(s)\n"
+    msg += f"💡 <b>Someday/Maybe:</b> {counts['Someday/Maybe']} item(s)\n"
+    msg += f"✅ <b>Completed:</b> {counts['Completed']} item(s)\n\n"
+    
+    msg += "📁 <b>Active Projects:</b>\n"
+    projects = []
+    for root, dirs, files in os.walk(proj_dir):
+        for f in files:
+            if f.endswith(".md") and not f.startswith("_") and "Notes" not in root and "Meetings" not in root and "Outputs" not in root and "archive" not in root and "docs" not in root:
+                p_name = f.replace(".md", "")
+                p_cat = "Personal" if "Personal" in root else "Professional"
+                projects.append(f"• <b>{p_name}</b> ({p_cat})")
+                
+    if projects:
+        msg += "\n".join(projects)
+    else:
+        msg += "<i>No active project master notes found.</i>"
+        
+    await send_msg(chat_id, token, http_client, msg)
 
 async def handle_engage_commands(chat_id: int, text: str, token: str, http_client: httpx.AsyncClient) -> bool:
     cmd_part = text.split()[0].lower()
     
-    if cmd_part == "/next":
+    if cmd_part in ["/status", "/sitrep"]:
+        await handle_status_command(chat_id, token, http_client)
+        return True
+    elif cmd_part == "/next":
         await handle_next_command(chat_id, text, token, http_client)
         return True
     elif cmd_part == "/waiting":

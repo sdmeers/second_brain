@@ -271,40 +271,85 @@ async def handle_status_command(chat_id: int, token: str, http_client: httpx.Asy
     tasks_dir = os.path.join(OBSIDIAN_VAULT_PATH, "01_Tasks")
     proj_dir = os.path.join(OBSIDIAN_VAULT_PATH, "02_Projects")
     
-    counts = {"Captured": 0, "Next Actions": 0, "Waiting For": 0, "Someday/Maybe": 0, "Completed": 0}
-    
-    for filename, key in [
-        ("Captured.md", "Captured"),
-        ("Next_Actions.md", "Next Actions"),
-        ("Waiting_For.md", "Waiting For"),
-        ("Someday_Maybe.md", "Someday/Maybe"),
-        ("z_Completed.md", "Completed")
-    ]:
+    def get_list_items(filename: str) -> list:
         fp = os.path.join(tasks_dir, filename)
+        items = []
         if os.path.exists(fp):
             with open(fp, "r", encoding="utf-8") as f:
-                counts[key] = sum(1 for line in f if line.strip().startswith("- [ ]") or line.strip().startswith("- [x]"))
-                
-    msg = "📊 <b>GTD System Status</b>\n\n"
-    msg += f"📥 <b>Captured:</b> {counts['Captured']} item(s)\n"
-    msg += f"⚡ <b>Next Actions:</b> {counts['Next Actions']} item(s)\n"
-    msg += f"⏳ <b>Waiting For:</b> {counts['Waiting For']} item(s)\n"
-    msg += f"💡 <b>Someday/Maybe:</b> {counts['Someday/Maybe']} item(s)\n"
-    msg += f"✅ <b>Completed:</b> {counts['Completed']} item(s)\n\n"
+                for line in f:
+                    line_s = line.strip()
+                    if line_s.startswith("- [ ]") or line_s.startswith("- "):
+                        clean = re.sub(r'\(Source:.*?\)', '', line_s)
+                        clean = re.sub(r'\(Captured on.*?\)', '', clean)
+                        clean = clean.replace('- [ ]', '').replace('- ', '').strip()
+                        if clean:
+                            items.append(clean)
+        return items
+
+    captured_items = get_list_items("Captured.md")
+    next_items = get_list_items("Next_Actions.md")
+    waiting_items = get_list_items("Waiting_For.md")
+    someday_items = get_list_items("Someday_Maybe.md")
     
+    completed_count = 0
+    comp_fp = os.path.join(tasks_dir, "z_Completed.md")
+    if os.path.exists(comp_fp):
+        with open(comp_fp, "r", encoding="utf-8") as f:
+            completed_count = sum(1 for line in f if line.strip().startswith("- [x]"))
+
+    msg = "📊 <b>GTD System Status</b>\n\n"
+    
+    msg += f"📥 <b>Captured ({len(captured_items)}):</b>\n"
+    if captured_items:
+        msg += "\n".join(f"• {item}" for item in captured_items[:10]) + "\n\n"
+    else:
+        msg += "• <i>None</i>\n\n"
+        
+    msg += f"⚡ <b>Next Actions ({len(next_items)}):</b>\n"
+    if next_items:
+        msg += "\n".join(f"• {item}" for item in next_items[:10]) + "\n\n"
+    else:
+        msg += "• <i>None</i>\n\n"
+
+    msg += f"⏳ <b>Waiting For ({len(waiting_items)}):</b>\n"
+    if waiting_items:
+        msg += "\n".join(f"• {item}" for item in waiting_items[:10]) + "\n\n"
+    else:
+        msg += "• <i>None</i>\n\n"
+
+    msg += f"💡 <b>Someday/Maybe ({len(someday_items)}):</b>\n"
+    if someday_items:
+        msg += "\n".join(f"• {item}" for item in someday_items[:10]) + "\n\n"
+    else:
+        msg += "• <i>None</i>\n\n"
+
+    msg += f"✅ <b>Completed Tasks:</b> {completed_count} item(s)\n\n"
+
+    # Top-level projects only (no subfolder scanning)
     msg += "📁 <b>Active Projects:</b>\n"
     projects = []
-    for root, dirs, files in os.walk(proj_dir):
-        for f in files:
-            if f.endswith(".md") and not f.startswith("_") and "Notes" not in root and "Meetings" not in root and "Outputs" not in root and "archive" not in root and "docs" not in root:
-                p_name = f.replace(".md", "")
-                p_cat = "Personal" if "Personal" in root else "Professional"
-                projects.append(f"• <b>{p_name}</b> ({p_cat})")
-                
+    
+    for category in ["Personal", "Professional"]:
+        cat_dir = os.path.join(proj_dir, category)
+        if os.path.exists(cat_dir):
+            for entry in os.listdir(cat_dir):
+                if entry.startswith(".") or entry.startswith("_"):
+                    continue
+                entry_path = os.path.join(cat_dir, entry)
+                if os.path.isdir(entry_path) or entry.endswith(".md"):
+                    p_name = entry.replace(".md", "")
+                    projects.append(f"• <b>{p_name}</b> ({category})")
+                    
+    # Also check top-level 02_Projects for standalone notes/folders
+    for entry in os.listdir(proj_dir):
+        if entry not in ["Personal", "Professional"] and not entry.startswith(".") and not entry.startswith("_"):
+            p_name = entry.replace(".md", "")
+            projects.append(f"• <b>{p_name}</b>")
+            
     if projects:
         msg += "\n".join(projects)
     else:
-        msg += "<i>No active project master notes found.</i>"
+        msg += "<i>No active projects found.</i>"
         
     await send_msg(chat_id, token, http_client, msg)
 

@@ -130,38 +130,18 @@ async def maintain_tasks_dashboard():
                 else:
                     backlog_tasks.append(task)
                     
-        # 3. Rebuild Tasks.md content
-        new_content = """# 📋 Master Tasks List
+        # 3. Rebuild Next_Actions.md content
+        new_content = """# ⚡ Next Actions
 
-> Master cross-project action list. Managed by the AI orchestrator. Steven can also edit directly via Obsidian.
+> Flexible, context-tagged action list. Filter in Telegram using `/next @context`.
 
 ---
 
-## 🚨 Overdue
+## ⚡ Next Actions
 """
-        if overdue_tasks:
-            for task in overdue_tasks:
-                new_content += f"{task}\n"
-        else:
-            new_content += "*None*\n"
-            
-        new_content += "\n## 📅 Due Today\n"
-        if due_today_tasks:
-            for task in due_today_tasks:
-                new_content += f"{task}\n"
-        else:
-            new_content += "*None*\n"
-            
-        new_content += "\n## 🗓️ Upcoming (Next 7 Days)\n"
-        if upcoming_tasks:
-            for task in upcoming_tasks:
-                new_content += f"{task}\n"
-        else:
-            new_content += "*None*\n"
-            
-        new_content += "\n## 🗃️ Backlog\n"
-        if backlog_tasks:
-            for task in backlog_tasks:
+        all_active = overdue_tasks + due_today_tasks + upcoming_tasks + backlog_tasks
+        if all_active:
+            for task in all_active:
                 new_content += f"{task}\n"
         else:
             new_content += "*None*\n"

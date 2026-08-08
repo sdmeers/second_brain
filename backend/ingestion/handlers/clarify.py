@@ -40,7 +40,7 @@ async def handle_clarify_command(chat_id: int, token: str, http_client: httpx.As
         "batch_end": min(5, len(items)),
         "lines": lines,
         "item_data": {},
-        "awaiting_text_input": None  # e.g., 'new_project_name', 'waiting_for_person'
+        "awaiting_text_input": None  # 'new_project_name' | 'new_project_outcome'
     }
     
     await process_next_clarify_item(chat_id, token, http_client)
@@ -81,16 +81,17 @@ async def process_next_clarify_item(chat_id: int, token: str, http_client: httpx
     clean_display = re.sub(r'\(Source:.*?\)', '', item_line)
     clean_display = re.sub(r'\(Captured on.*?\)', '', clean_display).strip("- \n")
     
-    # Direct GTD Classification Menu (No preliminary guess step)
+    # Complete GTD Clarify Menu
     reply_markup = {
         "inline_keyboard": [
             [{"text": "⚡ Next Action", "callback_data": "clarify:action_next"},
-             {"text": "📌 Project Roadmap Step", "callback_data": "clarify:action_roadmap_cat"}],
+             {"text": "📌 Existing Project Roadmap", "callback_data": "clarify:action_roadmap_cat"}],
             [{"text": "📁 New Project", "callback_data": "clarify:action_new_proj_cat"},
              {"text": "⏳ Waiting For", "callback_data": "clarify:action_waiting"}],
             [{"text": "💡 Someday / Maybe", "callback_data": "clarify:action_someday"},
-             {"text": "📚 Non-Actionable", "callback_data": "clarify:action_non_actionable"}],
-            [{"text": "⚡ 2-Min Rule (Done)", "callback_data": "clarify:action_2min"}]
+             {"text": "📚 Pass to AI Librarian", "callback_data": "clarify:action_librarian"}],
+            [{"text": "⚡ 2-Min Rule (Done)", "callback_data": "clarify:action_2min"},
+             {"text": "🗑️ Trash", "callback_data": "clarify:action_trash"}]
         ]
     }
 
@@ -104,7 +105,7 @@ async def process_next_clarify_item(chat_id: int, token: str, http_client: httpx
         }
     )
 
-def ensure_project_note_exists(project_name: str, category: str = "Personal") -> str:
+def ensure_project_note_exists(project_name: str, category: str = "Personal", outcome: str = None) -> str:
     """Ensures project note exists, creating it with v5 template if missing."""
     proj_clean = project_name.strip().title()
     proj_dir = os.path.join(OBSIDIAN_VAULT_PATH, "02_Projects")
@@ -113,7 +114,15 @@ def ensure_project_note_exists(project_name: str, category: str = "Personal") ->
     for root, dirs, files in os.walk(proj_dir):
         for f in files:
             if f.lower() == f"{proj_clean.lower()}.md":
-                return os.path.join(root, f)
+                note_path = os.path.join(root, f)
+                if outcome:
+                    # Update outcome if provided
+                    with open(note_path, "r", encoding="utf-8") as file:
+                        c = file.read()
+                    c = re.sub(r'outcome:\s*".*?"', f'outcome: "{outcome}"', c)
+                    with open(note_path, "w", encoding="utf-8") as file:
+                        file.write(c)
+                return note_path
                 
     # 2. Second pass: exact directory name match (e.g. folder named Garage)
     for root, dirs, files in os.walk(proj_dir):
@@ -133,18 +142,19 @@ def ensure_project_note_exists(project_name: str, category: str = "Personal") ->
     if not os.path.exists(found_path):
         os.makedirs(os.path.dirname(found_path), exist_ok=True)
         today_str = datetime.now().strftime("%Y-%m-%d")
+        outcome_str = outcome if outcome else f"{proj_clean} project goals and desired outcome"
         template = f"""---
 title: "{proj_clean}"
 type: project
 category: {category}
-outcome: "{proj_clean} project goals and desired outcome"
+outcome: "{outcome_str}"
 date_created: "{today_str}"
 status: active
 ---
 # {proj_clean}
 
 ## Desired Outcome
-{proj_clean} project goals and desired outcome.
+{outcome_str}
 
 ## Project Steps
 
@@ -176,7 +186,7 @@ def append_to_project_roadmap(project_name: str, step_text: str):
     with open(note_path, "w", encoding="utf-8") as f:
         f.write(content)
 
-def get_category_project_buttons(category: str) -> list:
+def get_category_project_buttons(category: str, action_prefix: str = "roadmap_proj") -> list:
     """Gets top-level project buttons for a given category (Personal or Professional)."""
     proj_dir = os.path.join(OBSIDIAN_VAULT_PATH, "02_Projects", category)
     projects = []
@@ -193,7 +203,7 @@ def get_category_project_buttons(category: str) -> list:
     row = []
     for p in projects:
         p_short = p[:25]
-        row.append({"text": f"📁 {p_short}", "callback_data": f"clarify:roadmap_proj:{p_short}"})
+        row.append({"text": f"📁 {p_short}", "callback_data": f"clarify:{action_prefix}:{p_short}"})
         if len(row) == 2:
             keyboard.append(row)
             row = []
@@ -260,27 +270,8 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
     item_data = session.get("item_data", {})
     item_line = item_data.get("raw_line", session["items"][session["current_index"]])
 
-    # 1. Non-Actionable Menu
-    if action == "action_non_actionable":
-        reply_markup = {
-            "inline_keyboard": [
-                [{"text": "🗑️ Trash", "callback_data": "clarify:ref_trash"},
-                 {"text": "📚 Pass to AI Librarian (Reference Note)", "callback_data": "clarify:ref_librarian"}]
-            ]
-        }
-        await http_client.post(
-            f"https://api.telegram.org/bot{token}/editMessageText",
-            json={
-                "chat_id": chat_id,
-                "message_id": message_id,
-                "text": "📚 <b>Non-Actionable Handling:</b>",
-                "parse_mode": "HTML",
-                "reply_markup": reply_markup
-            }
-        )
-        return
-
-    if action == "ref_trash":
+    # 1. Trash
+    if action == "action_trash":
         await archive_and_remove_captured(item_line)
         await http_client.post(
             f"https://api.telegram.org/bot{token}/editMessageText",
@@ -290,12 +281,12 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
         await process_next_clarify_item(chat_id, token, http_client)
         return
 
-    if action == "ref_librarian":
+    # 2. Pass to AI Librarian
+    if action == "action_librarian":
         filename = await archive_and_remove_captured(item_line)
         clean_text = re.sub(r'\(Captured on.*?\)', '', item_line)
         clean_text = re.sub(r'\(Source:.*?\)', '', clean_text).strip("- \n")
         
-        # Route to AI Librarian queue
         from backend.ingestion.queue import add_to_queue
         payload = {"filename": filename or "reference_note.md", "type": "reference_note"}
         add_to_queue(source_type="file_drop", raw_payload=payload, content_text=clean_text)
@@ -308,7 +299,7 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
         await process_next_clarify_item(chat_id, token, http_client)
         return
 
-    # 2. 2-Minute Rule
+    # 3. 2-Minute Rule
     if action == "action_2min":
         clean_text = re.sub(r'\(Captured on.*?\)', '', item_line)
         clean_text = re.sub(r'\(Source:.*?\)', '', clean_text).strip("- \n")
@@ -327,7 +318,7 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
         await process_next_clarify_item(chat_id, token, http_client)
         return
 
-    # 3. New Project Creation Flow
+    # 4. New Project Creation Flow
     if action == "action_new_proj_cat":
         reply_markup = {
             "inline_keyboard": [
@@ -357,13 +348,13 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
             json={
                 "chat_id": chat_id,
                 "message_id": message_id,
-                "text": f"🆕 <b>New {category} Project:</b>\nPlease reply with the Project Name (e.g. <code>Garage Workbench</code> or <code>TF RAID Integration</code>):",
+                "text": f"🆕 <b>Step 1 of 2 — New {category} Project:</b>\nPlease reply with the <b>Project Name</b> (e.g. <code>Garage Workbench</code> or <code>TF RAID Integration</code>):",
                 "parse_mode": "HTML"
             }
         )
         return
 
-    # 4. Existing Project Roadmap Step
+    # 5. Existing Project Roadmap Step Flow
     if action == "action_roadmap_cat":
         reply_markup = {
             "inline_keyboard": [
@@ -385,7 +376,7 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
 
     if action.startswith("cat_proj"):
         category = data.split(":")[2]
-        keyboard = get_category_project_buttons(category)
+        keyboard = get_category_project_buttons(category, action_prefix="roadmap_proj")
         reply_markup = {"inline_keyboard": keyboard}
         await http_client.post(
             f"https://api.telegram.org/bot{token}/editMessageText",
@@ -414,7 +405,7 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
         await process_next_clarify_item(chat_id, token, http_client)
         return
 
-    # 5. Waiting For Flow
+    # 6. Waiting For Flow
     if action == "action_waiting":
         clean_text = re.sub(r'\(Captured on.*?\)', '', item_line)
         clean_text = re.sub(r'\(Source:.*?\)', '', clean_text).strip("- \n")
@@ -430,7 +421,7 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
         await process_next_clarify_item(chat_id, token, http_client)
         return
 
-    # 6. Next Action Flow
+    # 7. Next Action Flow with Optional Project Tagging
     if action == "action_next":
         reply_markup = {
             "inline_keyboard": [
@@ -456,24 +447,69 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
 
     if action.startswith("ctx"):
         ctx = data.split(":")[2]
+        session["item_data"]["selected_context"] = ctx
+        
+        reply_markup = {
+            "inline_keyboard": [
+                [{"text": "🚫 No Project Tag", "callback_data": "clarify:tag_proj:none"}],
+                [{"text": "🏠 Tag Personal Project", "callback_data": "clarify:tag_cat:Personal"},
+                 {"text": "💼 Tag Professional Project", "callback_data": "clarify:tag_cat:Professional"}]
+            ]
+        }
+        await http_client.post(
+            f"https://api.telegram.org/bot{token}/editMessageText",
+            json={
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": f"🏷️ Context: <b>{ctx}</b>\nOptionally tag with a project?",
+                "parse_mode": "HTML",
+                "reply_markup": reply_markup
+            }
+        )
+        return
+
+    if action.startswith("tag_cat"):
+        category = data.split(":")[2]
+        keyboard = get_category_project_buttons(category, action_prefix="tag_proj")
+        reply_markup = {"inline_keyboard": keyboard}
+        await http_client.post(
+            f"https://api.telegram.org/bot{token}/editMessageText",
+            json={
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": f"🏷️ <b>Select {category} Project Tag:</b>",
+                "parse_mode": "HTML",
+                "reply_markup": reply_markup
+            }
+        )
+        return
+
+    if action.startswith("tag_proj"):
+        proj_tag = data.split(":")[2]
+        ctx = session["item_data"].get("selected_context", "@computer")
         clean_text = re.sub(r'\(Captured on.*?\)', '', item_line)
         clean_text = re.sub(r'\(Source:.*?\)', '', clean_text).strip("- \n")
-        task_str = f"- [ ] {clean_text} {ctx}"
         
+        task_str = f"- [ ] {clean_text} {ctx}"
+        if proj_tag != "none":
+            task_str += f" #project/{proj_tag}"
+            ensure_project_note_exists(proj_tag)
+            
         tasks_md = os.path.join(TASKS_PATH, "Next_Actions.md")
         with open(tasks_md, "a", encoding="utf-8") as f:
             f.write(f"{task_str}\n")
             
         await archive_and_remove_captured(item_line)
+        tag_disp = f" #project/{proj_tag}" if proj_tag != "none" else ""
         await http_client.post(
             f"https://api.telegram.org/bot{token}/editMessageText",
-            json={"chat_id": chat_id, "message_id": message_id, "text": f"⚡ Added to Next Actions ({ctx}):\n{clean_text}"}
+            json={"chat_id": chat_id, "message_id": message_id, "text": f"⚡ Added to Next Actions ({ctx}{tag_disp}):\n{clean_text}"}
         )
         session["current_index"] += 1
         await process_next_clarify_item(chat_id, token, http_client)
         return
 
-    # 7. Someday / Maybe Flow
+    # 8. Someday / Maybe Flow
     if action == "action_someday":
         clean_text = re.sub(r'\(Captured on.*?\)', '', item_line)
         clean_text = re.sub(r'\(Source:.*?\)', '', clean_text).strip("- \n")
@@ -490,7 +526,7 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
         return
 
 async def handle_clarify_text_input(chat_id: int, text: str, token: str, http_client: httpx.AsyncClient) -> bool:
-    """Handles text replies during clarify flow (e.g., typing new project name)."""
+    """Handles text replies during clarify flow (e.g. project name & outcome)."""
     session = CLARIFY_SESSIONS.get(chat_id)
     if not session or not session.get("awaiting_text_input"):
         return False
@@ -500,11 +536,26 @@ async def handle_clarify_text_input(chat_id: int, text: str, token: str, http_cl
     item_line = item_data.get("raw_line", session["items"][session["current_index"]])
     
     if input_type == "new_project_name":
-        category = item_data.get("new_project_category", "Personal")
-        proj_name = text.strip().title()
+        session["item_data"]["new_project_name"] = text.strip().title()
+        session["awaiting_text_input"] = "new_project_outcome"
         
-        # 1. Create project note
-        note_path = ensure_project_note_exists(proj_name, category=category)
+        await http_client.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={
+                "chat_id": chat_id,
+                "text": f"🆕 <b>Step 2 of 2 — {session['item_data']['new_project_name']}:</b>\nPlease reply with the <b>Desired Outcome</b> (e.g. <code>Fully equipped home gym with squat rack and rubber flooring</code>):",
+                "parse_mode": "HTML"
+            }
+        )
+        return True
+
+    if input_type == "new_project_outcome":
+        category = item_data.get("new_project_category", "Personal")
+        proj_name = item_data.get("new_project_name", "New Project")
+        outcome = text.strip()
+        
+        # 1. Create project note with outcome
+        note_path = ensure_project_note_exists(proj_name, category=category, outcome=outcome)
         
         # 2. Append step to project roadmap
         append_to_project_roadmap(proj_name, item_line)
@@ -518,7 +569,7 @@ async def handle_clarify_text_input(chat_id: int, text: str, token: str, http_cl
             f"https://api.telegram.org/bot{token}/sendMessage",
             json={
                 "chat_id": chat_id,
-                "text": f"🆕 Created <b>{category} Project: {proj_name}</b>\n📌 Appended roadmap step:\n{clean_text}",
+                "text": f"🆕 Created <b>{category} Project: {proj_name}</b>\n🎯 Outcome: <i>{outcome}</i>\n📌 Appended roadmap step:\n{clean_text}",
                 "parse_mode": "HTML"
             }
         )

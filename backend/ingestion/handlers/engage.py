@@ -201,12 +201,13 @@ async def handle_done_command(chat_id: int, text: str, token: str, http_client: 
         await send_msg(chat_id, token, http_client, f"❌ Task matching '{task_query}' not found.")
         return
         
-    completed_file = os.path.join(OBSIDIAN_VAULT_PATH, "01_Tasks", "Completed.md")
+    from backend.config import COMPLETED_TASKS_MD_FILE
+    completed_file = COMPLETED_TASKS_MD_FILE
     with open(completed_file, "a", encoding="utf-8") as f:
         new_task = task_line.replace("- [ ]", f"- [x] (Completed on {get_today_str()})", 1)
         f.write(new_task + "\n")
         
-    await send_msg(chat_id, token, http_client, f"✅ Done! Archived to Completed.md")
+    await send_msg(chat_id, token, http_client, f"✅ Done! Archived to z_Completed.md")
     
     # Project auto promotion
     if project_tag:

@@ -55,7 +55,7 @@ FAILED_MD_FILE = os.path.join(IMPORT_PATH, "Failed.md")
 # Task paths
 TASKS_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "01_Tasks")
 TASKS_MD_FILE = os.path.join(TASKS_PATH, "Next_Actions.md")
-COMPLETED_TASKS_MD_FILE = os.path.join(TASKS_PATH, "Completed.md")
+COMPLETED_TASKS_MD_FILE = os.path.join(TASKS_PATH, "z_Completed.md")
 WAITING_FOR_MD_FILE = os.path.join(TASKS_PATH, "Waiting_For.md")
 SOMEDAY_MAYBE_MD_FILE = os.path.join(TASKS_PATH, "Someday_Maybe.md")
 CAPTURED_MD_FILE = os.path.join(TASKS_PATH, "Captured.md")

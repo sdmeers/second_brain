@@ -98,7 +98,7 @@ async def scan_and_process_import():
             f.write(failed_entry)
 
 async def scan_and_process_inbox():
-    """Scans 01_Inbox/ folder for dropped files (markdown, PDF, images, etc.).
+    """Scans 00_System/Inbox/ folder for dropped files (markdown, PDF, images, etc.).
     Queues them in the database and cleans up the folder (transient queue)."""
     if not os.path.exists(INBOX_PATH):
         return
@@ -196,7 +196,7 @@ async def process_queue_worker():
                 if not content_text.strip():
                     print(f"Backend [Queue Worker]: Audio transcription for {os.path.basename(file_path)} was blank/silent. Skipping ingestion.")
                     update_item_status(item_id, "completed", error_msg="Blank/silent voice note ignored.")
-                    if os.path.exists(file_path) and ("staging" in file_path or "01_Inbox" in file_path):
+                    if os.path.exists(file_path) and ("staging" in file_path or "00_System/Inbox" in file_path):
                         try:
                             os.remove(file_path)
                         except Exception:
@@ -342,7 +342,7 @@ async def process_queue_worker():
             success = True
             
         elif classification.category == "task":
-            # Task Handler: extract check-items and append to Tasks.md
+            # Task Handler: extract check-items and append to Next_Actions.md
             msg = await process_task_item(classification_input, source_label)
             result_title = "Tasks"
             saved_file_path = TASKS_MD_FILE
@@ -736,11 +736,11 @@ async def auto_heal_syncthing_conflict(rel_path: str, full_path: str) -> bool:
         dir_name = os.path.dirname(full_path)
         base_name = os.path.basename(full_path)
         
-        # Determine the target original file name (e.g. Tasks.md from Tasks.sync-conflict-*.md)
+        # Determine the target original file name (e.g. Next_Actions.md from Tasks.sync-conflict-*.md)
         target_name = re.sub(r'\.sync-conflict-\d+-\w+', '', base_name)
         target_path = os.path.join(dir_name, target_name)
         
-        # Case A: Conflict is on Tasks.md
+        # Case A: Conflict is on Next_Actions.md
         if target_name.lower() == "tasks.md":
             print(f"Backend [Auto-Healer]: Auto-resolving task conflict file {rel_path}...")
             
@@ -756,9 +756,9 @@ async def auto_heal_syncthing_conflict(rel_path: str, full_path: str) -> bool:
             checked_pattern = re.compile(r'^\s*-\s*\[[xX]\]\s*(.*)$', re.MULTILINE)
             checked_in_conflict = checked_pattern.findall(conflict_text)
             
-            # Archive checked off items to Completed_Tasks.md
+            # Archive checked off items to Completed_Next_Actions.md
             if checked_in_conflict:
-                completed_file = os.path.join(OBSIDIAN_VAULT_PATH, "00_System", "Completed_Tasks.md")
+                completed_file = os.path.join(OBSIDIAN_VAULT_PATH, "00_System", "Completed_Next_Actions.md")
                 today_str = datetime.now().strftime("%Y-%m-%d")
                 existing_archive = ""
                 if os.path.exists(completed_file):
@@ -775,7 +775,7 @@ async def auto_heal_syncthing_conflict(rel_path: str, full_path: str) -> bool:
                     from backend.vault.writer import atomic_write
                     atomic_write(completed_file, existing_archive + "".join(new_archives))
                     
-            # Now build clean active tasks list for Tasks.md
+            # Now build clean active tasks list for Next_Actions.md
             if master_text:
                 master_lines = master_text.splitlines()
                 clean_lines = [l for l in master_lines if not (l.strip().startswith("- [x]") or l.strip().startswith("- [X]"))]
@@ -789,7 +789,7 @@ async def auto_heal_syncthing_conflict(rel_path: str, full_path: str) -> bool:
             print(f"Backend [Auto-Healer]: Tasks conflict {rel_path} successfully auto-resolved!")
             await notify_via_telegram(
                 f"🧠⚡ **Auto-Resolved Task Sync Conflict**\n"
-                f"Merged task updates from `{rel_path}` into `Tasks.md` & `Completed_Tasks.md` without data loss."
+                f"Merged task updates from `{rel_path}` into `Next_Actions.md` & `Completed_Next_Actions.md` without data loss."
             )
             return True
             
@@ -908,7 +908,7 @@ async def watch_inbox_loop():
                 except Exception as index_e:
                     print(f"Backend [Watcher]: Periodic indexing failed: {index_e}")
             
-            # Reorganize Tasks.md dashboard and archive completed items
+            # Reorganize Next_Actions.md dashboard and archive completed items
             try:
                 from backend.utils.tasks_dashboard import maintain_tasks_dashboard
                 await maintain_tasks_dashboard()

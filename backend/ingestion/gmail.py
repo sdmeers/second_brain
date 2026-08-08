@@ -63,7 +63,7 @@ def _process_gmail_emails(gmail_email, gmail_app_password, loop):
     email_user = gmail_email.split('@')[0] if '@' in gmail_email else "stevenmeers"
     BRAIN_TAG = f"{email_user}+brain"
     
-    mail = imaplib.IMAP4_SSL("imap.gmail.com")
+    mail = imaplib.IMAP4_SSL("imap.gmail.com", timeout=15.0)
     mail.login(gmail_email, gmail_app_password)
     
     status, _ = mail.select("CentaurBrain")
@@ -170,6 +170,11 @@ async def poll_gmail():
 
     try:
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, _process_gmail_emails, gmail_email, gmail_app_password, loop)
+        await asyncio.wait_for(
+            loop.run_in_executor(None, _process_gmail_emails, gmail_email, gmail_app_password, loop),
+            timeout=20.0
+        )
+    except asyncio.TimeoutError:
+        print("Backend [Gmail Watcher]: Gmail polling timed out after 20s.")
     except Exception as e:
         print(f"Backend [Gmail Watcher]: Error polling Gmail: {e}")

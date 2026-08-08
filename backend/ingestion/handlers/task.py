@@ -17,7 +17,7 @@ class TaskListExtraction(BaseModel):
     tasks: list[ExtractedTask] = Field(description="List of all distinct action items extracted from the text.")
 
 async def process_task_item(content_text: str, source_info: str) -> str:
-    """Extracts tasks from the input text and appends them to Tasks.md."""
+    """Extracts tasks from the input text and appends them to Next_Actions.md."""
     tasks_file = TASKS_MD_FILE
     
     # 1. Use Gemini to extract structured tasks
@@ -59,7 +59,7 @@ For each task, provide:
         print("Task Handler: No tasks found in input.")
         return "No tasks identified to add."
 
-    # 2. Append to Tasks.md
+    # 2. Append to Next_Actions.md
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     new_entries = []
     
@@ -71,15 +71,15 @@ For each task, provide:
         
     try:
         from backend.vault.writer import atomic_write
-        # Read existing Tasks.md if it exists, otherwise initialize it
+        # Read existing Next_Actions.md if it exists, otherwise initialize it
         if os.path.exists(tasks_file):
             try:
                 with open(tasks_file, "r", encoding="utf-8") as f:
                     existing_content = f.read()
             except Exception:
-                existing_content = "# 📋 Master Tasks List\n\n"
+                existing_content = "# Next Actions\n\n## ⚡ Next Actions\n\n"
         else:
-            existing_content = "# 📋 Master Tasks List\n\n"
+            existing_content = "# Next Actions\n\n## ⚡ Next Actions\n\n"
             
         # Append new task entries
         updated_content = existing_content
@@ -89,8 +89,8 @@ For each task, provide:
             updated_content += entry
             
         atomic_write(tasks_file, updated_content)
-        print(f"Task Handler: Appended {len(new_entries)} tasks to Tasks.md")
+        print(f"Task Handler: Appended {len(new_entries)} tasks to Next_Actions.md")
         return f"Successfully added {len(new_entries)} tasks to your Tasks list."
     except Exception as e:
-        print(f"Task Handler: Error writing to Tasks.md: {e}")
+        print(f"Task Handler: Error writing to Next_Actions.md: {e}")
         raise e

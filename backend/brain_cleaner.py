@@ -379,11 +379,10 @@ Here are the concept pages to merge:
 
     # Check which links are missing a file in CONCEPTS_DIR, ATLAS_DIR, or SUMMARIES_DIR
     missing_concepts = {}
-    source_emojis = ("🎞️", "🏛️", "📄", "📖")
     
     for topic, data in links_data.items():
-        # Skip if the link starts with a source emoji
-        if topic.startswith(source_emojis):
+        # Skip source/summary links (links starting with emojis or non-alphanumeric chars)
+        if not topic or not topic[0].isalnum():
             continue
             
         safe_topic = re.sub(r'[\\/*?:"<>|]', "", topic).strip()
@@ -535,7 +534,7 @@ async def clean_staging_and_inbox():
             if os.path.isfile(p):
                 os.remove(p)
     # Inbox
-    inbox_dir = os.path.join(VAULT_PATH, "01_Inbox")
+    inbox_dir = os.path.join(VAULT_PATH, "00_System", "Inbox")
     keep = {"Inbox.md", "Completed.md", "Failed.md"}
     if os.path.exists(inbox_dir):
         for f in os.listdir(inbox_dir):
@@ -586,7 +585,7 @@ async def generate_daily_digest():
     print("🌅 Generating daily digest...")
     
     # --- Part 1: Tasks Summary ---
-    tasks_file = os.path.join(VAULT_PATH, "00_System", "Tasks.md")
+    tasks_file = os.path.join(VAULT_PATH, "01_Tasks", "Next_Actions.md")
     overdue_tasks = []
     active_tasks = []
     fourteen_days_ago = datetime.now() - timedelta(days=14)
@@ -615,7 +614,7 @@ async def generate_daily_digest():
 
     for root, dirs, files in os.walk(VAULT_PATH):
         rel_root = os.path.relpath(root, VAULT_PATH).replace("\\", "/")
-        if rel_root.startswith("00_System") or rel_root.startswith("01_Inbox") or rel_root.startswith("."):
+        if rel_root.startswith("00_System") or rel_root.startswith("01_Tasks") or rel_root.startswith("."):
             continue
 
         for f in files:

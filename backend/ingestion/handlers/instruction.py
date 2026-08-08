@@ -127,10 +127,10 @@ def get_most_recent_user_note() -> str | None:
     latest_mtime = 0
     
     for root, _, files in os.walk(OBSIDIAN_VAULT_PATH):
-        if any(skip in root for skip in [".git", "00_System/Internal", "00_System/Logs", "01_Inbox", "05_Archive/Trash"]):
+        if any(skip in root for skip in [".git", "00_System/Internal", "00_System/Logs", "00_System/Inbox", "05_Archive/Trash"]):
             continue
         for file in files:
-            if file.endswith(".md") and not file.startswith(".") and file not in ["_INDEX.md", "Librarian_Activity.md", "Tasks.md", "Completed_Tasks.md", "Daily_Digest.md", "Completed.md", "Failed.md", "Inbox.md"]:
+            if file.endswith(".md") and not file.startswith(".") and file not in ["_INDEX.md", "Librarian_Activity.md", "Next_Actions.md", "Waiting_For.md", "Someday_Maybe.md", "Captured.md", "Daily_Digest.md", "Completed.md", "Failed.md", "Inbox.md"]:
                 full_path = os.path.join(root, file)
                 try:
                     mtime = os.path.getmtime(full_path)

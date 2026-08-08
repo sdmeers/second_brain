@@ -43,18 +43,22 @@ REFERENCE_NOTES_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "04_Resources", "Refere
 REFERENCE_SOURCES_PATH = os.path.join(REFERENCE_NOTES_PATH, "Sources")
 
 # New P.A.R.A paths
-INBOX_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "01_Inbox")
+INBOX_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "00_System", "Inbox")
 INBOX_FAILED_PATH = os.path.join(INBOX_PATH, "Failed")
+INBOX_ARCHIVE_PATH = os.path.join(INBOX_PATH, "Archive")
 
-IMPORT_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "01_Inbox")
+IMPORT_PATH = INBOX_PATH
 INBOX_MD_FILE = os.path.join(IMPORT_PATH, "Inbox.md")
 COMPLETED_MD_FILE = os.path.join(IMPORT_PATH, "Completed.md")
 FAILED_MD_FILE = os.path.join(IMPORT_PATH, "Failed.md")
 
 # Task paths
-TASKS_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "00_System")
-TASKS_MD_FILE = os.path.join(TASKS_PATH, "Tasks.md")
-COMPLETED_TASKS_MD_FILE = os.path.join(TASKS_PATH, "Completed_Tasks.md")
+TASKS_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "01_Tasks")
+TASKS_MD_FILE = os.path.join(TASKS_PATH, "Next_Actions.md")
+COMPLETED_TASKS_MD_FILE = os.path.join(TASKS_PATH, "Completed.md")
+WAITING_FOR_MD_FILE = os.path.join(TASKS_PATH, "Waiting_For.md")
+SOMEDAY_MAYBE_MD_FILE = os.path.join(TASKS_PATH, "Someday_Maybe.md")
+CAPTURED_MD_FILE = os.path.join(TASKS_PATH, "Captured.md")
 
 # System internal paths
 INTERNAL_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "00_System", "Internal")
@@ -66,9 +70,11 @@ os.makedirs(CONCEPTS_PATH, exist_ok=True)
 os.makedirs(REFERENCE_NOTES_PATH, exist_ok=True)
 os.makedirs(REFERENCE_SOURCES_PATH, exist_ok=True)
 os.makedirs(INTERNAL_PATH, exist_ok=True)
+os.makedirs(TASKS_PATH, exist_ok=True)
 if os.getenv("ENABLE_OBSIDIAN_INBOX_POLLING", "false").lower() == "true":
     os.makedirs(INBOX_PATH, exist_ok=True)
     os.makedirs(INBOX_FAILED_PATH, exist_ok=True)
+    os.makedirs(INBOX_ARCHIVE_PATH, exist_ok=True)
 os.makedirs(IMPORT_PATH, exist_ok=True)
 
 # Initialize import files if they do not exist

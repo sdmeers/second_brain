@@ -27,7 +27,7 @@ from backend.ingestion.queue import (
 )
 from backend.ingestion.classifier import classify_input
 from backend.processing.capture import process_capture_core, DuplicateURLError
-from backend.ingestion.telegram import poll_telegram, poll_telegram_qa, notify_via_telegram
+from backend.ingestion.telegram import poll_telegram_unified, notify_via_telegram
 from backend.ingestion.gmail import poll_gmail
 
 # Specific Ingestion Handlers
@@ -884,8 +884,7 @@ async def watch_inbox_loop():
                 tasks.append(scan_and_process_inbox())
             
             if enable_telegram:
-                tasks.append(poll_telegram())
-                tasks.append(poll_telegram_qa())
+                tasks.append(poll_telegram_unified())
                 
             if enable_gmail and (counter % 4 == 0):
                 tasks.append(poll_gmail())

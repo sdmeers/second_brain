@@ -5,7 +5,7 @@ from backend.utils.gemini import call_gemini_with_retry
 from backend.rag.embeddings import get_embedding
 from backend.rag.vectorstore import search_similar_chunks
 
-async def query_brain(user_query: str, top_k: int = 5) -> dict:
+async def query_brain(user_query: str, chat_history: list = None, top_k: int = 5) -> dict:
     """Performs vector search on the vault context and uses Gemini to answer a conversational query."""
     query_lower = user_query.lower().strip()
     
@@ -104,15 +104,24 @@ CRITICAL RULES:
 3. TONE: Be direct, structured, and concise. No fluff.
 """
 
+
     context_str = ""
     sources = set()
     for idx, chunk in enumerate(chunks, 1):
         # Extract filename without extension as wiki-link representation
         filename_only = os.path.basename(chunk["file_path"]).rsplit(".", 1)[0]
-        context_str += f"[{idx}] Source: [[{filename_only}]]\nContent: {chunk['text']}\n\n"
+        context_str += f"[{idx}] Source: [[{filename_only}]]\\nContent: {chunk['text']}\\n\\n"
         sources.add(chunk["file_path"])
         
-    prompt = f"Retrieved Vault Context:\n\n{context_str}\nUser Question: {user_query}"
+    history_str = ""
+    if chat_history:
+        history_str = "\\nRecent Conversation History:\\n"
+        for msg in chat_history:
+            role = "User" if msg["role"] == "user" else "Librarian"
+            history_str += f"{role}: {msg['text']}\\n"
+
+    prompt = f"Retrieved Vault Context:\\n\\n{context_str}{history_str}\\nUser Question: {user_query}"
+
     
     # 4. Call Gemini Flash
     try:

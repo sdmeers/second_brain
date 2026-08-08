@@ -18,6 +18,39 @@ from backend.config import GEMINI_MODEL
 from backend.utils.gemini import call_gemini_with_retry
 from backend.utils.sanitize import sanitize_filename
 
+QA_CONTEXTS = {}
+
+def get_qa_context(chat_id: int) -> list:
+    if chat_id not in QA_CONTEXTS:
+        QA_CONTEXTS[chat_id] = []
+    return QA_CONTEXTS[chat_id]
+
+def add_qa_context(chat_id: int, role: str, text: str):
+    ctx = get_qa_context(chat_id)
+    ctx.append({"role": role, "text": text})
+    if len(ctx) > 10:  # 5 exchanges
+        QA_CONTEXTS[chat_id] = ctx[-10:]
+
+async def handle_qa_query(query_text: str, chat_id: int, token: str, http_client):
+    await http_client.post(
+        f"https://api.telegram.org/bot{token}/sendMessage",
+        json={"chat_id": chat_id, "text": "🔍 Searching your Second Brain..."}
+    )
+    
+    from backend.rag.chat import query_brain
+    
+    # Add user message to context
+    add_qa_context(chat_id, "user", query_text)
+    chat_history = get_qa_context(chat_id)
+    
+    result = await query_brain(query_text, chat_history=chat_history)
+    answer = result["answer"]
+    
+    # Add bot answer to context
+    add_qa_context(chat_id, "bot", answer)
+    
+    await send_telegram_message_safe(http_client, token, chat_id, answer)
+
 async def generate_title_from_text(text: str) -> str:
     prompt = "Create a brief, clean title (3 to 6 words) summarizing the following text. Do not use special characters or quotes. Output ONLY the title text."
     try:
@@ -108,83 +141,100 @@ async def notify_via_telegram(message: str, reply_markup: dict = None):
 
 from backend.ingestion.queue import add_to_queue
 
-async def process_telegram_message(message: dict, token: str, http_client: httpx.AsyncClient):
+
+async def process_telegram_message(message: dict, token: str, http_client):
     chat_id = message["chat"]["id"]
     text = message.get("text") or message.get("caption") or ""
     
     voice = message.get("voice")
     audio = message.get("audio")
     photo = message.get("photo")
-    document = message.get("document")    # Staging path for incoming Telegram files (private temp folder)
+    document = message.get("document")
+    
     staging_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "staging")
     os.makedirs(staging_path, exist_ok=True)
 
     try:
-        if text.startswith("/query") or text.startswith("/ask"):
-            query_text = re.sub(r'^/(query|ask)\s*', '', text).strip()
-            if not query_text:
+        # Slash Command Router
+        if text.startswith("/"):
+            cmd_part = text.split()[0].lower()
+            if cmd_part == "/in":
+                capture_text = text[4:].strip()
+                payload = {"chat_id": chat_id, "type": "text"}
+                from backend.ingestion.queue import add_to_queue
+                add_to_queue(source_type="telegram", raw_payload=payload, content_text=capture_text)
                 await http_client.post(
                     f"https://api.telegram.org/bot{token}/sendMessage",
-                    json={"chat_id": chat_id, "text": "Please provide a query, e.g. /query Syncthing IDs"}
+                    json={"chat_id": chat_id, "text": f"📥 Captured: \"{capture_text[:50]}...\" -> Saved to Captured.md"}
                 )
                 return
-            
-            await http_client.post(
-                f"https://api.telegram.org/bot{token}/sendMessage",
-                json={"chat_id": chat_id, "text": "🔍 Searching your Second Brain..."}
-            )
-            
-            from backend.rag.chat import query_brain
-            result = await query_brain(query_text)
-            answer = result["answer"]
-            
-            await http_client.post(
-                f"https://api.telegram.org/bot{token}/sendMessage",
-                json={"chat_id": chat_id, "text": answer}
-            )
-            return
+            elif cmd_part == "/research":
+                research_text = text[10:].strip()
+                payload = {"chat_id": chat_id, "type": "text", "subject": "research"}
+                from backend.ingestion.queue import add_to_queue
+                add_to_queue(source_type="telegram", raw_payload=payload, content_text=f"/research {research_text}")
+                await http_client.post(
+                    f"https://api.telegram.org/bot{token}/sendMessage",
+                    json={"chat_id": chat_id, "text": f"🧠 Researching: \"{research_text[:50]}...\""}
+                )
+                return
+            elif cmd_part in ["/ask", "/query"]:
+                query_text = text[len(cmd_part):].strip()
+                if not query_text:
+                    await http_client.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": chat_id, "text": "Please provide a query."})
+                    return
+                await handle_qa_query(query_text, chat_id, token, http_client)
+                return
+            elif cmd_part == "/help":
+                help_text = """🧠 Second Brain — Your GTD + PARA Digital Assistant
 
-        if text.startswith("/jira"):
-            jira_text = re.sub(r'^/jira\s*', '', text).strip()
-            if not jira_text:
-                await http_client.post(
-                    f"https://api.telegram.org/bot{token}/sendMessage",
-                    json={"chat_id": chat_id, "text": "❓ Please provide a task description, e.g. `/jira Fix the TF RAID configuration`"}
-                )
+━━━ CAPTURE ━━━
+  /in <text/voice>    Quick capture (or just send a voice note)
+  /research <URL>     Deep research ingestion with concept extraction
+
+━━━ CLARIFY & ORGANISE ━━━
+  /clarify             Process captured items through GTD workflow
+  /done <item>         Mark a task as complete
+  /tickle <date>       Defer an item — hidden until that date
+
+━━━ ENGAGE ━━━
+  /next                All your next actions
+  /next @errands       Filter by context
+  /waiting             View delegated items
+  /project <name>      View project roadmap
+
+━━━ REFLECT ━━━
+  /reflect             Guided review
+
+━━━ Q&A ━━━
+  /ask <question>      Ask anything (or just type naturally)
+
+━━━ SYSTEM ━━━
+  /project <name> add <step>    Add step to project roadmap
+  /undo                         Revert last vault change
+  /help                         This message"""
+                await http_client.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": chat_id, "text": help_text})
                 return
-                
-            await http_client.post(
-                f"https://api.telegram.org/bot{token}/sendMessage",
-                json={"chat_id": chat_id, "text": "⏳ Creating Jira issue..."}
-            )
-            
-            try:
-                # Clean up and split lines to use the first line as summary
-                lines = [line.strip() for line in jira_text.splitlines() if line.strip()]
-                if not lines:
-                    raise ValueError("Task description is empty")
-                
-                summary = lines[0]
-                if len(summary) > 80:
-                    summary = summary[:77] + "..."
-                
-                from backend.utils.jira import create_jira_issue
-                issue_key = await create_jira_issue(
-                    summary=summary,
-                    description=jira_text
-                )
-                
-                await http_client.post(
-                    f"https://api.telegram.org/bot{token}/sendMessage",
-                    json={"chat_id": chat_id, "text": f"✅ Created Jira backlog issue: `{issue_key}`"}
-                )
-            except Exception as e:
-                print(f"Backend [Telegram /jira]: Failed to create Jira issue: {e}")
-                await http_client.post(
-                    f"https://api.telegram.org/bot{token}/sendMessage",
-                    json={"chat_id": chat_id, "text": f"❌ Jira creation failed: {e}"}
-                )
-            return
+            elif cmd_part in ["/clarify", "/next", "/waiting", "/project", "/done", "/tickle", "/reflect", "/undo"]:
+                await http_client.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": chat_id, "text": f"🚧 `{cmd_part}` handler coming in Phase 4!"})
+                return
+            elif cmd_part == "/jira":
+                jira_text = text[5:].strip()
+                if not jira_text:
+                    await http_client.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": chat_id, "text": "❓ Please provide a task description."})
+                    return
+                await http_client.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": chat_id, "text": "⏳ Creating Jira issue..."})
+                try:
+                    lines = [line.strip() for line in jira_text.splitlines() if line.strip()]
+                    if not lines: raise ValueError("Task description is empty")
+                    summary = lines[0]
+                    if len(summary) > 80: summary = summary[:77] + "..."
+                    from backend.utils.jira import create_jira_issue
+                    issue_key = await create_jira_issue(summary=summary, description=jira_text)
+                    await http_client.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": chat_id, "text": f"✅ Created Jira backlog issue: `{issue_key}`"})
+                except Exception as e:
+                    await http_client.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": chat_id, "text": f"❌ Jira creation failed: {e}"})
+                return
 
         if voice or audio:
             voice_obj = voice or audio
@@ -193,115 +243,83 @@ async def process_telegram_message(message: dict, token: str, http_client: httpx
             ext = "ogg" if "ogg" in mime_type else "mp3"
             
             file_bytes = await download_telegram_file(file_id, token, http_client)
-            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            # Append short hash of file_id to prevent collisions when multiple
-            # voice messages arrive within the same second
-            file_hash = hashlib.md5(file_id.encode()).hexdigest()[:8]
-            filename = f"telegram_voice_{timestamp}_{file_hash}.{ext}"
-            file_path = os.path.join(staging_path, filename)
             
-            with open(file_path, "wb") as f:
-                f.write(file_bytes)
-                
-            payload = {
-                "chat_id": chat_id,
-                "type": "voice",
-                "mime_type": mime_type,
-                "filename": filename
-            }
-            add_to_queue(source_type="telegram", raw_payload=payload, file_path=file_path)
-            
+            # Immediately notify user that we received it
             await http_client.post(
                 f"https://api.telegram.org/bot{token}/sendMessage",
-                json={"chat_id": chat_id, "text": "🧠 Voice note queued. Local transcriber will process it shortly."}
+                json={"chat_id": chat_id, "text": "🎤 Transcribing voice note..."}
             )
             
+            from backend.processing.transcriber import transcribe_audio_via_gemini
+            transcript = await transcribe_audio_via_gemini(file_bytes, mime_type)
+            
+            # Intent detection
+            t_lower = transcript.lower().strip()
+            is_question = any(t_lower.startswith(q) for q in ["what", "how", "where", "who", "tell me", "when", "why"]) or "?" in t_lower
+            
+            if is_question:
+                await handle_qa_query(transcript, chat_id, token, http_client)
+            else:
+                payload = {"chat_id": chat_id, "type": "voice_text"}
+                from backend.ingestion.queue import add_to_queue
+                add_to_queue(source_type="telegram", raw_payload=payload, content_text=transcript)
+                await http_client.post(
+                    f"https://api.telegram.org/bot{token}/sendMessage",
+                    json={"chat_id": chat_id, "text": f"📥 Captured: \"{transcript[:50]}...\" -> Saved to Captured.md"}
+                )
+            return
+
         elif photo:
             photo_obj = photo[-1]
             file_id = photo_obj["file_id"]
             file_bytes = await download_telegram_file(file_id, token, http_client)
-            
+            import hashlib
+            from datetime import datetime
             timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
             file_hash = hashlib.md5(file_id.encode()).hexdigest()[:8]
             filename = f"telegram_photo_{timestamp}_{file_hash}.jpg"
             file_path = os.path.join(staging_path, filename)
-            
             with open(file_path, "wb") as f:
                 f.write(file_bytes)
-                
-            payload = {
-                "chat_id": chat_id,
-                "type": "photo",
-                "filename": filename,
-                "caption": text
-            }
+            payload = {"chat_id": chat_id, "type": "photo", "filename": filename, "caption": text}
+            from backend.ingestion.queue import add_to_queue
             add_to_queue(source_type="telegram", raw_payload=payload, content_text=text, file_path=file_path)
-            
-            await http_client.post(
-                f"https://api.telegram.org/bot{token}/sendMessage",
-                json={"chat_id": chat_id, "text": "🧠 Image queued. Optical character reader (OCR) will process it."}
-            )
- 
+            await http_client.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": chat_id, "text": "🧠 Image queued. Optical character reader (OCR) will process it."})
+            return
+
         elif document:
             file_id = document["file_id"]
+            from backend.utils.sanitize import sanitize_filename
             file_name = sanitize_filename(document.get("file_name", "document.dat"))
             file_bytes = await download_telegram_file(file_id, token, http_client)
-            
+            import hashlib
+            from datetime import datetime
             timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
             file_hash = hashlib.md5(file_id.encode()).hexdigest()[:8]
             unique_filename = f"telegram_doc_{timestamp}_{file_hash}_{file_name}"
             file_path = os.path.join(staging_path, unique_filename)
-            
             with open(file_path, "wb") as f:
                 f.write(file_bytes)
-                
             doc_type = "document"
             mime = document.get("mime_type", "")
-            if mime == "application/pdf" or file_name.lower().endswith(".pdf"):
-                doc_type = "pdf"
-            elif "presentation" in mime or file_name.lower().endswith((".pptx", ".ppt")):
-                doc_type = "pptx"
-                
-            payload = {
-                "chat_id": chat_id,
-                "type": doc_type,
-                "filename": file_name,
-                "unique_filename": unique_filename,
-                "caption": text
-            }
+            if mime == "application/pdf" or file_name.lower().endswith(".pdf"): doc_type = "pdf"
+            elif "presentation" in mime or file_name.lower().endswith((".pptx", ".ppt")): doc_type = "pptx"
+            payload = {"chat_id": chat_id, "type": doc_type, "filename": file_name, "unique_filename": unique_filename, "caption": text}
+            from backend.ingestion.queue import add_to_queue
             add_to_queue(source_type="telegram", raw_payload=payload, content_text=text, file_path=file_path)
-            
-            await http_client.post(
-                f"https://api.telegram.org/bot{token}/sendMessage",
-                json={"chat_id": chat_id, "text": f"🧠 Document '{file_name}' queued for processing."}
-            )
+            await http_client.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": chat_id, "text": f"🧠 Document '{file_name}' queued for processing."})
+            return
 
         else:
-            # Handle standard text or links
-            payload = {
-                "chat_id": chat_id,
-                "type": "text"
-            }
-            add_to_queue(source_type="telegram", raw_payload=payload, content_text=text)
-            
-            msg = "🧠 Message received and queued."
-            if len(text) > 3200:
-                msg += "\n💡 Tip: For long web articles or multi-page text, using the Second Brain Chrome Extension (or sending a .txt / .md document attachment) ensures 100% full-document formatting without splitting."
-                
-            await http_client.post(
-                f"https://api.telegram.org/bot{token}/sendMessage",
-                json={"chat_id": chat_id, "text": msg}
-            )
+            # Plain text -> Route to RAG Q&A Engine (per requirements)
+            if text:
+                await handle_qa_query(text, chat_id, token, http_client)
+            return
 
     except Exception as e:
         import traceback
         traceback.print_exc()
-        print(f"Backend [Telegram Ingest]: Error queueing capture: {e}")
-        await http_client.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": chat_id, "text": f"❌ Error queueing your request: {e}"}
-        )
-
+        await http_client.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": chat_id, "text": f"❌ Error queueing your request: {e}"})
 
 async def handle_telegram_callback_query(callback_query: dict, token: str, http_client: httpx.AsyncClient):
     chat_id = callback_query["message"]["chat"]["id"]
@@ -388,7 +406,7 @@ async def handle_telegram_callback_query(callback_query: dict, token: str, http_
             )
 
 
-async def poll_telegram():
+async def poll_telegram_unified():
     token = TELEGRAM_BOT_TOKEN
     if not token:
         return
@@ -459,137 +477,3 @@ async def poll_telegram():
             print(f"Backend [Telegram Watcher]: Error polling Telegram: {type(e).__name__} - {e}")
 
 
-async def process_telegram_message_qa(message: dict, token: str, http_client: httpx.AsyncClient):
-    chat_id = message["chat"]["id"]
-    text = message.get("text") or message.get("caption") or ""
-    
-    voice = message.get("voice")
-    audio = message.get("audio")
-    
-    staging_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "staging")
-    os.makedirs(staging_path, exist_ok=True)
-    
-    temp_file_path = None
-    
-    try:
-        if voice or audio:
-            voice_obj = voice or audio
-            file_id = voice_obj["file_id"]
-            mime_type = voice_obj.get("mime_type", "audio/ogg")
-            ext = "ogg" if "ogg" in mime_type else "mp3"
-            
-            await http_client.post(
-                f"https://api.telegram.org/bot{token}/sendMessage",
-                json={"chat_id": chat_id, "text": "🎤 Transcribing your voice query..."}
-            )
-            
-            # Download file
-            file_bytes = await download_telegram_file(file_id, token, http_client)
-            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            filename = f"telegram_qa_voice_{timestamp}.{ext}"
-            temp_file_path = os.path.join(staging_path, filename)
-            
-            with open(temp_file_path, "wb") as f:
-                f.write(file_bytes)
-                
-            # Transcribe audio file using local transcriber
-            from backend.processing.transcriber import transcribe_audio_local
-            text = await transcribe_audio_local(temp_file_path)
-            
-            # Notify the user what we transcribed
-            await http_client.post(
-                f"https://api.telegram.org/bot{token}/sendMessage",
-                json={"chat_id": chat_id, "text": f"✍️ Transcribed: \"{text}\""}
-            )
-            
-        if not text.strip():
-            await http_client.post(
-                f"https://api.telegram.org/bot{token}/sendMessage",
-                json={"chat_id": chat_id, "text": "❓ Please send a text or voice question to query your Second Brain."}
-            )
-            return
-            
-        await http_client.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": chat_id, "text": "🔍 Searching your Second Brain..."}
-        )
-        
-        from backend.rag.chat import query_brain
-        result = await query_brain(text.strip())
-        answer = result["answer"]
-        
-        await send_telegram_message_safe(http_client, token, chat_id, answer)
-    except Exception as e:
-        print(f"Backend [Telegram Q&A]: Error answering query: {e}")
-        await http_client.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": chat_id, "text": f"❌ Error retrieving answer: {e}"}
-        )
-    finally:
-        # Clean up temporary staged audio file immediately
-        if temp_file_path and os.path.exists(temp_file_path):
-            try:
-                os.remove(temp_file_path)
-            except Exception as cleanup_e:
-                print(f"Backend [Telegram Q&A]: Failed to clean up staging file {temp_file_path}: {cleanup_e}")
-
-
-async def poll_telegram_qa():
-    token = TELEGRAM_QA_BOT_TOKEN
-    if not token:
-        return
-
-    allowed_chat_ids = TELEGRAM_ALLOWED_CHAT_IDS
-    offset_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".telegram_qa_offset")
-    offset = 0
-    if os.path.exists(offset_file):
-        try:
-            with open(offset_file, "r") as f:
-                offset = int(f.read().strip())
-        except Exception:
-            pass
-
-    async with httpx.AsyncClient() as client:
-        url = f"https://api.telegram.org/bot{token}/getUpdates"
-        params = {"timeout": 5}
-        if offset > 0:
-            params["offset"] = offset
-
-        try:
-            response = await client.get(url, params=params, timeout=10.0)
-            if response.status_code != 200:
-                print(f"Backend [Telegram Q&A Watcher]: Error getting updates: {response.status_code}")
-                return
-
-            data = response.json()
-            if not data.get("ok"):
-                print(f"Backend [Telegram Q&A Watcher]: API returned error: {data}")
-                return
-
-            updates = data.get("result", [])
-            if updates:
-                print(f"Backend [Telegram Q&A Watcher]: Fetched {len(updates)} update(s) from Telegram Q&A.")
-            for update in updates:
-                new_offset = update["update_id"] + 1
-                if new_offset > offset:
-                    offset = new_offset
-                    with open(offset_file, "w") as f:
-                        f.write(str(offset))
-
-                message = update.get("message") or update.get("channel_post")
-                if not message:
-                    continue
-
-                chat_id = message["chat"]["id"]
-                if allowed_chat_ids and chat_id not in allowed_chat_ids:
-                    print(f"Backend [Telegram Q&A Watcher]: Ignored message from unauthorized chat: {chat_id}")
-                    await client.post(
-                        f"https://api.telegram.org/bot{token}/sendMessage",
-                        json={"chat_id": chat_id, "text": f"Unauthorized chat ID ({chat_id}). Please add it to TELEGRAM_ALLOWED_CHAT_IDS in .env."}
-                    )
-                    continue
-
-                await process_telegram_message_qa(message, token, client)
-
-        except Exception as e:
-            print(f"Backend [Telegram Q&A Watcher]: Error polling Telegram Q&A: {type(e).__name__} - {e}")

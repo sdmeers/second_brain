@@ -141,8 +141,7 @@ def ensure_project_note_exists(project_name: str, category: str = "Personal", ou
         
     if not os.path.exists(found_path):
         os.makedirs(os.path.dirname(found_path), exist_ok=True)
-        today_str = datetime.now().strftime("%Y-%m-%d")
-        outcome_str = outcome if outcome else f"{proj_clean} project goals and desired outcome"
+        proj_tag = proj_clean.strip().replace(" ", "_")
         template = f"""---
 title: "{proj_clean}"
 type: project
@@ -159,11 +158,16 @@ status: active
 ## Project Steps
 
 ## Active Actions
-> All actions tagged `#project/{proj_clean}` across task lists.
-> View via Telegram: `/project {proj_clean}` or search `#project/{proj_clean}` in Obsidian.
+> View via Telegram: `/project {proj_clean}` or search `#project/{proj_tag}` in Obsidian.
+
+```dataview
+TASK
+FROM "01_Tasks"
+WHERE contains(tags, "#project/{proj_tag}") AND !completed
+```
 
 ## Reference Material
-> Notes and resources tagged with `#project/{proj_clean}` across the vault.
+> Notes and resources tagged with `#project/{proj_tag}` across the vault.
 """
         with open(found_path, "w", encoding="utf-8") as f:
             f.write(template)

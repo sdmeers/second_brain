@@ -234,8 +234,12 @@ async def process_telegram_message(message: dict, token: str, http_client):
                 from backend.ingestion.handlers.clarify import handle_clarify_command
                 await handle_clarify_command(chat_id, token, http_client)
                 return
-            elif cmd_part in ["/next", "/waiting", "/project", "/done", "/tickle", "/reflect", "/undo"]:
-                await http_client.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": chat_id, "text": f"🚧 `{cmd_part}` handler coming in Phase 4!"})
+            elif cmd_part in ["/next", "/waiting", "/project", "/done", "/tickle", "/reflect"]:
+                from backend.ingestion.handlers.engage import handle_engage_commands
+                await handle_engage_commands(chat_id, text, token, http_client)
+                return
+            elif cmd_part == "/undo":
+                await http_client.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": chat_id, "text": f"🚧 `{cmd_part}` handler coming later!"})
                 return
             elif cmd_part == "/jira":
                 jira_text = text[5:].strip()

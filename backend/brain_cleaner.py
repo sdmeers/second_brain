@@ -583,167 +583,133 @@ async def cleanup_old_audio():
 
 async def generate_daily_digest():
     print("🌅 Generating daily digest...")
+    today_dt = datetime.now()
+    today_str = today_dt.strftime("%Y-%m-%d")
+    is_weekend = today_dt.weekday() >= 5
     
-    # --- Part 1: Tasks Summary ---
-    tasks_file = os.path.join(VAULT_PATH, "01_Tasks", "Next_Actions.md")
-    overdue_tasks = []
-    active_tasks = []
-    fourteen_days_ago = datetime.now() - timedelta(days=14)
-    if os.path.exists(tasks_file):
-        with open(tasks_file, "r", encoding="utf-8") as f:
+    # --- Part 1: GTD Quick Review ---
+    captured_file = os.path.join(VAULT_PATH, "01_Tasks", "Captured.md")
+    next_file = os.path.join(VAULT_PATH, "01_Tasks", "Next_Actions.md")
+    waiting_file = os.path.join(VAULT_PATH, "01_Tasks", "Waiting_For.md")
+    
+    unclarified_count = 0
+    if os.path.exists(captured_file):
+        with open(captured_file, "r", encoding="utf-8") as f:
+            unclarified_count = sum(1 for line in f if line.strip().startswith("- "))
+            
+    active_actions_count = 0
+    tickler_surfaced = []
+    active_projects = set()
+    if os.path.exists(next_file):
+        with open(next_file, "r", encoding="utf-8") as f:
             for line in f:
-                if "- [ ]" in line:
-                    m = re.search(r'\(Captured from .*? on (\d{4}-\d{2}-\d{2})\)', line)
-                    if m:
-                        try:
-                            cap_date = datetime.strptime(m.group(1), "%Y-%m-%d")
-                            if cap_date < fourteen_days_ago:
-                                overdue_tasks.append(line.strip())
-                            else:
-                                active_tasks.append(line.strip())
-                        except ValueError:
-                            active_tasks.append(line.strip())
-                    else:
-                        active_tasks.append(line.strip())
+                if not line.strip().startswith("- [ ]"): continue
+                
+                m_tick = re.search(r'🔔 (\d{4}-\d{2}-\d{2})', line)
+                if m_tick:
+                    tick_date = m_tick.group(1)
+                    if tick_date > today_str: continue # hidden
+                    elif tick_date == today_str: tickler_surfaced.append(line.strip())
+                
+                active_actions_count += 1
+                
+                m_proj = re.search(r'#project/([a-zA-Z0-9_\-]+)', line)
+                if m_proj: active_projects.add(m_proj.group(1))
 
-    # --- Part 2 & 3: Recent Activity and Recent Ideas (Last 7 Days) ---
-    seven_days_ago = datetime.now() - timedelta(days=7)
-    recent_activity = {}
-    recent_activity_notes = []
-    recent_ideas = []
+    stale_waitings = []
+    if os.path.exists(waiting_file):
+        with open(waiting_file, "r", encoding="utf-8") as f:
+            for line in f:
+                if not line.strip().startswith("- [ ]"): continue
+                
+                m_tick = re.search(r'🔔 (\d{4}-\d{2}-\d{2})', line)
+                if m_tick and m_tick.group(1) > today_str: continue
+                
+                # Check stale (naive age check if captured date exists)
+                m_cap = re.search(r'\(Captured .*? on (\d{4}-\d{2}-\d{2})\)', line)
+                if m_cap:
+                    cap_date = datetime.strptime(m_cap.group(1), "%Y-%m-%d")
+                    if (today_dt - cap_date).days > 5:
+                        stale_waitings.append(line.strip())
+                
+                m_proj = re.search(r'#project/([a-zA-Z0-9_\-]+)', line)
+                if m_proj: active_projects.add(m_proj.group(1))
 
-    for root, dirs, files in os.walk(VAULT_PATH):
-        rel_root = os.path.relpath(root, VAULT_PATH).replace("\\", "/")
-        if rel_root.startswith("00_System") or rel_root.startswith("01_Tasks") or rel_root.startswith("."):
-            continue
-
+    orphaned_projects = []
+    proj_dir = os.path.join(VAULT_PATH, "02_Projects")
+    for root, dirs, files in os.walk(proj_dir):
+        if is_weekend and "Professional" in root: continue
         for f in files:
-            if f.endswith(".md") and f not in ["_INDEX.md", "Librarian_Activity.md"]:
+            if not f.endswith(".md"): continue
+            proj_name = f.replace(".md", "")
+            if proj_name.replace(" ", "_") not in active_projects:
+                orphaned_projects.append(proj_name)
+    
+    # --- Part 2: Recent Brain Activity (Last 24h) ---
+    yesterday = today_dt - timedelta(days=1)
+    recent_activity = []
+    for root, dirs, files in os.walk(VAULT_PATH):
+        if is_weekend and "Professional" in root: continue
+        rel_root = os.path.relpath(root, VAULT_PATH).replace("\\", "/")
+        if not (rel_root.startswith("04_Resources") or rel_root.startswith("03_Areas") or rel_root.startswith("02_Projects")):
+            continue
+            
+        for f in files:
+            if f.endswith(".md"):
                 p = os.path.join(root, f)
                 try:
                     mtime = datetime.fromtimestamp(os.path.getmtime(p))
                     ctime = datetime.fromtimestamp(os.path.getctime(p))
-                    if mtime > seven_days_ago or ctime > seven_days_ago:
-                        # Part 2
-                        if rel_root not in recent_activity:
-                            recent_activity[rel_root] = []
-                        recent_activity[rel_root].append(f)
-                        
-                        with open(p, "r", encoding="utf-8") as file_obj:
-                            content = file_obj.read()
-                            recent_activity_notes.append({"name": f, "content": content})
+                    if mtime > yesterday or ctime > yesterday:
+                        recent_activity.append(f"{rel_root}/{f}")
+                except Exception: pass
 
-                        # Part 3
-                        is_idea = False
-                        if "02_Projects/Ideas" in rel_root:
-                            is_idea = True
-                        elif "#type/idea" in content:
-                            is_idea = True
-                            
-                        if is_idea:
-                            recent_ideas.append(f)
-                except Exception:
-                    pass
-
-    # Assemble Digest (Parts 1, 2, 3 only)
-    digest_content = f"# Daily Digest - {datetime.now().strftime('%Y-%m-%d')}\n\n"
+    # Assemble Digest
+    digest_content = f"# Daily Digest - {today_str}\n\n"
     
-    digest_content += "## Part 1: Tasks Summary\n"
-    if overdue_tasks:
-        digest_content += "### Overdue/Stagnant Tasks (>14 days)\n" + "\n".join(overdue_tasks) + "\n\n"
-    if active_tasks:
-        digest_content += f"### Active Backlog Tasks ({len(active_tasks)} tasks)\n" + "\n".join(active_tasks[:10])
-        if len(active_tasks) > 10:
-             digest_content += f"\n... and {len(active_tasks) - 10} more.\n"
-    digest_content += "\n\n"
+    digest_content += "## Part 1: GTD Quick Review\n"
+    digest_content += f"- **Unclarified items**: {unclarified_count} awaiting /clarify\n"
+    digest_content += f"- **Active Next Actions**: {active_actions_count}\n"
     
-    digest_content += "## Part 2: Recent Activity (Last 7 Days)\n"
+    if stale_waitings:
+        digest_content += "### Stale Waiting For (>5 days)\n" + "\n".join(stale_waitings) + "\n\n"
+    if tickler_surfaced:
+        digest_content += "### Tickler items surfacing today\n" + "\n".join(tickler_surfaced) + "\n\n"
+    if orphaned_projects:
+        digest_content += "### Orphaned Projects (0 active actions)\n" + "\n".join([f"- {p}" for p in orphaned_projects[:10]]) + "\n\n"
+        
+    digest_content += "## Part 2: Recent Brain Activity (Last 24h)\n"
     if recent_activity:
-        for folder, files in recent_activity.items():
-            digest_content += f"### {folder}\n"
-            for f in files:
-                digest_content += f"- {f}\n"
+        for a in recent_activity:
+            digest_content += f"- {a}\n"
     else:
-        digest_content += "No recent activity recorded in the last 7 days.\n"
-    digest_content += "\n"
-    
-    digest_content += "## Part 3: Recent Ideas\n"
-    if recent_ideas:
-        for idea in recent_ideas:
-            digest_content += f"- {idea}\n"
-    else:
-        digest_content += "No recent ideas captured.\n"
-    digest_content += "\n"
+        digest_content += "No recent activity.\n"
 
-    # --- Part 4: AI Synthesis & Suggestions (Commented out - preserved for future adaptation) ---
-    # vss_matches = []
-    # try:
-    #     from backend.rag.embeddings import get_embeddings_batch
-    #     from backend.rag.vectorstore import search_similar_chunks
-    #     texts = [note['content'][:2000] for note in recent_activity_notes if note['content'].strip()]
-    #     if texts:
-    #         embs = await get_embeddings_batch(texts)
-    #         for emb in embs:
-    #             if emb:
-    #                 results = await search_similar_chunks(emb, top_k=5)
-    #                 for r in results:
-    #                     path = r['file_path']
-    #                     if "04_Resources/" in path.replace("\\", "/"):
-    #                         vss_matches.append(path)
-    # except Exception as e:
-    #     print(f"VSS error: {e}")
-    #
-    # prompt = f"""Analyze recent activity and ideas..."""
-    # try:
-    #     resp = call_gemini_with_retry(GEMINI_MODEL, prompt)
-    #     ai_synthesis = resp.text.strip()
-    #     digest_content += "## Part 4: AI Synthesis & Suggestions\n" + ai_synthesis + "\n"
-    # except Exception as e:
-    #     pass
-
-    date_str = datetime.now().strftime("%Y-%m-%d")
-    digest_path = os.path.join(VAULT_PATH, "00_System", "Internal", "Digests", f"{date_str}.md")
+    # Save Markdown files
+    digest_path = os.path.join(VAULT_PATH, "00_System", "Internal", "Digests", f"{today_str}.md")
     os.makedirs(os.path.dirname(digest_path), exist_ok=True)
     atomic_write(digest_path, digest_content)
     
     daily_digest_path = os.path.join(VAULT_PATH, "00_System", "Daily_Digest.md")
     atomic_write(daily_digest_path, digest_content)
+    
+    # Send Telegram Summary
+    from backend.config import TELEGRAM_BOT_TOKEN, TELEGRAM_ALLOWED_CHAT_IDS
+    if TELEGRAM_BOT_TOKEN and TELEGRAM_ALLOWED_CHAT_IDS:
+        chat_id = TELEGRAM_ALLOWED_CHAT_IDS.split(",")[0].strip()
+        summary = f"🌅 Daily Digest\n\n- Unclarified: {unclarified_count}\n- Next Actions: {active_actions_count}\n- Stale Waitings: {len(stale_waitings)}\n- Ticklers Surfaced: {len(tickler_surfaced)}\n- Orphaned Projects: {len(orphaned_projects)}\n- Recent Notes: {len(recent_activity)}"
+        try:
+            async with httpx.AsyncClient() as client:
+                await client.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", json={"chat_id": chat_id, "text": summary})
+        except Exception as e:
+            print(f"Failed to send digest via Telegram: {e}")
 
     return digest_content
-
-
-async def generate_sitrep_summary() -> str:
-    """Generates a real-time SITREP digest and formats a 3-part summary for Telegram."""
-    digest_content = await generate_daily_digest()
-    
-    prompt = """Create a concise, punchy Telegram SITREP summary of this digest following EXACTLY this plain text structure (without markdown * or ** asterisks, use standard hyphens - for bullets):
-
-📊 SITREP / Summary:
-
-Part 1: Tasks
-[Concise summary of active and stagnant/overdue tasks]
-
-Part 2: Recent Activity
-[Summary list of folders and notes worked on in the last 7 days]
-
-Part 3: Recent Ideas
-[List of recently captured ideas]
-
-Here is the digest content to summarize:
-""" + digest_content
-
-    try:
-        resp = call_gemini_with_retry(GEMINI_MODEL, prompt)
-        summary = resp.text.strip().replace("*", "")
-        return summary
-    except Exception as e:
-        return f"📊 SITREP / Summary:\n\n{digest_content}"
 
 async def rolling_retention():
     print("🧹 Rolling retention for old digests...")
     digests_dir = os.path.join(VAULT_PATH, "00_System", "Internal", "Digests")
-    if not os.path.exists(digests_dir):
-        return
+    if not os.path.exists(digests_dir): return
     cutoff = datetime.now() - timedelta(days=14)
     for f in os.listdir(digests_dir):
         if f.endswith(".md"):
@@ -755,20 +721,15 @@ async def main():
     print("🚀 Starting Phase 11 Brain Cleaner Tasks...")
     await clean_staging_and_inbox()
     await run_sqlite_checkpoint()
-    try:
-        await index_vault()
-    except Exception as e:
-        print(f"Failed to index vault: {e}")
-        
+    try: await index_vault()
+    except Exception as e: print(f"Failed to index vault: {e}")
     await auto_update_index()
     await cleanup_old_audio()
     await generate_daily_digest()
     await rolling_retention()
-    
-    # Run sync vault maintenance
     run_brain_cleaner()
-    
     print("✅ All Brain Cleaner Tasks Completed.")
 
 if __name__ == "__main__":
     asyncio.run(main())
+

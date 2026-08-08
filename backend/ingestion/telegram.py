@@ -155,6 +155,10 @@ async def process_telegram_message(message: dict, token: str, http_client):
     os.makedirs(staging_path, exist_ok=True)
 
     try:
+        from backend.ingestion.handlers.clarify import handle_clarify_text_input
+        if text and not text.startswith("/") and await handle_clarify_text_input(chat_id, text, token, http_client):
+            return
+
         # Slash Command Router
         if text.startswith("/"):
             cmd_part = text.split()[0].lower()

@@ -50,7 +50,6 @@ async def process_next_clarify_item(chat_id: int, token: str, http_client: httpx
         return
         
     if session["current_index"] >= session["batch_end"]:
-        # Ask to continue
         remaining = len(session["items"]) - session["current_index"]
         if remaining > 0:
             reply_markup = {
@@ -78,7 +77,7 @@ async def process_next_clarify_item(chat_id: int, token: str, http_client: httpx
     item_line = session["items"][session["current_index"]]
     session["item_data"] = {"raw_line": item_line}
     
-    # 1. AI Smart Default Analysis
+    # AI Smart Default Analysis
     class SmartDefaultResult(BaseModel):
         context: str = Field(description="Context tag e.g. @home, @computer, @errands, @phone, @garage, @office, @WFH")
         project: str = Field(description="Name of project if applicable e.g. Garage, Second Brain, TF RAID")
@@ -119,7 +118,8 @@ async def process_next_clarify_item(chat_id: int, token: str, http_client: httpx
         ]
     }
 
-    clean_display = re.sub(r'\(Source:.*?\)', '', item_line).strip("- \n")
+    clean_display = re.sub(r'\(Source:.*?\)', '', item_line)
+    clean_display = re.sub(r'\(Captured on.*?\)', '', clean_display).strip("- \n")
     await http_client.post(
         f"https://api.telegram.org/bot{token}/sendMessage",
         json={
@@ -192,7 +192,8 @@ def append_to_project_roadmap(project_name: str, step_text: str):
     with open(note_path, "r", encoding="utf-8") as f:
         content = f.read()
         
-    clean_step = re.sub(r'\(Captured on.*?\)', '', step_text).strip("- \n")
+    clean_step = re.sub(r'\(Captured on.*?\)', '', step_text)
+    clean_step = re.sub(r'\(Source:.*?\)', '', clean_step).strip("- \n")
     if "## Project Steps" in content:
         content = content.replace("## Project Steps", f"## Project Steps\n- [ ] {clean_step}")
     else:
@@ -200,6 +201,32 @@ def append_to_project_roadmap(project_name: str, step_text: str):
         
     with open(note_path, "w", encoding="utf-8") as f:
         f.write(content)
+
+def get_category_project_buttons(category: str) -> list:
+    """Gets top-level project buttons for a given category (Personal or Professional)."""
+    proj_dir = os.path.join(OBSIDIAN_VAULT_PATH, "02_Projects", category)
+    projects = []
+    if os.path.exists(proj_dir):
+        for entry in sorted(os.listdir(proj_dir)):
+            if entry.startswith(".") or entry.startswith("_") or entry in ["archive", "docs", "Notes", "Meetings", "Outputs"]:
+                continue
+            entry_path = os.path.join(proj_dir, entry)
+            if os.path.isdir(entry_path) or entry.endswith(".md"):
+                p_name = entry.replace(".md", "")
+                projects.append(p_name)
+                
+    keyboard = []
+    row = []
+    for p in projects:
+        p_short = p[:25]
+        row.append({"text": f"📁 {p_short}", "callback_data": f"clarify:roadmap_proj:{p_short}"})
+        if len(row) == 2:
+            keyboard.append(row)
+            row = []
+    if row:
+        keyboard.append(row)
+        
+    return keyboard
 
 async def archive_and_remove_captured(item_line: str):
     """Archives source file from Inbox and removes item from Captured.md."""
@@ -261,7 +288,8 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
         ctx = item_data.get("ai_context", "@computer")
         proj = item_data.get("ai_project")
         
-        clean_text = re.sub(r'\(Captured on.*?\)', '', item_line).strip("- \n")
+        clean_text = re.sub(r'\(Captured on.*?\)', '', item_line)
+        clean_text = re.sub(r'\(Source:.*?\)', '', clean_text).strip("- \n")
         task_str = f"- [ ] {clean_text} {ctx}"
         if proj:
             task_str += f" #project/{proj}"
@@ -281,13 +309,15 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
         return
 
     if action == "customise":
-        # Step 1: Actionable?
+        # Full decision tree
+        clean_prompt = re.sub(r'\(.*?\)', '', item_line).strip("- \n")
         reply_markup = {
             "inline_keyboard": [
                 [{"text": "⚡ Next Action", "callback_data": "clarify:action_next"},
-                 {"text": "📌 Project Step Roadmap", "callback_data": "clarify:action_roadmap"}],
-                [{"text": "💡 Someday/Maybe", "callback_data": "clarify:action_someday"},
-                 {"text": "📚 Reference", "callback_data": "clarify:action_ref"},
+                 {"text": "📌 Project Roadmap Step", "callback_data": "clarify:action_roadmap_cat"}],
+                [{"text": "⏳ Waiting For", "callback_data": "clarify:action_waiting"},
+                 {"text": "💡 Someday/Maybe", "callback_data": "clarify:action_someday"}],
+                [{"text": "📚 Reference Note", "callback_data": "clarify:action_ref"},
                  {"text": "🗑️ Trash", "callback_data": "clarify:action_trash"}]
             ]
         }
@@ -296,21 +326,19 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
             json={
                 "chat_id": chat_id,
                 "message_id": message_id,
-                "text": f"🤔 <b>How would you like to clarify this item?</b>\n{item_line}",
+                "text": f"🤔 <b>How would you like to classify this item?</b>\n\n{clean_prompt}",
                 "parse_mode": "HTML",
                 "reply_markup": reply_markup
             }
         )
         return
 
-    if action == "action_roadmap":
-        # Ask which project
+    if action == "action_roadmap_cat":
+        # Select category first (Personal vs Professional)
         reply_markup = {
             "inline_keyboard": [
-                [{"text": "Garage", "callback_data": "clarify:roadmap_proj:Garage"},
-                 {"text": "Second Brain", "callback_data": "clarify:roadmap_proj:Second Brain"}],
-                [{"text": "TF RAID", "callback_data": "clarify:roadmap_proj:TF RAID"},
-                 {"text": "D&D", "callback_data": "clarify:roadmap_proj:D&D"}]
+                [{"text": "🏠 Personal Projects", "callback_data": "clarify:cat_proj:Personal"},
+                 {"text": "💼 Professional Projects", "callback_data": "clarify:cat_proj:Professional"}]
             ]
         }
         await http_client.post(
@@ -318,7 +346,23 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
             json={
                 "chat_id": chat_id,
                 "message_id": message_id,
-                "text": "📁 <b>Select Project Roadmap:</b>",
+                "text": "📂 <b>Select Project Category:</b>",
+                "parse_mode": "HTML",
+                "reply_markup": reply_markup
+            }
+        )
+        return
+
+    if action.startswith("cat_proj"):
+        category = data.split(":")[2]
+        keyboard = get_category_project_buttons(category)
+        reply_markup = {"inline_keyboard": keyboard}
+        await http_client.post(
+            f"https://api.telegram.org/bot{token}/editMessageText",
+            json={
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": f"📁 <b>Select {category} Project:</b>",
                 "parse_mode": "HTML",
                 "reply_markup": reply_markup
             }
@@ -330,16 +374,33 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
         append_to_project_roadmap(proj_name, item_line)
         await archive_and_remove_captured(item_line)
         
+        clean_text = re.sub(r'\(Captured on.*?\)', '', item_line)
+        clean_text = re.sub(r'\(Source:.*?\)', '', clean_text).strip("- \n")
         await http_client.post(
             f"https://api.telegram.org/bot{token}/editMessageText",
-            json={"chat_id": chat_id, "message_id": message_id, "text": f"📌 Appended step to <b>{proj_name}</b> project roadmap!", "parse_mode": "HTML"}
+            json={"chat_id": chat_id, "message_id": message_id, "text": f"📌 Appended roadmap step to <b>{proj_name}</b>:\n{clean_text}", "parse_mode": "HTML"}
+        )
+        session["current_index"] += 1
+        await process_next_clarify_item(chat_id, token, http_client)
+        return
+
+    if action == "action_waiting":
+        clean_text = re.sub(r'\(Captured on.*?\)', '', item_line)
+        clean_text = re.sub(r'\(Source:.*?\)', '', clean_text).strip("- \n")
+        waiting_md = os.path.join(TASKS_PATH, "Waiting_For.md")
+        with open(waiting_md, "a", encoding="utf-8") as f:
+            f.write(f"- [ ] {clean_text} #waiting\n")
+        await archive_and_remove_captured(item_line)
+        await http_client.post(
+            f"https://api.telegram.org/bot{token}/editMessageText",
+            json={"chat_id": chat_id, "message_id": message_id, "text": f"⏳ Added to Waiting For:\n{clean_text}"}
         )
         session["current_index"] += 1
         await process_next_clarify_item(chat_id, token, http_client)
         return
 
     if action == "action_next":
-        # Ask context
+        # Select context
         reply_markup = {
             "inline_keyboard": [
                 [{"text": "@home", "callback_data": "clarify:ctx:@home"},
@@ -364,7 +425,8 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
 
     if action.startswith("ctx"):
         ctx = data.split(":")[2]
-        clean_text = re.sub(r'\(Captured on.*?\)', '', item_line).strip("- \n")
+        clean_text = re.sub(r'\(Captured on.*?\)', '', item_line)
+        clean_text = re.sub(r'\(Source:.*?\)', '', clean_text).strip("- \n")
         task_str = f"- [ ] {clean_text} {ctx}"
         
         tasks_md = os.path.join(TASKS_PATH, "Next_Actions.md")
@@ -381,7 +443,8 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
         return
 
     if action == "action_someday":
-        clean_text = re.sub(r'\(Captured on.*?\)', '', item_line).strip("- \n")
+        clean_text = re.sub(r'\(Captured on.*?\)', '', item_line)
+        clean_text = re.sub(r'\(Source:.*?\)', '', clean_text).strip("- \n")
         someday_md = os.path.join(TASKS_PATH, "Someday_Maybe.md")
         with open(someday_md, "a", encoding="utf-8") as f:
             f.write(f"- [ ] {clean_text}\n")
@@ -389,6 +452,18 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
         await http_client.post(
             f"https://api.telegram.org/bot{token}/editMessageText",
             json={"chat_id": chat_id, "message_id": message_id, "text": f"💡 Saved to Someday/Maybe:\n{clean_text}"}
+        )
+        session["current_index"] += 1
+        await process_next_clarify_item(chat_id, token, http_client)
+        return
+
+    if action == "action_ref":
+        clean_text = re.sub(r'\(Captured on.*?\)', '', item_line)
+        clean_text = re.sub(r'\(Source:.*?\)', '', clean_text).strip("- \n")
+        await archive_and_remove_captured(item_line)
+        await http_client.post(
+            f"https://api.telegram.org/bot{token}/editMessageText",
+            json={"chat_id": chat_id, "message_id": message_id, "text": f"📚 Routed item to Reference / Research Brain:\n{clean_text}"}
         )
         session["current_index"] += 1
         await process_next_clarify_item(chat_id, token, http_client)

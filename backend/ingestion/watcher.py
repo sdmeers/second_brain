@@ -107,6 +107,7 @@ async def scan_and_process_inbox():
         f for f in os.listdir(INBOX_PATH) 
         if os.path.isfile(os.path.join(INBOX_PATH, f)) 
         and f not in ["Inbox.md", "Completed.md", "Failed.md"]
+        and not any(f.endswith(ext) for ext in ["_capture.md", "_voice.md", "_voice.ogg", "_voice.mp3"])
     ]
     
     if not files:

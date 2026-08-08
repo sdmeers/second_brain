@@ -223,14 +223,15 @@ async def process_telegram_message(message: dict, token: str, http_client):
   /waiting             View delegated items
   /project <name>      View project roadmap
 
-━━━ REFLECT ━━━
+━━━ REFLECT & STATUS ━━━
+  /status              View GTD list counts & active projects
+  /sitrep              Alias for /status
   /reflect             Guided review
 
 ━━━ Q&A ━━━
   /ask <question>      Ask anything (or just type naturally)
 
 ━━━ SYSTEM ━━━
-  /status (/sitrep)             System status (list counts & active projects)
   /project <name> add <step>    Add step to project roadmap
   /undo                         Revert last vault change
   /help                         This message"""

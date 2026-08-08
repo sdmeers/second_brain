@@ -284,6 +284,8 @@ async def process_telegram_message(message: dict, token: str, http_client):
             # Intent detection
             t_lower = transcript.lower().strip()
             is_question = any(t_lower.startswith(q) for q in ["what", "how", "where", "who", "tell me", "when", "why"]) or "?" in t_lower
+            if t_lower.startswith("capture") or t_lower.startswith("in ") or t_lower.startswith("/capture") or t_lower.startswith("/in"):
+                is_question = False
             
             if is_question:
                 await handle_qa_query(transcript, chat_id, token, http_client)

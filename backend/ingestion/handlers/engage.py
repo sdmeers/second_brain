@@ -119,8 +119,44 @@ async def handle_project_command(chat_id: int, text: str, token: str, http_clien
         if found_path: break
         
     if not found_path:
-        await send_msg(chat_id, token, http_client, f"❌ Project '{proj_query}' not found.")
-        return
+        # Check if project folder exists or auto-create project note in Personal
+        proj_clean = proj_query.strip().title()
+        personal_dir = os.path.join(OBSIDIAN_VAULT_PATH, "02_Projects", "Personal")
+        target_folder = os.path.join(personal_dir, proj_clean)
+        
+        if os.path.exists(target_folder) and os.path.isdir(target_folder):
+            found_path = os.path.join(target_folder, f"{proj_clean}.md")
+        else:
+            found_path = os.path.join(personal_dir, f"{proj_clean}.md")
+            
+        if not os.path.exists(found_path):
+            os.makedirs(os.path.dirname(found_path), exist_ok=True)
+            today_str = datetime.now().strftime("%Y-%m-%d")
+            template = f"""---
+title: "{proj_clean}"
+type: project
+category: Personal
+outcome: "{proj_clean} project goals and desired outcome"
+date_created: "{today_str}"
+status: active
+---
+# {proj_clean}
+
+## Desired Outcome
+{proj_clean} project goals and desired outcome.
+
+## Project Steps
+
+## Active Actions
+> All actions tagged `#project/{proj_clean}` across task lists.
+> View via Telegram: `/project {proj_clean}` or search `#project/{proj_clean}` in Obsidian.
+
+## Reference Material
+> Notes and resources tagged with `#project/{proj_clean}` across the vault.
+"""
+            with open(found_path, "w", encoding="utf-8") as f:
+                f.write(template)
+            print(f"Auto-created project master note: {found_path}")
         
     if is_add:
         with open(found_path, "r", encoding="utf-8") as f:

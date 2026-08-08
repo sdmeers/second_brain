@@ -1,5 +1,6 @@
 import os
 import re
+import hashlib
 from datetime import datetime
 import httpx
 from backend.config import (
@@ -193,7 +194,10 @@ async def process_telegram_message(message: dict, token: str, http_client: httpx
             
             file_bytes = await download_telegram_file(file_id, token, http_client)
             timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            filename = f"telegram_voice_{timestamp}.{ext}"
+            # Append short hash of file_id to prevent collisions when multiple
+            # voice messages arrive within the same second
+            file_hash = hashlib.md5(file_id.encode()).hexdigest()[:8]
+            filename = f"telegram_voice_{timestamp}_{file_hash}.{ext}"
             file_path = os.path.join(staging_path, filename)
             
             with open(file_path, "wb") as f:
@@ -218,7 +222,8 @@ async def process_telegram_message(message: dict, token: str, http_client: httpx
             file_bytes = await download_telegram_file(file_id, token, http_client)
             
             timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            filename = f"telegram_photo_{timestamp}.jpg"
+            file_hash = hashlib.md5(file_id.encode()).hexdigest()[:8]
+            filename = f"telegram_photo_{timestamp}_{file_hash}.jpg"
             file_path = os.path.join(staging_path, filename)
             
             with open(file_path, "wb") as f:
@@ -243,7 +248,8 @@ async def process_telegram_message(message: dict, token: str, http_client: httpx
             file_bytes = await download_telegram_file(file_id, token, http_client)
             
             timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            unique_filename = f"telegram_doc_{timestamp}_{file_name}"
+            file_hash = hashlib.md5(file_id.encode()).hexdigest()[:8]
+            unique_filename = f"telegram_doc_{timestamp}_{file_hash}_{file_name}"
             file_path = os.path.join(staging_path, unique_filename)
             
             with open(file_path, "wb") as f:

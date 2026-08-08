@@ -167,6 +167,17 @@ async def process_queue_worker():
     update_item_status(item_id, "processing")
     
     try:
+        # Guard: if a staged file was expected but has already been consumed by
+        # another queue item (timestamp-collision duplicate), skip immediately
+        # rather than retrying and spamming error notifications.
+        if file_path and not os.path.exists(file_path) and "staging" in file_path:
+            print(f"Backend [Queue Worker]: Staged file missing for item {item_id} "
+                  f"({os.path.basename(file_path)}). Likely already consumed by a "
+                  f"duplicate queue entry. Marking completed.")
+            update_item_status(item_id, "completed",
+                               error_message="Staging file already consumed by duplicate queue entry")
+            return
+
         # Check if the file is an audio file and needs transcription
         if file_path and (file_path.lower().endswith(('.ogg', '.mp3', '.wav', '.m4a', '.3gp', '.opus'))):
             if not content_text.strip():

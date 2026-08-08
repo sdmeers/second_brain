@@ -198,11 +198,34 @@ status: active
         steps = [s.strip() for s in m_steps.group(1).strip().splitlines() if s.strip()]
         
     msg = f"📁 <b>{title}</b>\n🎯 Outcome: <i>{outcome}</i>\n\n"
+    
+    # 1. Active Actions search across task files
+    active_actions = []
+    proj_tag_space = f"#project/{title}".lower()
+    proj_tag_underscore = f"#project/{title.replace(' ', '_')}".lower()
+    
+    for task_file in ["Next_Actions.md", "Waiting_For.md"]:
+        tf_path = os.path.join(OBSIDIAN_VAULT_PATH, "01_Tasks", task_file)
+        if os.path.exists(tf_path):
+            with open(tf_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line_lower = line.lower()
+                    if line_lower.strip().startswith("- [ ]") and (proj_tag_space in line_lower or proj_tag_underscore in line_lower):
+                        clean_action = re.sub(r'\(Captured on.*?\)', '', line)
+                        clean_action = re.sub(r'\(Source:.*?\)', '', clean_action).strip("- \n")
+                        active_actions.append(clean_action)
+
+    if active_actions:
+        msg += "⚡ <b>Active Actions:</b>\n" + "\n".join(f"• {a}" for a in active_actions) + "\n\n"
+    else:
+        msg += "⚡ <b>Active Actions:</b> <i>None active currently</i>\n\n"
+
+    # 2. Roadmap Steps from Project Note
     if steps:
-        msg += "<b>Roadmap:</b>\n" + "\n".join(steps[:10])
+        msg += "📌 <b>Roadmap Steps:</b>\n" + "\n".join(f"• {s.lstrip('- [ ]')}" for s in steps[:10])
         if len(steps) > 10: msg += f"\n...and {len(steps)-10} more."
     else:
-        msg += "No roadmap steps defined."
+        msg += "📌 <b>Roadmap Steps:</b> <i>No roadmap steps defined.</i>"
         
     await send_msg(chat_id, token, http_client, msg)
 

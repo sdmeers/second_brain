@@ -319,26 +319,35 @@ async def handle_note_file_action(action: VaultAction) -> str:
         
         master_note = os.path.join(project_dir, f"{project_name}.md")
         now_str = datetime.now().strftime("%Y-%m-%d")
+        proj_tag = project_name.strip().replace(" ", "_")
+        goal_str = action.reasoning or f"{project_name} project goals and desired outcome."
         body = f"""---
 title: "{project_name}"
 type: project
+category: Personal
+outcome: "{goal_str}"
 date_created: "{now_str}"
-status: "active"
-tags:
-  - project
+status: active
 ---
-# 🚀 Project: {project_name}
+# {project_name}
 
-## 🎯 Goal & Objective
-{action.reasoning or 'Project created via Second Brain instruction.'}
+## Desired Outcome
+{goal_str}
 
-## 📋 Action Items
-- [ ] Initial project setup 📅 {now_str}
+## Project Steps
+- [ ] Initial project setup
 
-## 📁 Key Links & Outputs
-- [[Notes]]
-- [[Meetings]]
-- [[Outputs]]
+## Active Actions
+> View via Telegram: `/project {project_name}` or search `#project/{proj_tag}` in Obsidian.
+
+```dataview
+TASK
+FROM "01_Tasks"
+WHERE contains(tags, "#project/{proj_tag}") AND !completed
+```
+
+## Reference Material
+> Notes and resources tagged with `#project/{proj_tag}` across the vault.
 """
         if not os.path.exists(master_note):
             atomic_write(master_note, body)

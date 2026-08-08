@@ -706,6 +706,15 @@ async def generate_daily_digest():
 
     return digest_content
 
+async def generate_sitrep_summary() -> str:
+    """Generates or retrieves the latest sitrep / daily digest summary string."""
+    digest_path = os.path.join(VAULT_PATH, "00_System", "Daily_Digest.md")
+    if os.path.exists(digest_path):
+        with open(digest_path, "r", encoding="utf-8") as f:
+            return f.read()
+    else:
+        return await generate_daily_digest()
+
 async def rolling_retention():
     print("🧹 Rolling retention for old digests...")
     digests_dir = os.path.join(VAULT_PATH, "00_System", "Internal", "Digests")

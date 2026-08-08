@@ -179,16 +179,17 @@ async def process_telegram_message(message: dict, token: str, http_client):
                 with open(file_path, "w", encoding="utf-8") as f:
                     f.write(capture_text)
                 
-                summary = capture_text[:50].replace('\n', ' ') + ("..." if len(capture_text) > 50 else "")
+                full_capture = capture_text.replace('\n', ' ').strip()
                 captured_md = os.path.join(OBSIDIAN_VAULT_PATH, "01_Tasks", "Captured.md")
                 os.makedirs(os.path.dirname(captured_md), exist_ok=True)
                 date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
                 with open(captured_md, "a", encoding="utf-8") as f:
-                    f.write(f"- {summary} (Captured on {date_str} via Telegram) (Source: [[{filename}]])\n")
+                    f.write(f"- {full_capture} (Captured on {date_str} via Telegram) (Source: [[{filename}]])\n")
                 
+                preview = full_capture[:60] + ("..." if len(full_capture) > 60 else "")
                 await http_client.post(
                     f"https://api.telegram.org/bot{token}/sendMessage",
-                    json={"chat_id": chat_id, "text": f"📥 Captured: \"{summary}\"\n   → Saved to Captured.md. Process with /clarify when ready."}
+                    json={"chat_id": chat_id, "text": f"📥 Captured: \"{preview}\"\n   → Saved to Captured.md. Process with /clarify when ready."}
                 )
                 return
             elif cmd_part == "/research":
@@ -311,16 +312,17 @@ async def process_telegram_message(message: dict, token: str, http_client):
                 with open(transcript_file_path, "w", encoding="utf-8") as f:
                     f.write(transcript)
                 
-                summary = transcript[:50].replace('\n', ' ') + ("..." if len(transcript) > 50 else "")
+                full_transcript = transcript.replace('\n', ' ').strip()
                 captured_md = os.path.join(OBSIDIAN_VAULT_PATH, "01_Tasks", "Captured.md")
                 os.makedirs(os.path.dirname(captured_md), exist_ok=True)
                 date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
                 with open(captured_md, "a", encoding="utf-8") as f:
-                    f.write(f"- {summary} (Captured on {date_str} via Telegram Voice) (Source: [[{filename}]])\n")
+                    f.write(f"- {full_transcript} (Captured on {date_str} via Telegram Voice) (Source: [[{filename}]])\n")
                 
+                preview = full_transcript[:60] + ("..." if len(full_transcript) > 60 else "")
                 await http_client.post(
                     f"https://api.telegram.org/bot{token}/sendMessage",
-                    json={"chat_id": chat_id, "text": f"📥 Captured: \"{summary}\"\n   → Saved to Captured.md. Process with /clarify when ready."}
+                    json={"chat_id": chat_id, "text": f"📥 Captured: \"{preview}\"\n   → Saved to Captured.md. Process with /clarify when ready."}
                 )
             return
 

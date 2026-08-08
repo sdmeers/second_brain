@@ -160,12 +160,27 @@ async def process_telegram_message(message: dict, token: str, http_client):
             cmd_part = text.split()[0].lower()
             if cmd_part == "/in":
                 capture_text = text[4:].strip()
-                payload = {"chat_id": chat_id, "type": "text"}
-                from backend.ingestion.queue import add_to_queue
-                add_to_queue(source_type="telegram", raw_payload=payload, content_text=capture_text)
+                from datetime import datetime
+                from backend.config import OBSIDIAN_VAULT_PATH
+                
+                timestamp_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+                filename = f"{timestamp_str}_capture.md"
+                inbox_path = os.path.join(OBSIDIAN_VAULT_PATH, "00_System", "Inbox")
+                os.makedirs(inbox_path, exist_ok=True)
+                file_path = os.path.join(inbox_path, filename)
+                with open(file_path, "w", encoding="utf-8") as f:
+                    f.write(capture_text)
+                
+                summary = capture_text[:50].replace('\n', ' ') + ("..." if len(capture_text) > 50 else "")
+                captured_md = os.path.join(OBSIDIAN_VAULT_PATH, "01_Tasks", "Captured.md")
+                os.makedirs(os.path.dirname(captured_md), exist_ok=True)
+                date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+                with open(captured_md, "a", encoding="utf-8") as f:
+                    f.write(f"- {summary} (Captured on {date_str} via Telegram) (Source: [[{filename}]])\n")
+                
                 await http_client.post(
                     f"https://api.telegram.org/bot{token}/sendMessage",
-                    json={"chat_id": chat_id, "text": f"📥 Captured: \"{capture_text[:50]}...\" -> Saved to Captured.md"}
+                    json={"chat_id": chat_id, "text": f"📥 Captured: \"{summary}\"\n   → Saved to Captured.md. Process with /clarify when ready."}
                 )
                 return
             elif cmd_part == "/research":
@@ -215,7 +230,11 @@ async def process_telegram_message(message: dict, token: str, http_client):
   /help                         This message"""
                 await http_client.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": chat_id, "text": help_text})
                 return
-            elif cmd_part in ["/clarify", "/next", "/waiting", "/project", "/done", "/tickle", "/reflect", "/undo"]:
+            elif cmd_part == "/clarify":
+                from backend.ingestion.handlers.clarify import handle_clarify_command
+                await handle_clarify_command(chat_id, token, http_client)
+                return
+            elif cmd_part in ["/next", "/waiting", "/project", "/done", "/tickle", "/reflect", "/undo"]:
                 await http_client.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": chat_id, "text": f"🚧 `{cmd_part}` handler coming in Phase 4!"})
                 return
             elif cmd_part == "/jira":
@@ -260,12 +279,31 @@ async def process_telegram_message(message: dict, token: str, http_client):
             if is_question:
                 await handle_qa_query(transcript, chat_id, token, http_client)
             else:
-                payload = {"chat_id": chat_id, "type": "voice_text"}
-                from backend.ingestion.queue import add_to_queue
-                add_to_queue(source_type="telegram", raw_payload=payload, content_text=transcript)
+                from datetime import datetime
+                from backend.config import OBSIDIAN_VAULT_PATH
+                
+                timestamp_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+                filename = f"{timestamp_str}_voice.{ext}"
+                inbox_path = os.path.join(OBSIDIAN_VAULT_PATH, "00_System", "Inbox")
+                os.makedirs(inbox_path, exist_ok=True)
+                file_path = os.path.join(inbox_path, filename)
+                with open(file_path, "wb") as f:
+                    f.write(file_bytes)
+                    
+                transcript_file_path = os.path.join(inbox_path, f"{timestamp_str}_voice.md")
+                with open(transcript_file_path, "w", encoding="utf-8") as f:
+                    f.write(transcript)
+                
+                summary = transcript[:50].replace('\n', ' ') + ("..." if len(transcript) > 50 else "")
+                captured_md = os.path.join(OBSIDIAN_VAULT_PATH, "01_Tasks", "Captured.md")
+                os.makedirs(os.path.dirname(captured_md), exist_ok=True)
+                date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+                with open(captured_md, "a", encoding="utf-8") as f:
+                    f.write(f"- {summary} (Captured on {date_str} via Telegram Voice) (Source: [[{filename}]])\n")
+                
                 await http_client.post(
                     f"https://api.telegram.org/bot{token}/sendMessage",
-                    json={"chat_id": chat_id, "text": f"📥 Captured: \"{transcript[:50]}...\" -> Saved to Captured.md"}
+                    json={"chat_id": chat_id, "text": f"📥 Captured: \"{summary}\"\n   → Saved to Captured.md. Process with /clarify when ready."}
                 )
             return
 
@@ -404,6 +442,11 @@ async def handle_telegram_callback_query(callback_query: dict, token: str, http_
                     "text": f"{original_text}\n\n❌ **Jira Send Failed**\nError: `{str(err)}`"
                 }
             )
+
+    elif data.startswith("clarify:"):
+        from backend.ingestion.handlers.clarify import handle_clarify_callback
+        await handle_clarify_callback(callback_query, token, http_client)
+
 
 
 async def poll_telegram_unified():

@@ -170,14 +170,21 @@ status: active
             
     return found_path
 
+def sanitize_task_item_text(item_line: str) -> str:
+    """Strips metadata tags, source links, and leading markdown checkboxes/bullets from item line."""
+    clean = re.sub(r'\(Captured on.*?\)', '', item_line)
+    clean = re.sub(r'\(Source:.*?\)', '', clean)
+    clean = re.sub(r'^-\s*\[[ xX]\]\s*', '', clean)
+    clean = re.sub(r'^-\s*', '', clean)
+    return clean.strip()
+
 def append_to_project_roadmap(project_name: str, step_text: str):
     """Appends a step to project note under ## Project Steps."""
     note_path = ensure_project_note_exists(project_name)
     with open(note_path, "r", encoding="utf-8") as f:
         content = f.read()
         
-    clean_step = re.sub(r'\(Captured on.*?\)', '', step_text)
-    clean_step = re.sub(r'\(Source:.*?\)', '', clean_step).strip("- \n")
+    clean_step = sanitize_task_item_text(step_text)
     if "## Project Steps" in content:
         content = content.replace("## Project Steps", f"## Project Steps\n- [ ] {clean_step}")
     else:
@@ -284,8 +291,7 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
     # 2. Pass to AI Librarian
     if action == "action_librarian":
         filename = await archive_and_remove_captured(item_line)
-        clean_text = re.sub(r'\(Captured on.*?\)', '', item_line)
-        clean_text = re.sub(r'\(Source:.*?\)', '', clean_text).strip("- \n")
+        clean_text = sanitize_task_item_text(item_line)
         
         from backend.ingestion.queue import add_to_queue
         payload = {"filename": filename or "reference_note.md", "type": "reference_note"}
@@ -301,8 +307,7 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
 
     # 3. 2-Minute Rule
     if action == "action_2min":
-        clean_text = re.sub(r'\(Captured on.*?\)', '', item_line)
-        clean_text = re.sub(r'\(Source:.*?\)', '', clean_text).strip("- \n")
+        clean_text = sanitize_task_item_text(item_line)
         today_str = datetime.now().strftime("%Y-%m-%d")
         
         comp_md = os.path.join(TASKS_PATH, "z_Completed.md")
@@ -395,8 +400,7 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
         append_to_project_roadmap(proj_name, item_line)
         await archive_and_remove_captured(item_line)
         
-        clean_text = re.sub(r'\(Captured on.*?\)', '', item_line)
-        clean_text = re.sub(r'\(Source:.*?\)', '', clean_text).strip("- \n")
+        clean_text = sanitize_task_item_text(item_line)
         await http_client.post(
             f"https://api.telegram.org/bot{token}/editMessageText",
             json={"chat_id": chat_id, "message_id": message_id, "text": f"📌 Appended roadmap step to <b>{proj_name}</b>:\n{clean_text}", "parse_mode": "HTML"}
@@ -407,8 +411,7 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
 
     # 6. Waiting For Flow
     if action == "action_waiting":
-        clean_text = re.sub(r'\(Captured on.*?\)', '', item_line)
-        clean_text = re.sub(r'\(Source:.*?\)', '', clean_text).strip("- \n")
+        clean_text = sanitize_task_item_text(item_line)
         waiting_md = os.path.join(TASKS_PATH, "Waiting_For.md")
         with open(waiting_md, "a", encoding="utf-8") as f:
             f.write(f"- [ ] {clean_text} #waiting\n")
@@ -487,8 +490,7 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
     if action.startswith("tag_proj"):
         proj_tag = data.split(":")[2]
         ctx = session["item_data"].get("selected_context", "@computer")
-        clean_text = re.sub(r'\(Captured on.*?\)', '', item_line)
-        clean_text = re.sub(r'\(Source:.*?\)', '', clean_text).strip("- \n")
+        clean_text = sanitize_task_item_text(item_line)
         
         task_str = f"- [ ] {clean_text} {ctx}"
         if proj_tag != "none":
@@ -511,8 +513,7 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
 
     # 8. Someday / Maybe Flow
     if action == "action_someday":
-        clean_text = re.sub(r'\(Captured on.*?\)', '', item_line)
-        clean_text = re.sub(r'\(Source:.*?\)', '', clean_text).strip("- \n")
+        clean_text = sanitize_task_item_text(item_line)
         someday_md = os.path.join(TASKS_PATH, "Someday_Maybe.md")
         with open(someday_md, "a", encoding="utf-8") as f:
             f.write(f"- [ ] {clean_text}\n")

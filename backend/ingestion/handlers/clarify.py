@@ -493,16 +493,18 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
         clean_text = sanitize_task_item_text(item_line)
         
         task_str = f"- [ ] {clean_text} {ctx}"
+        tag_disp = ""
         if proj_tag != "none":
-            task_str += f" #project/{proj_tag}"
+            proj_tag_clean = proj_tag.strip().replace(" ", "_")
+            task_str += f" #project/{proj_tag_clean}"
             ensure_project_note_exists(proj_tag)
+            tag_disp = f" #project/{proj_tag_clean}"
             
         tasks_md = os.path.join(TASKS_PATH, "Next_Actions.md")
         with open(tasks_md, "a", encoding="utf-8") as f:
             f.write(f"{task_str}\n")
             
         await archive_and_remove_captured(item_line)
-        tag_disp = f" #project/{proj_tag}" if proj_tag != "none" else ""
         await http_client.post(
             f"https://api.telegram.org/bot{token}/editMessageText",
             json={"chat_id": chat_id, "message_id": message_id, "text": f"⚡ Added to Next Actions ({ctx}{tag_disp}):\n{clean_text}"}

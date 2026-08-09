@@ -141,6 +141,8 @@ def ensure_project_note_exists(project_name: str, category: str = "Personal", ou
         
     if not os.path.exists(found_path):
         os.makedirs(os.path.dirname(found_path), exist_ok=True)
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        outcome_str = outcome if outcome else f"{proj_clean} project goals and desired outcome"
         proj_tag = proj_clean.strip().replace(" ", "_")
         template = f"""---
 title: "{proj_clean}"

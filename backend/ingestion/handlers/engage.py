@@ -141,6 +141,7 @@ async def handle_project_command(chat_id: int, text: str, token: str, http_clien
             
         if not os.path.exists(found_path):
             os.makedirs(os.path.dirname(found_path), exist_ok=True)
+            today_str = datetime.now().strftime("%Y-%m-%d")
             proj_tag = proj_clean.strip().replace(" ", "_")
             template = f"""---
 title: "{proj_clean}"

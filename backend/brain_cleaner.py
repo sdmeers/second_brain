@@ -882,7 +882,7 @@ async def generate_weekly_review():
     os.makedirs(os.path.dirname(wr_archive), exist_ok=True)
     atomic_write(wr_archive, review_md)
 
-    # Telegram Notification
+    # Telegram Notification (Full Part 1 + Part 2 Summary + Pointer)
     from backend.config import TELEGRAM_BOT_TOKEN, TELEGRAM_ALLOWED_CHAT_IDS
     if TELEGRAM_BOT_TOKEN and TELEGRAM_ALLOWED_CHAT_IDS:
         if isinstance(TELEGRAM_ALLOWED_CHAT_IDS, list):
@@ -890,20 +890,61 @@ async def generate_weekly_review():
         else:
             chat_id = str(TELEGRAM_ALLOWED_CHAT_IDS).split(",")[0].strip()
             
-        tele_msg = f"🗓️ <b>Weekly Review Briefing</b> — Friday 14:00\n\n"
-        tele_msg += f"📥 Captured: {len(captured_items)}\n"
-        tele_msg += f"⚡ Next Actions: {len(next_items)}\n"
-        tele_msg += f"⏳ Waiting For: {len(waiting_items)}\n"
-        tele_msg += f"💡 Someday/Maybe: {len(someday_items)}\n"
-        tele_msg += f"📁 Orphaned Projects: {len(orphaned_projects)}\n"
-        tele_msg += f"📚 7-Day Ingested Files: {sum(len(v) for v in recent_activity_by_folder.values())}\n\n"
-        tele_msg += f"<i>Full report saved to 00_System/Weekly_Review.md. Run /reflect in Telegram to review!</i>"
-        
-        try:
-            async with httpx.AsyncClient() as client:
-                await client.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", json={"chat_id": chat_id, "text": tele_msg, "parse_mode": "HTML"})
-        except Exception as e:
-            print(f"Failed to send weekly review to Telegram: {e}")
+        async with httpx.AsyncClient() as client:
+            # Message 1: Part 1 — All Action Items Across System
+            msg1 = f"🗓️ <b>Weekly Review & System Status</b> — {today_str}\n\n"
+            msg1 += "<b>Part 1: All Action Items Across System</b>\n\n"
+            
+            msg1 += f"📥 <b>Captured ({len(captured_items)}):</b>\n"
+            msg1 += ("\n".join(f"• {i}" for i in captured_items) if captured_items else "• <i>None (Inbox zero!)</i>") + "\n\n"
+
+            msg1 += f"⚡ <b>Next Actions ({len(next_items)}):</b>\n"
+            msg1 += ("\n".join(f"• {i}" for i in next_items) if next_items else "• <i>None</i>") + "\n\n"
+
+            msg1 += f"⏳ <b>Waiting For ({len(waiting_items)}):</b>\n"
+            msg1 += ("\n".join(f"• {i}" for i in waiting_items) if waiting_items else "• <i>None</i>") + "\n\n"
+
+            msg1 += f"💡 <b>Someday / Maybe ({len(someday_items)}):</b>\n"
+            msg1 += ("\n".join(f"• {i}" for i in someday_items) if someday_items else "• <i>None</i>") + "\n\n"
+
+            msg1 += f"📌 <b>Project Roadmaps:</b>\n"
+            if project_roadmaps:
+                for p_name, r_steps in project_roadmaps.items():
+                    msg1 += f"<b>{p_name}:</b>\n" + "\n".join(f"  • {s}" for s in r_steps) + "\n"
+            else:
+                msg1 += "• <i>No roadmap steps defined.</i>\n"
+
+            # Telegram character limit safety check
+            if len(msg1) > 4000:
+                msg1 = msg1[:3950] + "\n\n<i>... [Part 1 truncated for Telegram 4k limit]</i>"
+
+            try:
+                await client.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", json={"chat_id": chat_id, "text": msg1, "parse_mode": "HTML"})
+            except Exception as e:
+                print(f"Failed to send Part 1 weekly review message: {e}")
+
+            # Message 2: Part 2 Activity Summary & Pointer
+            total_activity_files = sum(len(v) for v in recent_activity_by_folder.values())
+            msg2 = "📊 <b>Part 2: 7-Day Vault Activity Summary</b>\n"
+            if recent_activity_by_folder:
+                for folder, file_list in recent_activity_by_folder.items():
+                    msg2 += f"• <b>{folder}:</b> {len(file_list)} file(s)\n"
+                msg2 += f"<i>Total: {total_activity_files} files modified/ingested in last 7 days.</i>\n\n"
+            else:
+                msg2 += "• <i>No files ingested in last 7 days.</i>\n\n"
+
+            msg2 += "⚠️ <b>Review Alerts:</b>\n"
+            msg2 += f"• <b>Stale Delegations (>5d):</b> {len(stale_waitings)}\n"
+            msg2 += f"• <b>Orphaned Projects:</b> {len(orphaned_projects)}\n\n"
+
+            msg2 += "📄 <b>Full Report Pointer:</b>\n"
+            msg2 += f"Full report saved to: <code>00_System/Weekly_Review.md</code>\n\n"
+            msg2 += "<i>Run /reflect in Telegram to start your interactive guided review!</i>"
+
+            try:
+                await client.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", json={"chat_id": chat_id, "text": msg2, "parse_mode": "HTML"})
+            except Exception as e:
+                print(f"Failed to send Part 2 weekly review message: {e}")
 
 async def rolling_retention():
     print("🧹 Rolling retention for old digests...")

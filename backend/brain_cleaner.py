@@ -719,76 +719,170 @@ async def generate_weekly_review():
     print("🗓️ Generating Friday 14:00 Weekly Review...")
     today_dt = datetime.now()
     today_str = today_dt.strftime("%Y-%m-%d")
+    seven_days_ago = today_dt - timedelta(days=7)
     
-    captured_file = os.path.join(VAULT_PATH, "01_Tasks", "Captured.md")
-    unclarified_count = 0
-    if os.path.exists(captured_file):
-        with open(captured_file, "r", encoding="utf-8") as f:
-            unclarified_count = sum(1 for line in f if line.strip().startswith("- "))
-            
+    def get_clean_lines(filepath: str, is_checkbox: bool = True) -> list:
+        if not os.path.exists(filepath): return []
+        items = []
+        with open(filepath, "r", encoding="utf-8") as f:
+            for line in f:
+                line_s = line.strip()
+                match_condition = (line_s.startswith("- [ ]") or line_s.startswith("- [x]")) if is_checkbox else line_s.startswith("- ")
+                if match_condition:
+                    clean = re.sub(r'\(Source:.*?\)', '', line_s)
+                    clean = re.sub(r'\(Captured on.*?\)', '', clean)
+                    clean = clean.replace('- [ ]', '').replace('- [x]', '').replace('- ', '').strip()
+                    if clean:
+                        items.append(clean)
+        return items
+
+    captured_items = get_clean_lines(os.path.join(VAULT_PATH, "01_Tasks", "Captured.md"), is_checkbox=False)
+    next_items = get_clean_lines(os.path.join(VAULT_PATH, "01_Tasks", "Next_Actions.md"))
+    waiting_items = get_clean_lines(os.path.join(VAULT_PATH, "01_Tasks", "Waiting_For.md"))
+    someday_items = get_clean_lines(os.path.join(VAULT_PATH, "01_Tasks", "Someday_Maybe.md"))
+
+    # Active project tags search
+    active_project_tags = set()
     next_file = os.path.join(VAULT_PATH, "01_Tasks", "Next_Actions.md")
-    waiting_file = os.path.join(VAULT_PATH, "01_Tasks", "Waiting_For.md")
-    someday_file = os.path.join(VAULT_PATH, "01_Tasks", "Someday_Maybe.md")
-    
-    active_projects = set()
-    active_actions_count = 0
     if os.path.exists(next_file):
         with open(next_file, "r", encoding="utf-8") as f:
             for line in f:
-                if not line.strip().startswith("- [ ]"): continue
-                active_actions_count += 1
-                m_proj = re.search(r'#project/([a-zA-Z0-9_\-]+)', line)
-                if m_proj: active_projects.add(m_proj.group(1))
+                if line.strip().startswith("- [ ]"):
+                    m_proj = re.search(r'#project/([a-zA-Z0-9_\-]+)', line)
+                    if m_proj: active_project_tags.add(m_proj.group(1).lower())
 
+    # 1. Top-Level Projects Scanning (no deep subfolder recursion)
+    proj_dir = os.path.join(VAULT_PATH, "02_Projects")
+    top_level_projects = []
+    
+    for category in ["Personal", "Professional"]:
+        cat_dir = os.path.join(proj_dir, category)
+        if os.path.exists(cat_dir):
+            for entry in sorted(os.listdir(cat_dir)):
+                if entry.startswith(".") or entry.startswith("_"): continue
+                entry_path = os.path.join(cat_dir, entry)
+                if os.path.isdir(entry_path) or entry.endswith(".md"):
+                    p_name = entry.replace(".md", "")
+                    top_level_projects.append((p_name, category, entry_path))
+
+    orphaned_projects = []
+    project_roadmaps = {}
+
+    for p_name, category, p_path in top_level_projects:
+        p_tag_clean = p_name.strip().replace(" ", "_").lower()
+        if p_tag_clean not in active_project_tags and p_name.lower() not in active_project_tags:
+            orphaned_projects.append(f"{p_name} ({category})")
+            
+        # Extract roadmap steps from master note
+        note_md = p_path if p_path.endswith(".md") else os.path.join(p_path, f"{p_name}.md")
+        if os.path.exists(note_md):
+            with open(note_md, "r", encoding="utf-8") as f:
+                c = f.read()
+            m_steps = re.search(r'## Project Steps\n(.*?)(?=\n## |\Z)', c, re.DOTALL)
+            if m_steps:
+                r_steps = [s.strip("- \n") for s in m_steps.group(1).strip().splitlines() if s.strip()]
+                if r_steps:
+                    project_roadmaps[p_name] = r_steps
+
+    # Stale Delegations (>5 days)
     stale_waitings = []
+    waiting_file = os.path.join(VAULT_PATH, "01_Tasks", "Waiting_For.md")
     if os.path.exists(waiting_file):
         with open(waiting_file, "r", encoding="utf-8") as f:
             for line in f:
-                if not line.strip().startswith("- [ ]"): continue
-                m_cap = re.search(r'\(Captured .*? on (\d{4}-\d{2}-\d{2})\)', line)
-                if m_cap:
-                    cap_date = datetime.strptime(m_cap.group(1), "%Y-%m-%d")
-                    if (today_dt - cap_date).days > 5:
-                        stale_waitings.append(line.strip())
-                m_proj = re.search(r'#project/([a-zA-Z0-9_\-]+)', line)
-                if m_proj: active_projects.add(m_proj.group(1))
+                if line.strip().startswith("- [ ]"):
+                    m_cap = re.search(r'\(Captured .*? on (\d{4}-\d{2}-\d{2})\)', line)
+                    if m_cap:
+                        cap_date = datetime.strptime(m_cap.group(1), "%Y-%m-%d")
+                        if (today_dt - cap_date).days > 5:
+                            stale_waitings.append(line.strip())
 
-    someday_count = 0
-    if os.path.exists(someday_file):
-        with open(someday_file, "r", encoding="utf-8") as f:
-            someday_count = sum(1 for line in f if line.strip().startswith("- "))
-
-    orphaned_projects = []
-    proj_dir = os.path.join(VAULT_PATH, "02_Projects")
-    for root, dirs, files in os.walk(proj_dir):
+    # 2. Part 2: Ingested & Vault Activity (Last 7 Days)
+    recent_activity_by_folder = {}
+    for root, dirs, files in os.walk(VAULT_PATH):
+        rel_root = os.path.relpath(root, VAULT_PATH).replace("\\", "/")
+        if not (rel_root.startswith("02_Projects") or rel_root.startswith("03_Areas") or rel_root.startswith("04_Resources")):
+            continue
+            
         for f in files:
-            if not f.endswith(".md"): continue
-            proj_name = f.replace(".md", "")
-            if proj_name.replace(" ", "_") not in active_projects:
-                orphaned_projects.append(proj_name)
+            if f.endswith(".md") or f.endswith(".pdf") or f.endswith(".pptx"):
+                p = os.path.join(root, f)
+                try:
+                    mtime = datetime.fromtimestamp(os.path.getmtime(p))
+                    if mtime > seven_days_ago:
+                        folder_key = rel_root.split("/")[0] + "/" + (rel_root.split("/")[1] if len(rel_root.split("/")) > 1 else "")
+                        if folder_key not in recent_activity_by_folder:
+                            recent_activity_by_folder[folder_key] = []
+                        recent_activity_by_folder[folder_key].append(f)
+                except Exception: pass
 
-    review_md = f"# 🗓️ Weekly Review — {today_str}\n\n"
-    review_md += f"## System Overview\n"
-    review_md += f"- 📥 **Unclarified Items:** {unclarified_count} awaiting `/clarify`\n"
-    review_md += f"- ⚡ **Active Next Actions:** {active_actions_count}\n"
-    review_md += f"- ⏳ **Stale Delegations (>5d):** {len(stale_waitings)}\n"
-    review_md += f"- 💡 **Someday/Maybe Backlog:** {someday_count}\n"
-    review_md += f"- 📁 **Orphaned Projects:** {len(orphaned_projects)}\n\n"
+    # Assemble Markdown Review Document
+    review_md = f"# 🗓️ Weekly Review & System Status — {today_str}\n\n"
     
+    review_md += "## Part 1: All Action Items Across System\n\n"
+    
+    review_md += f"### 📥 Captured Items ({len(captured_items)})\n"
+    if captured_items:
+        review_md += "\n".join(f"- {i}" for i in captured_items) + "\n\n"
+    else:
+        review_md += "- *None (Inbox zero!)*\n\n"
+
+    review_md += f"### ⚡ Next Actions ({len(next_items)})\n"
+    if next_items:
+        review_md += "\n".join(f"- {i}" for i in next_items) + "\n\n"
+    else:
+        review_md += "- *None*\n\n"
+
+    review_md += f"### ⏳ Waiting For ({len(waiting_items)})\n"
+    if waiting_items:
+        review_md += "\n".join(f"- {i}" for i in waiting_items) + "\n\n"
+    else:
+        review_md += "- *None*\n\n"
+
+    review_md += f"### 💡 Someday / Maybe ({len(someday_items)})\n"
+    if someday_items:
+        review_md += "\n".join(f"- {i}" for i in someday_items) + "\n\n"
+    else:
+        review_md += "- *None*\n\n"
+
+    review_md += f"### 📌 Project Roadmaps ({len(project_roadmaps)} Active Projects)\n"
+    if project_roadmaps:
+        for p_name, r_steps in project_roadmaps.items():
+            review_md += f"**{p_name}:**\n"
+            review_md += "\n".join(f"  - {s}" for s in r_steps) + "\n"
+        review_md += "\n"
+    else:
+        review_md += "- *No roadmap steps defined.*\n\n"
+
+    review_md += "## Part 2: Vault Activity & Ingested Content (Last 7 Days)\n\n"
+    if recent_activity_by_folder:
+        for folder, file_list in recent_activity_by_folder.items():
+            review_md += f"### 📁 `{folder}`\n"
+            review_md += "\n".join(f"- {fl}" for fl in file_list) + "\n\n"
+    else:
+        review_md += "- *No new content ingested in the last 7 days.*\n\n"
+
+    review_md += "## Part 3: Review Alerts & Action Items\n\n"
     if stale_waitings:
-        review_md += "### ⏳ Stale Delegations (>5 Days)\n" + "\n".join(f"- {w}" for w in stale_waitings) + "\n\n"
-        
+        review_md += f"### ⚠️ Stale Delegations (>5 Days)\n" + "\n".join(f"- {w}" for w in stale_waitings) + "\n\n"
+    else:
+        review_md += "### ⏳ Stale Delegations: *None*\n\n"
+
     if orphaned_projects:
-        review_md += "### 📁 Orphaned Projects (0 Active Next Actions)\n" + "\n".join(f"- {p}" for p in orphaned_projects) + "\n\n"
+        review_md += f"### ⚠️ Orphaned Projects (0 Active Actions: {len(orphaned_projects)})\n" + "\n".join(f"- {p}" for p in orphaned_projects) + "\n\n"
+    else:
+        review_md += "### 📁 Orphaned Projects: *None (All projects have active next actions!)*\n\n"
 
-    review_md += "### 🎯 Suggested Review Actions\n"
-    review_md += "1. Run `/clarify` in Telegram to process remaining inbox captures.\n"
-    review_md += "2. Check `/waiting` to follow up on stale delegated items.\n"
-    review_md += "3. Run `/project <name>` for orphaned projects and promote a roadmap step to Next Actions.\n"
-
+    # Save to vault
     wr_path = os.path.join(VAULT_PATH, "00_System", "Weekly_Review.md")
     atomic_write(wr_path, review_md)
-    
+
+    # Save dated copy in Digests folder
+    wr_archive = os.path.join(VAULT_PATH, "00_System", "Internal", "Digests", f"Weekly_Review_{today_str}.md")
+    os.makedirs(os.path.dirname(wr_archive), exist_ok=True)
+    atomic_write(wr_archive, review_md)
+
+    # Telegram Notification
     from backend.config import TELEGRAM_BOT_TOKEN, TELEGRAM_ALLOWED_CHAT_IDS
     if TELEGRAM_BOT_TOKEN and TELEGRAM_ALLOWED_CHAT_IDS:
         if isinstance(TELEGRAM_ALLOWED_CHAT_IDS, list):
@@ -797,11 +891,13 @@ async def generate_weekly_review():
             chat_id = str(TELEGRAM_ALLOWED_CHAT_IDS).split(",")[0].strip()
             
         tele_msg = f"🗓️ <b>Weekly Review Briefing</b> — Friday 14:00\n\n"
-        tele_msg += f"📥 Unclarified: {unclarified_count}\n"
-        tele_msg += f"⚡ Next Actions: {active_actions_count}\n"
-        tele_msg += f"⏳ Stale Delegations: {len(stale_waitings)}\n"
-        tele_msg += f"📁 Orphaned Projects: {len(orphaned_projects)}\n\n"
-        tele_msg += f"<i>Run /reflect in Telegram to start your interactive guided review!</i>"
+        tele_msg += f"📥 Captured: {len(captured_items)}\n"
+        tele_msg += f"⚡ Next Actions: {len(next_items)}\n"
+        tele_msg += f"⏳ Waiting For: {len(waiting_items)}\n"
+        tele_msg += f"💡 Someday/Maybe: {len(someday_items)}\n"
+        tele_msg += f"📁 Orphaned Projects: {len(orphaned_projects)}\n"
+        tele_msg += f"📚 7-Day Ingested Files: {sum(len(v) for v in recent_activity_by_folder.values())}\n\n"
+        tele_msg += f"<i>Full report saved to 00_System/Weekly_Review.md. Run /reflect in Telegram to review!</i>"
         
         try:
             async with httpx.AsyncClient() as client:

@@ -715,6 +715,100 @@ async def generate_sitrep_summary() -> str:
     else:
         return await generate_daily_digest()
 
+async def generate_weekly_review():
+    print("🗓️ Generating Friday 14:00 Weekly Review...")
+    today_dt = datetime.now()
+    today_str = today_dt.strftime("%Y-%m-%d")
+    
+    captured_file = os.path.join(VAULT_PATH, "01_Tasks", "Captured.md")
+    unclarified_count = 0
+    if os.path.exists(captured_file):
+        with open(captured_file, "r", encoding="utf-8") as f:
+            unclarified_count = sum(1 for line in f if line.strip().startswith("- "))
+            
+    next_file = os.path.join(VAULT_PATH, "01_Tasks", "Next_Actions.md")
+    waiting_file = os.path.join(VAULT_PATH, "01_Tasks", "Waiting_For.md")
+    someday_file = os.path.join(VAULT_PATH, "01_Tasks", "Someday_Maybe.md")
+    
+    active_projects = set()
+    active_actions_count = 0
+    if os.path.exists(next_file):
+        with open(next_file, "r", encoding="utf-8") as f:
+            for line in f:
+                if not line.strip().startswith("- [ ]"): continue
+                active_actions_count += 1
+                m_proj = re.search(r'#project/([a-zA-Z0-9_\-]+)', line)
+                if m_proj: active_projects.add(m_proj.group(1))
+
+    stale_waitings = []
+    if os.path.exists(waiting_file):
+        with open(waiting_file, "r", encoding="utf-8") as f:
+            for line in f:
+                if not line.strip().startswith("- [ ]"): continue
+                m_cap = re.search(r'\(Captured .*? on (\d{4}-\d{2}-\d{2})\)', line)
+                if m_cap:
+                    cap_date = datetime.strptime(m_cap.group(1), "%Y-%m-%d")
+                    if (today_dt - cap_date).days > 5:
+                        stale_waitings.append(line.strip())
+                m_proj = re.search(r'#project/([a-zA-Z0-9_\-]+)', line)
+                if m_proj: active_projects.add(m_proj.group(1))
+
+    someday_count = 0
+    if os.path.exists(someday_file):
+        with open(someday_file, "r", encoding="utf-8") as f:
+            someday_count = sum(1 for line in f if line.strip().startswith("- "))
+
+    orphaned_projects = []
+    proj_dir = os.path.join(VAULT_PATH, "02_Projects")
+    for root, dirs, files in os.walk(proj_dir):
+        for f in files:
+            if not f.endswith(".md"): continue
+            proj_name = f.replace(".md", "")
+            if proj_name.replace(" ", "_") not in active_projects:
+                orphaned_projects.append(proj_name)
+
+    review_md = f"# 🗓️ Weekly Review — {today_str}\n\n"
+    review_md += f"## System Overview\n"
+    review_md += f"- 📥 **Unclarified Items:** {unclarified_count} awaiting `/clarify`\n"
+    review_md += f"- ⚡ **Active Next Actions:** {active_actions_count}\n"
+    review_md += f"- ⏳ **Stale Delegations (>5d):** {len(stale_waitings)}\n"
+    review_md += f"- 💡 **Someday/Maybe Backlog:** {someday_count}\n"
+    review_md += f"- 📁 **Orphaned Projects:** {len(orphaned_projects)}\n\n"
+    
+    if stale_waitings:
+        review_md += "### ⏳ Stale Delegations (>5 Days)\n" + "\n".join(f"- {w}" for w in stale_waitings) + "\n\n"
+        
+    if orphaned_projects:
+        review_md += "### 📁 Orphaned Projects (0 Active Next Actions)\n" + "\n".join(f"- {p}" for p in orphaned_projects) + "\n\n"
+
+    review_md += "### 🎯 Suggested Review Actions\n"
+    review_md += "1. Run `/clarify` in Telegram to process remaining inbox captures.\n"
+    review_md += "2. Check `/waiting` to follow up on stale delegated items.\n"
+    review_md += "3. Run `/project <name>` for orphaned projects and promote a roadmap step to Next Actions.\n"
+
+    wr_path = os.path.join(VAULT_PATH, "00_System", "Weekly_Review.md")
+    atomic_write(wr_path, review_md)
+    
+    from backend.config import TELEGRAM_BOT_TOKEN, TELEGRAM_ALLOWED_CHAT_IDS
+    if TELEGRAM_BOT_TOKEN and TELEGRAM_ALLOWED_CHAT_IDS:
+        if isinstance(TELEGRAM_ALLOWED_CHAT_IDS, list):
+            chat_id = TELEGRAM_ALLOWED_CHAT_IDS[0]
+        else:
+            chat_id = str(TELEGRAM_ALLOWED_CHAT_IDS).split(",")[0].strip()
+            
+        tele_msg = f"🗓️ <b>Weekly Review Briefing</b> — Friday 14:00\n\n"
+        tele_msg += f"📥 Unclarified: {unclarified_count}\n"
+        tele_msg += f"⚡ Next Actions: {active_actions_count}\n"
+        tele_msg += f"⏳ Stale Delegations: {len(stale_waitings)}\n"
+        tele_msg += f"📁 Orphaned Projects: {len(orphaned_projects)}\n\n"
+        tele_msg += f"<i>Run /reflect in Telegram to start your interactive guided review!</i>"
+        
+        try:
+            async with httpx.AsyncClient() as client:
+                await client.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", json={"chat_id": chat_id, "text": tele_msg, "parse_mode": "HTML"})
+        except Exception as e:
+            print(f"Failed to send weekly review to Telegram: {e}")
+
 async def rolling_retention():
     print("🧹 Rolling retention for old digests...")
     digests_dir = os.path.join(VAULT_PATH, "00_System", "Internal", "Digests")
@@ -727,6 +821,11 @@ async def rolling_retention():
                 os.remove(p)
 
 async def main():
+    import sys
+    if "--weekly-review" in sys.argv:
+        await generate_weekly_review()
+        return
+
     print("🚀 Starting Phase 11 Brain Cleaner Tasks...")
     await clean_staging_and_inbox()
     await run_sqlite_checkpoint()

@@ -88,13 +88,13 @@ async def maintain_tasks_dashboard():
                 # Rewrite non-Next_Actions files immediately if completed items were removed from them
                 if fname != "Next_Actions.md":
                     if fname == "Waiting_For.md":
-                        header = "# ⏳ Waiting For\n\n> Delegated actions and items owed to you by others. View in Telegram using `/waiting`.\n\n---\n\n## ⏳ Waiting For\n"
+                        header = "# ⏳ Waiting For\n\n> Delegated actions and items owed to you by others. View in Telegram using `/waiting`.\n\n---\n\n## ⏳ Waiting For\n\n"
                         clear_msg = "🎉 *All clear! No pending items waiting on others.*\n"
                     elif fname == "Someday_Maybe.md":
-                        header = "# 💡 Someday / Maybe\n\n> Future ideas, uncommitted desires, and projects to review during `/reflect`.\n\n---\n\n## 💡 Someday / Maybe\n"
+                        header = "# 💡 Someday / Maybe\n\n> Future ideas, uncommitted desires, and projects to review during `/reflect`.\n\n---\n\n## 💡 Someday / Maybe\n\n"
                         clear_msg = "🎉 *List clear! No someday/maybe items recorded.*\n"
                     elif fname == "Captured.md":
-                        header = "# 📥 Captured\n\n> Raw thoughts and voice captures awaiting clarification via `/clarify`.\n\n---\n\n## 📥 Captured Items\n"
+                        header = "# 📥 Captured\n\n> Raw thoughts and voice captures awaiting clarification via `/clarify`.\n\n---\n\n## 📥 Captured Items\n\n"
                         clear_msg = "🎉 *Inbox Zero! No captured items awaiting clarification.*\n"
                     
                     content = header + ("\n".join(file_active) + "\n" if file_active else clear_msg)
@@ -174,7 +174,7 @@ async def maintain_tasks_dashboard():
             for task in all_active:
                 new_content += f"{task}\n"
         else:
-            new_content += "🎉 *All clear! No active next actions remaining.*\n"
+            new_content += "\n🎉 *All clear! No active next actions remaining.*\n"
             
         # Write back to file if changed
         if os.path.exists(TASKS_MD_FILE):

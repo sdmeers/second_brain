@@ -272,11 +272,11 @@ async def handle_done_command(chat_id: int, text: str, token: str, http_client: 
             if not has_active:
                 fname = os.path.basename(fp)
                 if fname == "Next_Actions.md":
-                    new_lines = ["# ⚡ Next Actions\n\n", "> Flexible, context-tagged action list. Filter in Telegram using `/next @context`.\n\n", "---\n\n", "## ⚡ Next Actions\n", "🎉 *All clear! No active next actions remaining.*\n"]
+                    new_lines = ["# ⚡ Next Actions\n\n", "> Flexible, context-tagged action list. Filter in Telegram using `/next @context`.\n\n", "---\n\n", "## ⚡ Next Actions\n\n", "🎉 *All clear! No active next actions remaining.*\n"]
                 elif fname == "Waiting_For.md":
-                    new_lines = ["# ⏳ Waiting For\n\n", "> Delegated actions and items owed to you by others. View in Telegram using `/waiting`.\n\n", "---\n\n", "## ⏳ Waiting For\n", "🎉 *All clear! No pending items waiting on others.*\n"]
+                    new_lines = ["# ⏳ Waiting For\n\n", "> Delegated actions and items owed to you by others. View in Telegram using `/waiting`.\n\n", "---\n\n", "## ⏳ Waiting For\n\n", "🎉 *All clear! No pending items waiting on others.*\n"]
                 elif fname == "Someday_Maybe.md":
-                    new_lines = ["# 💡 Someday / Maybe\n\n", "> Future ideas, uncommitted desires, and projects to review during `/reflect`.\n\n", "---\n\n", "## 💡 Someday / Maybe\n", "🎉 *List clear! No someday/maybe items recorded.*\n"]
+                    new_lines = ["# 💡 Someday / Maybe\n\n", "> Future ideas, uncommitted desires, and projects to review during `/reflect`.\n\n", "---\n\n", "## 💡 Someday / Maybe\n\n", "🎉 *List clear! No someday/maybe items recorded.*\n"]
             with open(fp, "w", encoding="utf-8") as f:
                 f.writelines(new_lines)
             break

@@ -105,11 +105,21 @@ async def delete_file_index(file_path: str, conn: sqlite3.Connection):
         conn.commit()
 
 async def index_file(vault_relative_path: str, full_file_path: str, file_hash: str, conn: sqlite3.Connection):
-    """Chunks, embeds, and indexes a single file in the database."""
+    """Chunks, embeds, and indexes a single file (Markdown, PDF, DOCX, or PPTX) in the database."""
     print(f"RAG [VectorStore]: Indexing file: {vault_relative_path}...")
     try:
-        with open(full_file_path, "r", encoding="utf-8") as f:
-            content = f.read()
+        if full_file_path.endswith(".pdf"):
+            from backend.processing.extractor import extract_pdf_text
+            content, _ = extract_pdf_text(full_file_path)
+        elif full_file_path.endswith(".docx"):
+            from backend.processing.extractor import extract_docx_text
+            content, _ = extract_docx_text(full_file_path)
+        elif full_file_path.endswith(".pptx"):
+            from backend.processing.extractor import extract_pptx_text
+            content = extract_pptx_text(full_file_path)
+        else:
+            with open(full_file_path, "r", encoding="utf-8") as f:
+                content = f.read()
             
         # Parse and strip frontmatter so it doesn't skew similarity search
         body_content = content
@@ -167,7 +177,7 @@ async def index_vault(force_reindex: bool = False):
     conn = get_vector_db_connection()
     cursor = conn.cursor()
     
-    # 1. Scan for all markdown files in active directories
+    # 1. Scan for all markdown and document files in active directories
     target_dirs = ["00_System", "02_Projects", "03_Areas", "04_Resources", "05_Archive"]
     indexed_files = set()
     
@@ -178,7 +188,7 @@ async def index_vault(force_reindex: bool = False):
             
         for root, _, files in os.walk(folder_path):
             for file in files:
-                if file.endswith(".md"):
+                if file.endswith((".md", ".pdf", ".docx", ".pptx")):
                     full_path = os.path.join(root, file)
                     rel_path = os.path.relpath(full_path, OBSIDIAN_VAULT_PATH)
                     rel_path_normalized = rel_path.replace("\\", "/")

@@ -10,13 +10,19 @@ from google.genai import types
 from backend.config import GEMINI_MODEL
 from backend.utils.gemini import call_gemini_with_retry
 
-def extract_pdf_text(url: str) -> tuple[str, bytes]:
-    """Downloads PDF and extracts text."""
-    headers = {"User-Agent": "Mozilla/5.0"}
-    response = httpx.get(url, follow_redirects=True, timeout=30.0, headers=headers)
-    response.raise_for_status()
+import os
+
+def extract_pdf_text(url_or_path: str) -> tuple[str, bytes]:
+    """Downloads PDF from URL or reads local path, and extracts text."""
+    if os.path.exists(url_or_path) or url_or_path.startswith("/"):
+        with open(url_or_path, "rb") as f:
+            pdf_bytes = f.read()
+    else:
+        headers = {"User-Agent": "Mozilla/5.0"}
+        response = httpx.get(url_or_path, follow_redirects=True, timeout=30.0, headers=headers)
+        response.raise_for_status()
+        pdf_bytes = response.content
     
-    pdf_bytes = response.content
     pdf_stream = io.BytesIO(pdf_bytes)
     doc = fitz.open(stream=pdf_stream, filetype="pdf")
     
@@ -279,12 +285,16 @@ def extract_docx_text_from_bytes(docx_bytes: bytes) -> str:
         print(f"DOCX Bytes Text Extraction Error: {e}")
         return f"Error extracting text from Word document: {e}"
 
-def extract_docx_text(url: str) -> tuple[str, bytes]:
-    """Downloads Word document (.docx) and extracts text."""
-    headers = {"User-Agent": "Mozilla/5.0"}
-    response = httpx.get(url, follow_redirects=True, timeout=30.0, headers=headers)
-    response.raise_for_status()
-    docx_bytes = response.content
+def extract_docx_text(url_or_path: str) -> tuple[str, bytes]:
+    """Downloads Word document (.docx) or reads local path, and extracts text."""
+    if os.path.exists(url_or_path) or url_or_path.startswith("/"):
+        with open(url_or_path, "rb") as f:
+            docx_bytes = f.read()
+    else:
+        headers = {"User-Agent": "Mozilla/5.0"}
+        response = httpx.get(url_or_path, follow_redirects=True, timeout=30.0, headers=headers)
+        response.raise_for_status()
+        docx_bytes = response.content
     extracted_text = extract_docx_text_from_bytes(docx_bytes)
     return extracted_text, docx_bytes
 

@@ -103,8 +103,8 @@ async def process_capture_core(
         brain_node_markdown = ""
         concepts_to_process = []
         
-        if deep_extraction:
-            print("Backend [Stage 2]: Generating Brain Node (Deep Research)...")
+        if is_research:
+            print("Backend [Stage 2]: Generating Brain Node (Deep Research Knowledge Graph)...")
             atlas_themes = get_atlas_themes()
             brain_node_result = await generate_brain_node(
                 title_hint=title,
@@ -116,7 +116,7 @@ async def process_capture_core(
             brain_node_markdown = brain_node_result.summary_markdown.strip()
             concepts_to_process = brain_node_result.concepts
         else:
-            print("Backend [Stage 2]: Generating Brain Node (Lightweight Capture)...")
+            print("Backend [Stage 2]: Generating Practical Summary (Lightweight Reference Note)...")
             brain_node_result = await generate_light_node(
                 title_hint=title,
                 author_hint=author_hint,
@@ -124,6 +124,7 @@ async def process_capture_core(
                 content=content_text
             )
             brain_node_markdown = brain_node_result.summary_markdown.strip()
+            concepts_to_process = []
 
         # 3. Clean Gemini output (Strip markdown backticks if present)
         # Remove ```yaml or ``` at start/end
@@ -181,11 +182,7 @@ async def process_capture_core(
             custom_sources_path=custom_src_path, extension=ext_to_use
         )
                 
-        # 6. Save Brain Node (including full extracted text for PDFs/PPTXs/DOCXs for RAG vectorization)
-        if (is_pdf or is_pptx or is_docx) and content_text:
-            if "\n## Complete Document Text" not in brain_node_markdown:
-                brain_node_markdown += f"\n\n---\n## Complete Document Text\n\n{content_text}"
-
+        # 6. Save Brain Node (clean, concise AI summary note)
         node_path = save_brain_node(
             safe_title, brain_node_markdown, source_link_name,
             custom_summaries_path=custom_sum_path

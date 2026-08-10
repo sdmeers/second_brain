@@ -39,8 +39,15 @@ ATLAS_PATH = os.path.join(RESEARCH_BRAIN_PATH, "Atlas")
 CONCEPTS_PATH = os.path.join(RESEARCH_BRAIN_PATH, "Concepts")
 
 # General Reference Resources (Non-Centaur)
-REFERENCE_NOTES_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "04_Resources", "Reference_Notes")
-REFERENCE_SOURCES_PATH = os.path.join(REFERENCE_NOTES_PATH, "Sources")
+ARTICLES_AND_NEWS_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "04_Resources", "Articles_and_News")
+ARTICLES_SOURCES_PATH = os.path.join(ARTICLES_AND_NEWS_PATH, "Sources")
+BOOKS_AND_MEDIA_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "04_Resources", "Books_and_Media")
+MANUALS_AND_EQUIPMENT_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "04_Resources", "Manuals_and_Equipment")
+MANUALS_SOURCES_PATH = os.path.join(MANUALS_AND_EQUIPMENT_PATH, "Sources")
+CHEATSHEETS_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "04_Resources", "Cheatsheets_and_Guides")
+
+REFERENCE_NOTES_PATH = ARTICLES_AND_NEWS_PATH # Backwards compatibility
+REFERENCE_SOURCES_PATH = ARTICLES_SOURCES_PATH
 
 # New P.A.R.A paths
 INBOX_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "00_System", "Inbox")

@@ -166,8 +166,17 @@ async def process_capture_core(
         print(f"Backend [Stage 4]: Determined Title: {safe_title}")
         
         # 5. Save Source file
-        custom_src_path = None if deep_extraction else REFERENCE_SOURCES_PATH
-        custom_sum_path = None if deep_extraction else REFERENCE_NOTES_PATH
+        from backend.config import MANUALS_SOURCES_PATH, MANUALS_AND_EQUIPMENT_PATH, ARTICLES_SOURCES_PATH, ARTICLES_AND_NEWS_PATH
+        if not deep_extraction:
+            if is_pdf or is_pptx or "manual" in safe_title.lower() or "guide" in safe_title.lower():
+                custom_src_path = MANUALS_SOURCES_PATH
+                custom_sum_path = MANUALS_AND_EQUIPMENT_PATH
+            else:
+                custom_src_path = ARTICLES_SOURCES_PATH
+                custom_sum_path = ARTICLES_AND_NEWS_PATH
+        else:
+            custom_src_path = None
+            custom_sum_path = None
 
         ext_to_use = ".pdf" if is_pdf else (".pptx" if is_pptx else (".docx" if is_docx else ".md"))
         source_link_name, _ = save_source_material(

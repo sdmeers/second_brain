@@ -35,18 +35,27 @@ async def get_embeddings_batch(texts: list[str], batch_size: int = 100) -> list[
     for i in range(0, len(texts), batch_size):
         batch = texts[i:i + batch_size]
         print(f"RAG [Embeddings]: Generating embeddings for batch of {len(batch)} items (index {i} to {i+len(batch)})...")
-        try:
-            response = await client.aio.models.embed_content(
-                model=EMBEDDING_MODEL,
-                contents=batch
-            )
-            if response.embeddings:
-                embeddings.extend([emb.values for emb in response.embeddings])
-            else:
-                raise ValueError("No embeddings returned from batch API call.")
-        except Exception as e:
-            print(f"RAG [Embeddings]: Error in batch embeddings generation: {e}")
-            raise e
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = await client.aio.models.embed_content(
+                    model=EMBEDDING_MODEL,
+                    contents=batch
+                )
+                if response.embeddings:
+                    embeddings.extend([emb.values for emb in response.embeddings])
+                    break
+                else:
+                    raise ValueError("No embeddings returned from batch API call.")
+            except Exception as e:
+                err_str = str(e)
+                if ("429" in err_str or "RESOURCE_EXHAUSTED" in err_str) and attempt < max_retries - 1:
+                    wait_sec = 25
+                    print(f"RAG [Embeddings]: Rate limit 429 hit. Retrying in {wait_sec}s (attempt {attempt+1}/{max_retries})...")
+                    await asyncio.sleep(wait_sec)
+                else:
+                    print(f"RAG [Embeddings]: Error in batch embeddings generation: {e}")
+                    raise e
             
         await asyncio.sleep(0.1)
         

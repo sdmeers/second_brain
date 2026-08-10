@@ -165,15 +165,10 @@ async def process_capture_core(
         safe_title = sanitize_filename(real_title)
         print(f"Backend [Stage 4]: Determined Title: {safe_title}")
         
-        # 5. Save Source file
-        from backend.config import MANUALS_SOURCES_PATH, MANUALS_AND_EQUIPMENT_PATH, ARTICLES_SOURCES_PATH, ARTICLES_AND_NEWS_PATH
+        # 5. Save Source file via AI Librarian P.A.R.A destination check
         if not deep_extraction:
-            if is_pdf or is_pptx or "manual" in safe_title.lower() or "guide" in safe_title.lower():
-                custom_src_path = MANUALS_SOURCES_PATH
-                custom_sum_path = MANUALS_AND_EQUIPMENT_PATH
-            else:
-                custom_src_path = ARTICLES_SOURCES_PATH
-                custom_sum_path = ARTICLES_AND_NEWS_PATH
+            from backend.utils.librarian import determine_para_destination
+            custom_sum_path, custom_src_path = await determine_para_destination(safe_title, content_text, is_pdf=is_pdf)
         else:
             custom_src_path = None
             custom_sum_path = None

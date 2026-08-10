@@ -277,10 +277,22 @@ async def handle_done_command(chat_id: int, text: str, token: str, http_client: 
         return
         
     from backend.config import COMPLETED_TASKS_MD_FILE
+    from backend.vault.writer import atomic_write
     completed_file = COMPLETED_TASKS_MD_FILE
-    with open(completed_file, "a", encoding="utf-8") as f:
-        new_task = task_line.replace("- [ ]", f"- [x] (Completed on {get_today_str()})", 1)
-        f.write(new_task + "\n")
+    
+    header_str = "# ✅ Completed Tasks Archive\n\n> Archive of completed actions and quick 2-minute tasks. View in Telegram using `/done`.\n\n---\n\n## ✅ Completed Tasks\n"
+    existing_tasks = []
+    if os.path.exists(completed_file):
+        with open(completed_file, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip().startswith("- [x]") or line.strip().startswith("- [X]"):
+                    existing_tasks.append(line.strip())
+
+    new_task = task_line.replace("- [ ]", f"- [x] ~~", 1) + f"~~ (Completed on {get_today_str()})" if "Completed on" not in task_line else task_line.replace("- [ ]", "- [x]", 1)
+    
+    all_completed = [new_task] + existing_tasks
+    out_content = header_str + "\n".join(all_completed) + "\n"
+    atomic_write(completed_file, out_content)
         
     await send_msg(chat_id, token, http_client, f"✅ Done! Archived to z_Completed.md")
     

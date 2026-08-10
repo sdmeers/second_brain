@@ -71,36 +71,43 @@ async def maintain_tasks_dashboard():
                 else:
                     active_tasks.append(stripped)
                     
-        # 1. Handle newly completed tasks
+        # 1. Handle newly completed tasks (Insert at top in reverse chronological order)
         if newly_completed:
             today_str = datetime.now().strftime("%Y-%m-%d")
-            # Load existing completed tasks if any
-            existing_completed = ""
+            header_lines = [
+                "# ✅ Completed Tasks Archive\n\n",
+                "> Archive of completed actions and quick 2-minute tasks. View in Telegram using `/done`.\n\n",
+                "---\n\n",
+                "## ✅ Completed Tasks\n"
+            ]
+            
+            existing_tasks = []
             if os.path.exists(completed_file):
                 try:
                     with open(completed_file, "r", encoding="utf-8") as f:
-                        existing_completed = f.read()
+                        for line in f:
+                            if line.strip().startswith("- [x]") or line.strip().startswith("- [X]"):
+                                existing_tasks.append(line.strip())
                 except Exception:
                     pass
             
-            if not existing_completed.strip():
-                existing_completed = "# 🎓 Completed Tasks Archive\n\n> Historical log of checked off tasks.\n\n"
-                
-            # Append completed tasks with completion date
-            updated_completed = existing_completed
-            if not updated_completed.endswith("\n") and updated_completed.strip():
-                updated_completed += "\n"
-                
+            formatted_new = []
             for task in newly_completed:
-                # Add completion timestamp if not already present
                 if "Completed on" not in task:
                     task_clean = task.replace("- [x]", "- [x] ~~").replace("- [X]", "- [x] ~~") + f"~~ (Completed on {today_str})"
                 else:
                     task_clean = task
-                updated_completed += f"{task_clean}\n"
+                formatted_new.append(task_clean)
                 
-            atomic_write(completed_file, updated_completed)
-            print(f"Tasks Dashboard: Moved {len(newly_completed)} completed tasks to Completed_Tasks.md")
+            # Prepend new completed tasks at top of list
+            all_completed = formatted_new + existing_tasks
+            
+            out_content = "".join(header_lines)
+            for t in all_completed:
+                out_content += f"{t}\n"
+                
+            atomic_write(completed_file, out_content)
+            print(f"Tasks Dashboard: Moved {len(newly_completed)} completed tasks to z_Completed.md (reverse chronological)")
             
         # 2. Categorize active tasks
         today = datetime.now().date()

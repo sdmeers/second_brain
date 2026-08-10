@@ -554,7 +554,7 @@ async def auto_update_index():
     # Auto-generate Dataview hub note for any new Area folder missing its .md file
     for area_name in areas:
         area_folder = os.path.join(areas_dir, area_name)
-        hub_note = os.path.join(area_folder, f"{area_name}.md")
+        hub_note = os.path.join(area_folder, f"_{area_name}.md")
         if not os.path.exists(hub_note):
             hub_content = f"""---
 title: "{area_name} Area Dashboard"
@@ -572,13 +572,13 @@ tags: [area_index]
 ```dataview
 TABLE file.mtime AS "Last Modified"
 FROM "03_Areas/{area_name}"
-WHERE file.name != "{area_name}"
+WHERE file.name != "_{area_name}"
 SORT file.mtime DESC
 ```
 """
             try:
                 atomic_write(hub_note, hub_content)
-                print(f"Auto-generated Dataview Hub note for new area: {area_name}")
+                print(f"Auto-generated Dataview Hub note for new area: _{area_name}.md")
             except Exception as e:
                 print(f"Failed to create hub note for area {area_name}: {e}")
 

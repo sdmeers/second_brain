@@ -31,7 +31,8 @@ async def process_capture_core(
     author_hint: str = "",
     markdown_text: str = "",
     file_path: Optional[str] = None,
-    deep_extraction: bool = True
+    deep_extraction: bool = True,
+    is_research: bool = False
 ) -> dict:
     try:
         print(f"\n>>> Backend: Processing Request: {title} (Deep: {deep_extraction})")
@@ -166,12 +167,13 @@ async def process_capture_core(
         print(f"Backend [Stage 4]: Determined Title: {safe_title}")
         
         # 5. Save Source file via AI Librarian P.A.R.A destination check
-        if not deep_extraction:
-            from backend.utils.librarian import determine_para_destination
+        from backend.utils.librarian import determine_para_destination
+        if not is_research:
             custom_sum_path, custom_src_path = await determine_para_destination(safe_title, content_text, is_pdf=is_pdf)
         else:
-            custom_src_path = None
-            custom_sum_path = None
+            from backend.config import SOURCES_PATH, SUMMARIES_PATH
+            custom_src_path = SOURCES_PATH
+            custom_sum_path = SUMMARIES_PATH
 
         ext_to_use = ".pdf" if is_pdf else (".pptx" if is_pptx else (".docx" if is_docx else ".md"))
         source_link_name, _ = save_source_material(

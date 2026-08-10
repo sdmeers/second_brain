@@ -151,7 +151,7 @@ async def maintain_tasks_dashboard():
             for task in all_active:
                 new_content += f"{task}\n"
         else:
-            new_content += "*None*\n"
+            new_content += "🎉 *All clear! No active next actions remaining.*\n"
             
         # Write back to file if changed
         with open(tasks_file, "r", encoding="utf-8") as f:

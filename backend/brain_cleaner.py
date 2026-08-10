@@ -551,6 +551,37 @@ async def auto_update_index():
     projects = [d for d in os.listdir(projects_dir) if os.path.isdir(os.path.join(projects_dir, d)) and not d.startswith(('.', '_'))] if os.path.exists(projects_dir) else []
     areas = [d for d in os.listdir(areas_dir) if os.path.isdir(os.path.join(areas_dir, d)) and not d.startswith(('.', '_'))] if os.path.exists(areas_dir) else []
     
+    # Auto-generate Dataview hub note for any new Area folder missing its .md file
+    for area_name in areas:
+        area_folder = os.path.join(areas_dir, area_name)
+        hub_note = os.path.join(area_folder, f"{area_name}.md")
+        if not os.path.exists(hub_note):
+            hub_content = f"""---
+title: "{area_name} Area Dashboard"
+type: area
+tags: [area_index]
+---
+# 📁 {area_name}
+
+> Operational notes and documents for the {area_name} area.
+
+---
+
+## 📁 Area Notes & Documents
+
+```dataview
+TABLE file.mtime AS "Last Modified"
+FROM "03_Areas/{area_name}"
+WHERE file.name != "{area_name}"
+SORT file.mtime DESC
+```
+"""
+            try:
+                atomic_write(hub_note, hub_content)
+                print(f"Auto-generated Dataview Hub note for new area: {area_name}")
+            except Exception as e:
+                print(f"Failed to create hub note for area {area_name}: {e}")
+
     index_file = os.path.join(VAULT_PATH, "00_System", "_INDEX.md")
     if not os.path.exists(index_file):
         return
@@ -559,7 +590,6 @@ async def auto_update_index():
         content = f.read()
         
     proj_text = "## 02_Projects/\n" + "\n".join(f"- `{p}`" for p in sorted(projects)) + "\n"
-    area_text = "## 03_Areas/\n" + "\n".join(f"- `{a}`" for p in sorted(areas) for a in [p]) + "\n" # formatting trick to get loop variable
     area_text = "## 03_Areas/\n" + "\n".join(f"- `{a}`" for a in sorted(areas)) + "\n"
     
     # Replace sections

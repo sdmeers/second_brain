@@ -261,3 +261,30 @@ def extract_pptx_text_from_bytes(pptx_bytes: bytes) -> str:
         print(f"PPTX Bytes Text Extraction Error: {e}")
         return f"Error extracting text from PowerPoint presentation bytes: {e}"
 
+def extract_docx_text_from_bytes(docx_bytes: bytes) -> str:
+    """Extracts text from Word document (.docx) bytes."""
+    import io
+    import docx
+    try:
+        doc_stream = io.BytesIO(docx_bytes)
+        doc = docx.Document(doc_stream)
+        paragraphs = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
+        for table in doc.tables:
+            for row in table.rows:
+                row_text = " | ".join(cell.text.strip() for cell in row.cells if cell.text.strip())
+                if row_text:
+                    paragraphs.append(row_text)
+        return "\n\n".join(paragraphs).strip()
+    except Exception as e:
+        print(f"DOCX Bytes Text Extraction Error: {e}")
+        return f"Error extracting text from Word document: {e}"
+
+def extract_docx_text(url: str) -> tuple[str, bytes]:
+    """Downloads Word document (.docx) and extracts text."""
+    headers = {"User-Agent": "Mozilla/5.0"}
+    response = httpx.get(url, follow_redirects=True, timeout=30.0, headers=headers)
+    response.raise_for_status()
+    docx_bytes = response.content
+    extracted_text = extract_docx_text_from_bytes(docx_bytes)
+    return extracted_text, docx_bytes
+

@@ -51,6 +51,7 @@ async def process_capture_core(
             
         is_pdf = ext == ".pdf" or clean_url.endswith('.pdf') or '/pdf/' in clean_url
         is_pptx = ext == ".pptx" or clean_url.endswith('.pptx')
+        is_docx = ext in [".docx", ".doc"] or clean_url.endswith('.docx') or clean_url.endswith('.doc')
         is_youtube = "youtube.com/watch" in url or "youtu.be/" in url
         
         # Read the file bytes if file_path is provided
@@ -62,7 +63,7 @@ async def process_capture_core(
             except Exception as read_e:
                 print(f"Backend: Failed to read file bytes: {read_e}")
         
-        # 1. Handle PDF vs PPTX vs Text extraction vs YouTube Fallback
+        # 1. Handle PDF vs PPTX vs DOCX vs Text extraction vs YouTube Fallback
         if is_pdf:
             print("Backend [Stage 1]: Processing as PDF...")
             if file_bytes:
@@ -81,6 +82,13 @@ async def process_capture_core(
                     content_text = extracted_text
             else:
                 content_text = f"PowerPoint presentation: {title}"
+        elif is_docx:
+            print("Backend [Stage 1]: Processing as Word Document (.docx)...")
+            from backend.processing.extractor import extract_docx_text, extract_docx_text_from_bytes
+            if file_bytes:
+                content_text = extract_docx_text_from_bytes(file_bytes)
+            else:
+                content_text, file_bytes = extract_docx_text(url)
         elif is_youtube and not content_text:
             print("Backend [Stage 1]: Processing as YouTube (via backend fallback)...")
             content_text = await extract_youtube_transcript(url)
@@ -161,14 +169,14 @@ async def process_capture_core(
         custom_src_path = None if deep_extraction else REFERENCE_SOURCES_PATH
         custom_sum_path = None if deep_extraction else REFERENCE_NOTES_PATH
 
-        ext_to_use = ".pdf" if is_pdf else (".pptx" if is_pptx else ".md")
+        ext_to_use = ".pdf" if is_pdf else (".pptx" if is_pptx else (".docx" if is_docx else ".md"))
         source_link_name, _ = save_source_material(
-            safe_title, is_pdf or is_pptx, url, content_text, file_bytes,
+            safe_title, is_pdf or is_pptx or is_docx, url, content_text, file_bytes,
             custom_sources_path=custom_src_path, extension=ext_to_use
         )
                 
-        # 6. Save Brain Node (including full extracted text for PDFs/PPTXs for RAG vectorization)
-        if (is_pdf or is_pptx) and content_text:
+        # 6. Save Brain Node (including full extracted text for PDFs/PPTXs/DOCXs for RAG vectorization)
+        if (is_pdf or is_pptx or is_docx) and content_text:
             if "\n## Complete Document Text" not in brain_node_markdown:
                 brain_node_markdown += f"\n\n---\n## Complete Document Text\n\n{content_text}"
 

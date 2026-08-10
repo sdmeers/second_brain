@@ -324,9 +324,27 @@ async def process_queue_worker():
             pattern = re.compile(re.escape(trigger), re.IGNORECASE)
             clean_input = pattern.sub("", clean_input).strip()
             
+        # Check if URL or input refers to a PDF or PPTX file
+        is_pdf_or_pptx = False
+        if file_path and file_path.lower().endswith((".pdf", ".pptx")):
+            is_pdf_or_pptx = True
+        elif url:
+            clean_u = url.lower().split("?")[0]
+            if clean_u.endswith((".pdf", ".pptx")) or "/pdf/" in clean_u or "/manuals/" in clean_u:
+                is_pdf_or_pptx = True
+            else:
+                try:
+                    async with httpx.AsyncClient(follow_redirects=True, timeout=5.0) as check_client:
+                        head_res = await check_client.head(url, headers={"User-Agent": "Mozilla/5.0"})
+                        ct = head_res.headers.get("content-type", "").lower()
+                        if "application/pdf" in ct or "powerpoint" in ct:
+                            is_pdf_or_pptx = True
+                except Exception:
+                    pass
+
         saved_file_path = None
-        if research_requested or classification.category == "deep_research" or (file_path and file_path.lower().endswith((".pdf", ".pptx"))):
-            # Full Research Brain Deep Research workflow ONLY if explicitly requested, otherwise light capture
+        if research_requested or classification.category == "deep_research" or is_pdf_or_pptx:
+            # Full Research / Document Deep Extraction workflow
             target_url = url or f"https://local.brain/deep-research/{item_id}"
             target_title = raw_payload.get("title") or (os.path.basename(file_path).rsplit(".", 1)[0] if file_path else "")
             notes = clean_input.replace(target_url, "").strip() if target_url in clean_input else clean_input
@@ -336,7 +354,7 @@ async def process_queue_worker():
                 title=target_title,
                 markdown_text=notes,
                 file_path=file_path,
-                deep_extraction=research_requested
+                deep_extraction=True
             )
             result_title = result.get("title", target_title)
             saved_file_path = result.get("node_path")

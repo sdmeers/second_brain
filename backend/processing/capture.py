@@ -4,7 +4,7 @@ import asyncio
 import httpx
 from typing import Optional
 
-from backend.config import SUMMARIES_PATH, SOURCES_PATH, REFERENCE_NOTES_PATH, REFERENCE_SOURCES_PATH
+from backend.config import OBSIDIAN_VAULT_PATH, SUMMARIES_PATH, SOURCES_PATH, REFERENCE_NOTES_PATH, REFERENCE_SOURCES_PATH
 from backend.vault.paths import is_url_already_ingested, get_atlas_themes
 from backend.vault.writer import save_source_material, save_brain_node
 from backend.processing.extractor import (
@@ -167,7 +167,11 @@ async def process_capture_core(
             custom_sources_path=custom_src_path, extension=ext_to_use
         )
                 
-        # 6. Save Brain Node
+        # 6. Save Brain Node (including full extracted text for PDFs/PPTXs for RAG vectorization)
+        if (is_pdf or is_pptx) and content_text:
+            if "\n## Complete Document Text" not in brain_node_markdown:
+                brain_node_markdown += f"\n\n---\n## Complete Document Text\n\n{content_text}"
+
         node_path = save_brain_node(
             safe_title, brain_node_markdown, source_link_name,
             custom_summaries_path=custom_sum_path

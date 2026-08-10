@@ -42,38 +42,66 @@ def parse_deadline(line: str) -> datetime:
     return None
 
 async def maintain_tasks_dashboard():
-    """Reads Tasks.md, moves completed tasks to Completed_Tasks.md,
-    and reorganizes active tasks into Overdue, Due Today, Upcoming, and Backlog sections."""
-    tasks_file = TASKS_MD_FILE
-    completed_file = COMPLETED_TASKS_MD_FILE
+    """Scans all task files (Next_Actions.md, Waiting_For.md, Someday_Maybe.md, Captured.md),
+    moves completed tasks to z_Completed.md (in reverse chronological order),
+    writes List Clear messages for empty lists, and categorizes Next_Actions.md."""
+    from backend.config import TASKS_PATH, COMPLETED_TASKS_MD_FILE, TASKS_MD_FILE, WAITING_FOR_MD_FILE, SOMEDAY_MAYBE_MD_FILE, CAPTURED_MD_FILE
     
-    if not os.path.exists(tasks_file):
-        return
-        
     try:
-        # Read the current task file contents
-        with open(tasks_file, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-            
-        active_tasks = []
+        completed_file = COMPLETED_TASKS_MD_FILE
+        today_str = datetime.now().strftime("%Y-%m-%d")
         newly_completed = []
-        
-        for line in lines:
-            stripped = line.strip()
-            # Match task checkmarks
-            if stripped.startswith("- [") and len(stripped) >= 6:
-                checkbox = stripped[3:4]
+        active_next_actions = []
+
+        all_task_files = [
+            ("Next_Actions.md", TASKS_MD_FILE),
+            ("Waiting_For.md", WAITING_FOR_MD_FILE),
+            ("Someday_Maybe.md", SOMEDAY_MAYBE_MD_FILE),
+            ("Captured.md", CAPTURED_MD_FILE)
+        ]
+
+        for fname, fpath in all_task_files:
+            if not os.path.exists(fpath):
+                continue
                 
-                is_completed = checkbox.lower() in ["x", "v"] # support x or checked mark
+            with open(fpath, "r", encoding="utf-8") as f:
+                lines = f.readlines()
                 
-                if is_completed:
-                    newly_completed.append(stripped)
-                else:
-                    active_tasks.append(stripped)
+            file_newly_completed = []
+            file_active = []
+            
+            for line in lines:
+                stripped = line.strip()
+                if stripped.startswith("- [") and len(stripped) >= 6:
+                    checkbox = stripped[3:4]
+                    if checkbox.lower() in ["x", "v"]:
+                        file_newly_completed.append(stripped)
+                    else:
+                        file_active.append(stripped)
+
+            if fname == "Next_Actions.md":
+                active_next_actions = file_active
+
+            if file_newly_completed:
+                newly_completed.extend(file_newly_completed)
+                
+                # Rewrite non-Next_Actions files immediately if completed items were removed from them
+                if fname != "Next_Actions.md":
+                    if fname == "Waiting_For.md":
+                        header = "# ⏳ Waiting For\n\n> Delegated actions and items owed to you by others. View in Telegram using `/waiting`.\n\n---\n\n## ⏳ Waiting For\n"
+                        clear_msg = "🎉 *All clear! No pending items waiting on others.*\n"
+                    elif fname == "Someday_Maybe.md":
+                        header = "# 💡 Someday / Maybe\n\n> Future ideas, uncommitted desires, and projects to review during `/reflect`.\n\n---\n\n## 💡 Someday / Maybe\n"
+                        clear_msg = "🎉 *List clear! No someday/maybe items recorded.*\n"
+                    elif fname == "Captured.md":
+                        header = "# 📥 Captured\n\n> Raw thoughts and voice captures awaiting clarification via `/clarify`.\n\n---\n\n## 📥 Captured Items\n"
+                        clear_msg = "🎉 *Inbox Zero! No captured items awaiting clarification.*\n"
                     
-        # 1. Handle newly completed tasks (Insert at top in reverse chronological order)
+                    content = header + ("\n".join(file_active) + "\n" if file_active else clear_msg)
+                    atomic_write(fpath, content)
+
+        # Move all newly completed tasks to z_Completed.md (reverse chronological)
         if newly_completed:
-            today_str = datetime.now().strftime("%Y-%m-%d")
             header_lines = [
                 "# ✅ Completed Tasks Archive\n\n",
                 "> Archive of completed actions and quick 2-minute tasks. View in Telegram using `/done`.\n\n",
@@ -99,16 +127,11 @@ async def maintain_tasks_dashboard():
                     task_clean = task
                 formatted_new.append(task_clean)
                 
-            # Prepend new completed tasks at top of list
             all_completed = formatted_new + existing_tasks
-            
-            out_content = "".join(header_lines)
-            for t in all_completed:
-                out_content += f"{t}\n"
-                
+            out_content = "".join(header_lines) + "\n".join(all_completed) + "\n"
             atomic_write(completed_file, out_content)
-            print(f"Tasks Dashboard: Moved {len(newly_completed)} completed tasks to z_Completed.md (reverse chronological)")
-            
+            print(f"Tasks Dashboard: Moved {len(newly_completed)} completed tasks to z_Completed.md")
+                
         # 2. Categorize active tasks
         today = datetime.now().date()
         overdue_tasks = []
@@ -116,7 +139,7 @@ async def maintain_tasks_dashboard():
         upcoming_tasks = []
         backlog_tasks = []
         
-        for task in active_tasks:
+        for task in active_next_actions:
             due_date = parse_deadline(task)
             
             # Replace relative date keywords with standard YYYY-MM-DD for compatibility
@@ -154,12 +177,13 @@ async def maintain_tasks_dashboard():
             new_content += "🎉 *All clear! No active next actions remaining.*\n"
             
         # Write back to file if changed
-        with open(tasks_file, "r", encoding="utf-8") as f:
-            current_raw = f.read()
-            
-        if current_raw.strip() != new_content.strip():
-            atomic_write(tasks_file, new_content)
-            print("Tasks Dashboard: Regenerated and categorized Tasks.md successfully.")
+        if os.path.exists(TASKS_MD_FILE):
+            with open(TASKS_MD_FILE, "r", encoding="utf-8") as f:
+                current_raw = f.read()
+                
+            if current_raw.strip() != new_content.strip():
+                atomic_write(TASKS_MD_FILE, new_content)
+                print("Tasks Dashboard: Regenerated and categorized Tasks.md successfully.")
             
     except Exception as e:
         print(f"Tasks Dashboard: Error maintaining task list: {e}")

@@ -181,10 +181,10 @@ async def process_telegram_message(message: dict, token: str, http_client):
                 
                 full_capture = capture_text.replace('\n', ' ').strip()
                 captured_md = os.path.join(OBSIDIAN_VAULT_PATH, "01_Tasks", "Captured.md")
-                os.makedirs(os.path.dirname(captured_md), exist_ok=True)
                 date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
-                with open(captured_md, "a", encoding="utf-8") as f:
-                    f.write(f"- {full_capture} (Captured on {date_str} via Telegram) (Source: [[{filename}]])\n")
+                cap_item = f"- {full_capture} (Captured on {date_str} via Telegram) (Source: [[{filename}]])"
+                from backend.utils.tasks_dashboard import append_gtd_item
+                append_gtd_item(captured_md, cap_item)
                 
                 preview = full_capture[:60] + ("..." if len(full_capture) > 60 else "")
                 await http_client.post(
@@ -314,10 +314,10 @@ async def process_telegram_message(message: dict, token: str, http_client):
                 
                 full_transcript = transcript.replace('\n', ' ').strip()
                 captured_md = os.path.join(OBSIDIAN_VAULT_PATH, "01_Tasks", "Captured.md")
-                os.makedirs(os.path.dirname(captured_md), exist_ok=True)
                 date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
-                with open(captured_md, "a", encoding="utf-8") as f:
-                    f.write(f"- {full_transcript} (Captured on {date_str} via Telegram Voice) (Source: [[{filename}]])\n")
+                voice_item = f"- {full_transcript} (Captured on {date_str} via Telegram Voice) (Source: [[{filename}]])"
+                from backend.utils.tasks_dashboard import append_gtd_item
+                append_gtd_item(captured_md, voice_item)
                 
                 preview = full_transcript[:60] + ("..." if len(full_transcript) > 60 else "")
                 await http_client.post(

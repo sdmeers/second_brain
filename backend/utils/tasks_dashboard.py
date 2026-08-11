@@ -41,6 +41,39 @@ def parse_deadline(line: str) -> datetime:
 
     return None
 
+def append_gtd_item(filepath: str, item_line: str):
+    """Appends an item to a GTD task file, automatically stripping any clear messages."""
+    from backend.vault.writer import atomic_write
+    fname = os.path.basename(filepath)
+    if fname == "Captured.md":
+        header = "# 📥 Captured\n\n> Raw thoughts and voice captures awaiting clarification via `/clarify`.\n\n---\n\n## 📥 Captured Items\n\n"
+    elif fname == "Next_Actions.md":
+        header = "# ⚡ Next Actions\n\n> Flexible, context-tagged action list. Filter in Telegram using `/next @context`.\n\n---\n\n## ⚡ Next Actions\n\n"
+    elif fname == "Waiting_For.md":
+        header = "# ⏳ Waiting For\n\n> Delegated actions and items owed to you by others. View in Telegram using `/waiting`.\n\n---\n\n## ⏳ Waiting For\n\n"
+    elif fname == "Someday_Maybe.md":
+        header = "# 💡 Someday / Maybe\n\n> Future ideas, uncommitted desires, and projects to review during `/reflect`.\n\n---\n\n## 💡 Someday / Maybe\n\n"
+    else:
+        header = None
+
+    existing_items = []
+    if os.path.exists(filepath):
+        with open(filepath, "r", encoding="utf-8") as f:
+            for l in f:
+                s = l.strip()
+                if "🎉" in s or "Inbox Zero" in s or "All clear" in s or "List clear" in s or "*None*" in s:
+                    continue
+                if fname == "Captured.md":
+                    if s.startswith("- "):
+                        existing_items.append(s)
+                else:
+                    if s.startswith("- ["):
+                        existing_items.append(s)
+
+    existing_items.append(item_line.strip())
+    content = (header or "") + "\n".join(existing_items) + "\n"
+    atomic_write(filepath, content)
+
 async def maintain_tasks_dashboard():
     """Scans all task files (Next_Actions.md, Waiting_For.md, Someday_Maybe.md, Captured.md),
     moves completed tasks to z_Completed.md (in reverse chronological order),
@@ -72,12 +105,18 @@ async def maintain_tasks_dashboard():
             
             for line in lines:
                 stripped = line.strip()
-                if stripped.startswith("- [") and len(stripped) >= 6:
-                    checkbox = stripped[3:4]
-                    if checkbox.lower() in ["x", "v"]:
-                        file_newly_completed.append(stripped)
-                    else:
+                if "🎉" in stripped or "Inbox Zero" in stripped or "All clear" in stripped or "List clear" in stripped or "*None*" in stripped:
+                    continue
+                if fname == "Captured.md":
+                    if stripped.startswith("- "):
                         file_active.append(stripped)
+                else:
+                    if stripped.startswith("- [") and len(stripped) >= 6:
+                        checkbox = stripped[3:4]
+                        if checkbox.lower() in ["x", "v"]:
+                            file_newly_completed.append(stripped)
+                        else:
+                            file_active.append(stripped)
 
             if fname == "Next_Actions.md":
                 active_next_actions = file_active
@@ -85,19 +124,22 @@ async def maintain_tasks_dashboard():
             if file_newly_completed:
                 newly_completed.extend(file_newly_completed)
                 
-                # Rewrite non-Next_Actions files immediately if completed items were removed from them
-                if fname != "Next_Actions.md":
-                    if fname == "Waiting_For.md":
-                        header = "# ⏳ Waiting For\n\n> Delegated actions and items owed to you by others. View in Telegram using `/waiting`.\n\n---\n\n## ⏳ Waiting For\n\n"
-                        clear_msg = "🎉 *All clear! No pending items waiting on others.*\n"
-                    elif fname == "Someday_Maybe.md":
-                        header = "# 💡 Someday / Maybe\n\n> Future ideas, uncommitted desires, and projects to review during `/reflect`.\n\n---\n\n## 💡 Someday / Maybe\n\n"
-                        clear_msg = "🎉 *List clear! No someday/maybe items recorded.*\n"
-                    elif fname == "Captured.md":
-                        header = "# 📥 Captured\n\n> Raw thoughts and voice captures awaiting clarification via `/clarify`.\n\n---\n\n## 📥 Captured Items\n\n"
-                        clear_msg = "🎉 *Inbox Zero! No captured items awaiting clarification.*\n"
-                    
-                    content = header + ("\n".join(file_active) + "\n" if file_active else clear_msg)
+            # Maintain non-Next_Actions files immediately
+            if fname != "Next_Actions.md":
+                if fname == "Waiting_For.md":
+                    header = "# ⏳ Waiting For\n\n> Delegated actions and items owed to you by others. View in Telegram using `/waiting`.\n\n---\n\n## ⏳ Waiting For\n\n"
+                    clear_msg = "🎉 *All clear! No pending items waiting on others.*\n"
+                elif fname == "Someday_Maybe.md":
+                    header = "# 💡 Someday / Maybe\n\n> Future ideas, uncommitted desires, and projects to review during `/reflect`.\n\n---\n\n## 💡 Someday / Maybe\n\n"
+                    clear_msg = "🎉 *List clear! No someday/maybe items recorded.*\n"
+                elif fname == "Captured.md":
+                    header = "# 📥 Captured\n\n> Raw thoughts and voice captures awaiting clarification via `/clarify`.\n\n---\n\n## 📥 Captured Items\n\n"
+                    clear_msg = "🎉 *Inbox Zero! No captured items awaiting clarification.*\n"
+                
+                content = header + ("\n".join(file_active) + "\n" if file_active else clear_msg)
+                with open(fpath, "r", encoding="utf-8") as rf:
+                    curr_raw = rf.read()
+                if curr_raw.strip() != content.strip():
                     atomic_write(fpath, content)
 
         # Move all newly completed tasks to z_Completed.md (reverse chronological)

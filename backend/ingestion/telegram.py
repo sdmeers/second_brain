@@ -214,22 +214,22 @@ async def process_telegram_message(message: dict, token: str, http_client):
                 help_text = """🧠 <b>Second Brain — GTD + PARA Command Reference</b>
 
 ━━━ 📥 <b>CAPTURE</b> ━━━
-  /in <text/voice>    Quick capture (or send voice note)
-  /capture <text>     Explicit capture to Captured.md
-  /research <URL>     Deep research ingestion
+  /in &lt;text/voice&gt;    Quick capture (or send voice note)
+  /capture &lt;text&gt;     Explicit capture to Captured.md
+  /research &lt;URL&gt;     Deep research ingestion
 
 ━━━ ⚙️ <b>CLARIFY & ORGANISE</b> ━━━
   /clarify             Process captured items through GTD workflow
-  /done <item>         Mark task complete & promote project next step
-  /tickle <date> <item> Defer item (e.g. /tickle 23rd Aug Send card)
+  /done &lt;item&gt;         Mark task complete & promote project next step
+  /tickle &lt;date&gt; &lt;item&gt; Defer item (e.g. /tickle 23rd Aug Send card)
 
 ━━━ ⚡ <b>ENGAGE & PROJECTS</b> ━━━
   /next                View active next actions
   /next @errands       Filter actions by context (@home, @computer, etc.)
   /waiting             View delegated items
-  /project <name>      View project roadmap & active actions
-  /project <name> add <step>  Add step to project roadmap
-  /archive <project>   Archive completed project to 05_Archive/
+  /project &lt;name&gt;      View project roadmap & active actions
+  /project &lt;name&gt; add &lt;step&gt;  Add step to project roadmap
+  /archive &lt;project&gt;   Archive completed project to 05_Archive/
 
 ━━━ 📊 <b>REFLECT & REVIEWS</b> ━━━
   /status              View GTD list counts & active projects (sitrep)
@@ -238,10 +238,10 @@ async def process_telegram_message(message: dict, token: str, http_client):
   /holiday resume      Resume reviews early
 
 ━━━ 💬 <b>Q&A & SYSTEM</b> ━━━
-  /ask <question>      Ask anything (or type naturally)
-  /jira <summary>      Create Jira ticket in backlog
+  /ask &lt;question&gt;      Ask anything (or type naturally)
+  /jira &lt;summary&gt;      Create Jira ticket in backlog
   /help                Show this command reference"""
-                await http_client.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": chat_id, "text": help_text, "parse_mode": "HTML"})
+                await send_telegram_message_safe(http_client, token, chat_id, help_text)
                 return
             elif cmd_part == "/clarify":
                 from backend.ingestion.handlers.clarify import handle_clarify_command

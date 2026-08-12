@@ -627,7 +627,7 @@ async def generate_daily_digest():
     today_str = today_dt.strftime("%Y-%m-%d")
     is_weekend = today_dt.weekday() >= 5
     
-    # --- Part 1: GTD Quick Review ---
+    # --- Part 1: GTD Daily Review ---
     captured_file = os.path.join(VAULT_PATH, "01_Tasks", "Captured.md")
     next_file = os.path.join(VAULT_PATH, "01_Tasks", "Next_Actions.md")
     waiting_file = os.path.join(VAULT_PATH, "01_Tasks", "Waiting_For.md")
@@ -637,13 +637,19 @@ async def generate_daily_digest():
         with open(captured_file, "r", encoding="utf-8") as f:
             unclarified_count = sum(1 for line in f if line.strip().startswith("- "))
             
-    active_actions_count = 0
+    active_next_actions = []
+    active_actions_by_context = {}
     tickler_surfaced = []
     active_projects = set()
+    
     if os.path.exists(next_file):
         with open(next_file, "r", encoding="utf-8") as f:
             for line in f:
                 if not line.strip().startswith("- [ ]"): continue
+                
+                if is_weekend and "#professional" in line.lower(): continue
+                if prof_paused and "#professional" in line.lower(): continue
+                if pers_paused and "#personal" in line.lower(): continue
                 
                 m_tick = re.search(r'🔔 (\d{4}-\d{2}-\d{2})', line)
                 if m_tick:
@@ -651,26 +657,41 @@ async def generate_daily_digest():
                     if tick_date > today_str: continue # hidden
                     elif tick_date == today_str: tickler_surfaced.append(line.strip())
                 
-                active_actions_count += 1
+                clean_line = re.sub(r'\(Captured on.*?\)', '', line).strip("- [ ]\n").strip()
+                active_next_actions.append(clean_line)
+                
+                m_ctx = re.search(r'(@[a-zA-Z0-9_\-]+)', clean_line)
+                ctx_name = m_ctx.group(1) if m_ctx else "@other"
+                
+                if ctx_name not in active_actions_by_context:
+                    active_actions_by_context[ctx_name] = []
+                active_actions_by_context[ctx_name].append(clean_line)
                 
                 m_proj = re.search(r'#project/([a-zA-Z0-9_\-]+)', line)
                 if m_proj: active_projects.add(m_proj.group(1))
 
+    waiting_items = []
     stale_waitings = []
     if os.path.exists(waiting_file):
         with open(waiting_file, "r", encoding="utf-8") as f:
             for line in f:
                 if not line.strip().startswith("- [ ]"): continue
                 
+                if is_weekend and "#professional" in line.lower(): continue
+                if prof_paused and "#professional" in line.lower(): continue
+                if pers_paused and "#personal" in line.lower(): continue
+
                 m_tick = re.search(r'🔔 (\d{4}-\d{2}-\d{2})', line)
                 if m_tick and m_tick.group(1) > today_str: continue
                 
-                # Check stale (naive age check if captured date exists)
+                clean_line = re.sub(r'\(Captured on.*?\)', '', line).strip("- [ ]\n").strip()
+                waiting_items.append(clean_line)
+                
                 m_cap = re.search(r'\(Captured .*? on (\d{4}-\d{2}-\d{2})\)', line)
                 if m_cap:
                     cap_date = datetime.strptime(m_cap.group(1), "%Y-%m-%d")
                     if (today_dt - cap_date).days > 5:
-                        stale_waitings.append(line.strip())
+                        stale_waitings.append(clean_line)
                 
                 m_proj = re.search(r'#project/([a-zA-Z0-9_\-]+)', line)
                 if m_proj: active_projects.add(m_proj.group(1))
@@ -737,22 +758,33 @@ async def generate_daily_digest():
     # Assemble Digest
     digest_content = f"# Daily Digest - {today_str}\n\n"
     
-    digest_content += "## Part 1: GTD Quick Review\n"
+    digest_content += "## ⚡ Active Next Actions\n"
+    if active_actions_by_context:
+        for ctx_name, item_list in active_actions_by_context.items():
+            digest_content += f"### {ctx_name}\n"
+            digest_content += "\n".join(f"- {it}" for it in item_list) + "\n\n"
+    else:
+        digest_content += "*No active next actions.*\n\n"
+
     if project_deadlines:
-        digest_content += "### 🚨 Upcoming Project Deadlines (<= 7 Days)\n"
+        digest_content += "## 🚨 Upcoming Project Deadlines (<= 7 Days)\n"
         digest_content += "\n".join(f"- {dl}" for dl in project_deadlines) + "\n\n"
 
-    digest_content += f"- Unclarified Captured Items: {unclarified_count}\n"
-    digest_content += f"- Active Next Actions: {active_actions_count}\n"
-    digest_content += f"- Stale Delegations (>5d): {len(stale_waitings)}\n"
-    digest_content += f"- Tickler Items Surfaced Today: {len(tickler_surfaced)}\n"
-    digest_content += f"- Orphaned Projects (0 active actions): {len(orphaned_projects)}\n\n"
-    
+    if waiting_items:
+        digest_content += "## ⏳ Waiting For Items\n"
+        digest_content += "\n".join(f"- {it}" for it in waiting_items) + "\n\n"
+
     if tickler_surfaced:
-        digest_content += "### 🔔 Tickler Items Surfaced Today\n"
+        digest_content += "## 🔔 Tickler Items Surfaced Today\n"
         digest_content += "\n".join(f"- {item}" for item in tickler_surfaced) + "\n\n"
 
-    digest_content += "## Part 2: Recent Brain Activity\n"
+    digest_content += "## 📊 Daily Summary\n"
+    digest_content += f"- Unclarified Captured Items: {unclarified_count}\n"
+    digest_content += f"- Active Next Actions: {len(active_next_actions)}\n"
+    digest_content += f"- Waiting For Items: {len(waiting_items)}\n"
+    digest_content += f"- Orphaned Projects: {len(orphaned_projects)}\n\n"
+
+    digest_content += "## 📁 Recent Brain Activity (Last 24h)\n"
     if recent_activity:
         digest_content += "\n".join(f"- `{item}`" for item in recent_activity) + "\n\n"
     else:
@@ -773,14 +805,32 @@ async def generate_daily_digest():
         else:
             chat_id = str(TELEGRAM_ALLOWED_CHAT_IDS).split(",")[0].strip()
             
-        summary = f"🌅 Daily Digest ({today_str})\n\n"
+        summary_lines = [f"🌅 **Daily Review ({today_str})**\n"]
         if project_deadlines:
-            summary += "🚨 Upcoming Deadlines:\n" + "\n".join(f"• {dl.replace('**', '')}" for dl in project_deadlines) + "\n\n"
+            summary_lines.append("🚨 **Upcoming Deadlines:**")
+            summary_lines.extend(f"• {dl.replace('**', '')}" for dl in project_deadlines)
+            summary_lines.append("")
             
-        summary += f"- Unclarified: {unclarified_count}\n- Next Actions: {active_actions_count}\n- Stale Waitings: {len(stale_waitings)}\n- Ticklers Surfaced: {len(tickler_surfaced)}\n- Orphaned Projects: {len(orphaned_projects)}\n- Recent Notes: {len(recent_activity)}"
+        if active_actions_by_context:
+            summary_lines.append(f"⚡ **Next Actions ({len(active_next_actions)}):**")
+            for ctx_name, item_list in active_actions_by_context.items():
+                summary_lines.append(f"<b>{ctx_name}</b>")
+                summary_lines.extend(f"• {it}" for it in item_list[:5])
+            summary_lines.append("")
+            
+        if waiting_items:
+            summary_lines.append(f"⏳ **Waiting For ({len(waiting_items)}):**")
+            summary_lines.extend(f"• {it}" for it in waiting_items[:5])
+            summary_lines.append("")
+
+        if unclarified_count > 0:
+            summary_lines.append(f"📥 **Unclarified Items:** {unclarified_count} awaiting /clarify")
+
+        summary_text = "\n".join(summary_lines)
         try:
+            from backend.ingestion.telegram import send_telegram_message_safe
             async with httpx.AsyncClient() as client:
-                await client.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", json={"chat_id": chat_id, "text": summary})
+                await send_telegram_message_safe(client, TELEGRAM_BOT_TOKEN, chat_id, summary_text)
         except Exception as e:
             print(f"Failed to send digest via Telegram: {e}")
 

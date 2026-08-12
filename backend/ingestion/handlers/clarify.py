@@ -151,6 +151,7 @@ type: project
 category: {category}
 outcome: "{outcome_str}"
 date_created: "{today_str}"
+due_date: ""
 status: active
 ---
 # {proj_clean}

@@ -463,7 +463,7 @@ async def handle_telegram_callback_query(callback_query: dict, token: str, http_
                 }
             )
 
-    elif data.startswith("clarify:"):
+    elif data.startswith("clarify:") or data.startswith("clarify_cal:"):
         from backend.ingestion.handlers.clarify import handle_clarify_callback
         await handle_clarify_callback(callback_query, token, http_client)
 

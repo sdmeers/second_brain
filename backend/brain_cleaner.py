@@ -676,6 +676,7 @@ async def generate_daily_digest():
                 if m_proj: active_projects.add(m_proj.group(1))
 
     orphaned_projects = []
+    project_deadlines = []
     proj_dir = os.path.join(VAULT_PATH, "02_Projects")
     for root, dirs, files in os.walk(proj_dir):
         if is_weekend and "Professional" in root: continue
@@ -684,6 +685,35 @@ async def generate_daily_digest():
             proj_name = f.replace(".md", "")
             if proj_name.replace(" ", "_") not in active_projects:
                 orphaned_projects.append(proj_name)
+
+            p_file = os.path.join(root, f)
+            try:
+                with open(p_file, "r", encoding="utf-8") as pf:
+                    p_text = pf.read()
+                m_status = re.search(r'status:\s*"?([a-zA-Z0-9_\-]+)"?', p_text)
+                if m_status and m_status.group(1).lower() in ["completed", "archived"]:
+                    continue
+                
+                m_due = re.search(r'due_date:\s*"?(\d{4}-\d{2}-\d{2}|\d{2}-\d{2}-\d{4})"?', p_text)
+                if m_due:
+                    due_raw = m_due.group(1)
+                    if "-" in due_raw and len(due_raw.split("-")[0]) == 4:
+                        due_dt = datetime.strptime(due_raw, "%Y-%m-%d").date()
+                    else:
+                        due_dt = datetime.strptime(due_raw, "%d-%m-%Y").date()
+                    
+                    days_left = (due_dt - today_dt.date()).days
+                    date_disp = due_dt.strftime("%d-%m-%Y")
+                    
+                    if days_left <= 7:
+                        if days_left < 0:
+                            project_deadlines.append(f"⚠️ **{proj_name}** — OVERDUE by {abs(days_left)} day(s) ({date_disp})")
+                        elif days_left == 0:
+                            project_deadlines.append(f"🚨 **{proj_name}** — DUE TODAY! ({date_disp})")
+                        else:
+                            project_deadlines.append(f"🚨 **{proj_name}** — Due in {days_left} day(s) ({date_disp})")
+            except Exception:
+                pass
     
     # --- Part 2: Recent Brain Activity (Last 24h) ---
     yesterday = today_dt - timedelta(days=1)
@@ -708,22 +738,25 @@ async def generate_daily_digest():
     digest_content = f"# Daily Digest - {today_str}\n\n"
     
     digest_content += "## Part 1: GTD Quick Review\n"
-    digest_content += f"- **Unclarified items**: {unclarified_count} awaiting /clarify\n"
-    digest_content += f"- **Active Next Actions**: {active_actions_count}\n"
+    if project_deadlines:
+        digest_content += "### 🚨 Upcoming Project Deadlines (<= 7 Days)\n"
+        digest_content += "\n".join(f"- {dl}" for dl in project_deadlines) + "\n\n"
+
+    digest_content += f"- Unclarified Captured Items: {unclarified_count}\n"
+    digest_content += f"- Active Next Actions: {active_actions_count}\n"
+    digest_content += f"- Stale Delegations (>5d): {len(stale_waitings)}\n"
+    digest_content += f"- Tickler Items Surfaced Today: {len(tickler_surfaced)}\n"
+    digest_content += f"- Orphaned Projects (0 active actions): {len(orphaned_projects)}\n\n"
     
-    if stale_waitings:
-        digest_content += "### Stale Waiting For (>5 days)\n" + "\n".join(stale_waitings) + "\n\n"
     if tickler_surfaced:
-        digest_content += "### Tickler items surfacing today\n" + "\n".join(tickler_surfaced) + "\n\n"
-    if orphaned_projects:
-        digest_content += "### Orphaned Projects (0 active actions)\n" + "\n".join([f"- {p}" for p in orphaned_projects[:10]]) + "\n\n"
-        
-    digest_content += "## Part 2: Recent Brain Activity (Last 24h)\n"
+        digest_content += "### 🔔 Tickler Items Surfaced Today\n"
+        digest_content += "\n".join(f"- {item}" for item in tickler_surfaced) + "\n\n"
+
+    digest_content += "## Part 2: Recent Brain Activity\n"
     if recent_activity:
-        for a in recent_activity:
-            digest_content += f"- {a}\n"
+        digest_content += "\n".join(f"- `{item}`" for item in recent_activity) + "\n\n"
     else:
-        digest_content += "No recent activity.\n"
+        digest_content += "*No new vault activity in the last 24 hours.*\n\n"
 
     # Save Markdown files
     digest_path = os.path.join(VAULT_PATH, "00_System", "Internal", "Digests", f"{today_str}.md")
@@ -739,7 +772,12 @@ async def generate_daily_digest():
             chat_id = TELEGRAM_ALLOWED_CHAT_IDS[0] if TELEGRAM_ALLOWED_CHAT_IDS else None
         else:
             chat_id = str(TELEGRAM_ALLOWED_CHAT_IDS).split(",")[0].strip()
-        summary = f"🌅 Daily Digest\n\n- Unclarified: {unclarified_count}\n- Next Actions: {active_actions_count}\n- Stale Waitings: {len(stale_waitings)}\n- Ticklers Surfaced: {len(tickler_surfaced)}\n- Orphaned Projects: {len(orphaned_projects)}\n- Recent Notes: {len(recent_activity)}"
+            
+        summary = f"🌅 Daily Digest ({today_str})\n\n"
+        if project_deadlines:
+            summary += "🚨 Upcoming Deadlines:\n" + "\n".join(f"• {dl.replace('**', '')}" for dl in project_deadlines) + "\n\n"
+            
+        summary += f"- Unclarified: {unclarified_count}\n- Next Actions: {active_actions_count}\n- Stale Waitings: {len(stale_waitings)}\n- Ticklers Surfaced: {len(tickler_surfaced)}\n- Orphaned Projects: {len(orphaned_projects)}\n- Recent Notes: {len(recent_activity)}"
         try:
             async with httpx.AsyncClient() as client:
                 await client.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", json={"chat_id": chat_id, "text": summary})

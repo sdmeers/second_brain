@@ -657,7 +657,8 @@ async def generate_daily_digest():
                     if tick_date > today_str: continue # hidden
                     elif tick_date == today_str: tickler_surfaced.append(line.strip())
                 
-                clean_line = re.sub(r'\(Captured on.*?\)', '', line).strip("- [ ]\n").strip()
+                clean_line = re.sub(r'\(Captured .*?\)', '', line)
+                clean_line = re.sub(r'\(Source:.*?\)', '', clean_line).strip("- [ ]\n").strip()
                 active_next_actions.append(clean_line)
                 
                 m_ctx = re.search(r'(@[a-zA-Z0-9_\-]+)', clean_line)
@@ -684,7 +685,8 @@ async def generate_daily_digest():
                 m_tick = re.search(r'🔔 (\d{4}-\d{2}-\d{2})', line)
                 if m_tick and m_tick.group(1) > today_str: continue
                 
-                clean_line = re.sub(r'\(Captured on.*?\)', '', line).strip("- [ ]\n").strip()
+                clean_line = re.sub(r'\(Captured .*?\)', '', line)
+                clean_line = re.sub(r'\(Source:.*?\)', '', clean_line).strip("- [ ]\n").strip()
                 waiting_items.append(clean_line)
                 
                 m_cap = re.search(r'\(Captured .*? on (\d{4}-\d{2}-\d{2})\)', line)
@@ -726,7 +728,7 @@ async def generate_daily_digest():
                     days_left = (due_dt - today_dt.date()).days
                     date_disp = due_dt.strftime("%d-%m-%Y")
                     
-                    if days_left <= 7:
+                    if days_left <= 14:
                         if days_left < 0:
                             project_deadlines.append(f"⚠️ **{proj_name}** — OVERDUE by {abs(days_left)} day(s) ({date_disp})")
                         elif days_left == 0:
@@ -767,7 +769,7 @@ async def generate_daily_digest():
         digest_content += "*No active next actions.*\n\n"
 
     if project_deadlines:
-        digest_content += "## 🚨 Upcoming Project Deadlines (<= 7 Days)\n"
+        digest_content += "## 🚨 Upcoming Project Deadlines\n"
         digest_content += "\n".join(f"- {dl}" for dl in project_deadlines) + "\n\n"
 
     if waiting_items:
@@ -814,7 +816,7 @@ async def generate_daily_digest():
         if active_actions_by_context:
             summary_lines.append(f"⚡ **Next Actions ({len(active_next_actions)}):**")
             for ctx_name, item_list in active_actions_by_context.items():
-                summary_lines.append(f"<b>{ctx_name}</b>")
+                summary_lines.append(f"**{ctx_name}**")
                 summary_lines.extend(f"• {it}" for it in item_list[:5])
             summary_lines.append("")
             

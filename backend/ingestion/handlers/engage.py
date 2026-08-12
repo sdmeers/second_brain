@@ -341,11 +341,26 @@ async def handle_status_command(chat_id: int, token: str, http_client: httpx.Asy
     waiting_items = get_list_items("Waiting_For.md")
     someday_items = get_list_items("Someday_Maybe.md")
     
-    completed_count = 0
+    completed_7d_count = 0
+    today = datetime.now().date()
+    cutoff_7d = today - timedelta(days=7)
+    
     comp_fp = os.path.join(tasks_dir, "z_Completed.md")
     if os.path.exists(comp_fp):
         with open(comp_fp, "r", encoding="utf-8") as f:
-            completed_count = sum(1 for line in f if line.strip().startswith("- [x]"))
+            for line in f:
+                line_s = line.strip()
+                if line_s.startswith("- [x]") or line_s.startswith("- [X]"):
+                    date_match = re.search(r'\(Completed on (\d{4}-\d{2}-\d{2})\)', line_s)
+                    if date_match:
+                        try:
+                            comp_date = datetime.strptime(date_match.group(1), "%Y-%m-%d").date()
+                            if comp_date >= cutoff_7d:
+                                completed_7d_count += 1
+                        except ValueError:
+                            completed_7d_count += 1
+                    else:
+                        completed_7d_count += 1
 
     msg = "📊 <b>GTD System Status</b>\n\n"
     
@@ -373,7 +388,7 @@ async def handle_status_command(chat_id: int, token: str, http_client: httpx.Asy
     else:
         msg += "• <i>None</i>\n\n"
 
-    msg += f"✅ <b>Completed Tasks:</b> {completed_count} item(s)\n\n"
+    msg += f"✅ <b>Completed Tasks (Last 7 Days):</b> {completed_7d_count} item(s)\n\n"
 
     # Top-level projects only (no subfolder scanning)
     msg += "📁 <b>Active Projects:</b>\n"

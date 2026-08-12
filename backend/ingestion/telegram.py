@@ -211,38 +211,37 @@ async def process_telegram_message(message: dict, token: str, http_client):
                 await handle_qa_query(query_text, chat_id, token, http_client)
                 return
             elif cmd_part == "/help":
-                help_text = """🧠 Second Brain — Your GTD + PARA Digital Assistant
+                help_text = """🧠 <b>Second Brain — GTD + PARA Command Reference</b>
 
-━━━ CAPTURE ━━━
-  /capture <text>     Explicit capture to Captured.md (awaits /clarify)
-  /in <text/voice>    Quick capture (or just send a voice note)
-  /research <URL>     Deep research ingestion with concept extraction
+━━━ 📥 <b>CAPTURE</b> ━━━
+  /in <text/voice>    Quick capture (or send voice note)
+  /capture <text>     Explicit capture to Captured.md
+  /research <URL>     Deep research ingestion
 
-━━━ CLARIFY & ORGANISE ━━━
+━━━ ⚙️ <b>CLARIFY & ORGANISE</b> ━━━
   /clarify             Process captured items through GTD workflow
-  /done <item>         Mark a task as complete
-  /tickle <date>       Defer an item — hidden until that date
+  /done <item>         Mark task complete & promote project next step
+  /tickle <date> <item> Defer item (e.g. /tickle 23rd Aug Send card)
 
-━━━ ENGAGE ━━━
-  /next                All your next actions
-  /next @errands       Filter by context
+━━━ ⚡ <b>ENGAGE & PROJECTS</b> ━━━
+  /next                View active next actions
+  /next @errands       Filter actions by context (@home, @computer, etc.)
   /waiting             View delegated items
-  /project <name>      View project roadmap
+  /project <name>      View project roadmap & active actions
+  /project <name> add <step>  Add step to project roadmap
   /archive <project>   Archive completed project to 05_Archive/
 
-━━━ REFLECT & STATUS ━━━
-  /status              View GTD list counts & active projects
-  /sitrep              Alias for /status
-  /reflect             Guided review
+━━━ 📊 <b>REFLECT & REVIEWS</b> ━━━
+  /status              View GTD list counts & active projects (sitrep)
+  /reflect             Guided review routine
+  /holiday             Pause daily/weekly reviews during holidays
+  /holiday resume      Resume reviews early
 
-━━━ Q&A ━━━
-  /ask <question>      Ask anything (or just type naturally)
-
-━━━ SYSTEM ━━━
-  /project <name> add <step>    Add step to project roadmap
-  /undo                         Revert last vault change
-  /help                         This message"""
-                await http_client.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": chat_id, "text": help_text})
+━━━ 💬 <b>Q&A & SYSTEM</b> ━━━
+  /ask <question>      Ask anything (or type naturally)
+  /jira <summary>      Create Jira ticket in backlog
+  /help                Show this command reference"""
+                await http_client.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": chat_id, "text": help_text, "parse_mode": "HTML"})
                 return
             elif cmd_part == "/clarify":
                 from backend.ingestion.handlers.clarify import handle_clarify_command

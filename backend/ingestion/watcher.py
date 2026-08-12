@@ -755,8 +755,9 @@ async def auto_heal_syncthing_conflict(rel_path: str, full_path: str) -> bool:
         dir_name = os.path.dirname(full_path)
         base_name = os.path.basename(full_path)
         
-        # Determine the target original file name (e.g. Next_Actions.md from Tasks.sync-conflict-*.md)
+        # Determine the target original file name (e.g. Next_Actions.md from Next_Actions.sync-conflict-*.md or Next_Actions-OROPVGA.md)
         target_name = re.sub(r'\.sync-conflict-\d+-\w+', '', base_name)
+        target_name = re.sub(r'-[A-Z0-9]{7}(?=\.md$)', '', target_name)
         target_path = os.path.join(dir_name, target_name)
         
         # Case A: Conflict is on Next_Actions.md
@@ -849,7 +850,7 @@ async def scan_for_syncthing_conflicts():
                 if any(part.startswith(".") for part in root.split(os.sep)):
                     continue
                 for file in files:
-                    if ".sync-conflict-" in file:
+                    if ".sync-conflict-" in file or re.search(r'-[A-Z0-9]{7}\.md$', file):
                         full_path = os.path.join(root, file)
                         rel_path = os.path.relpath(full_path, OBSIDIAN_VAULT_PATH)
                         found.add((rel_path, full_path))

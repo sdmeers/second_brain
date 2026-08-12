@@ -467,6 +467,10 @@ async def handle_telegram_callback_query(callback_query: dict, token: str, http_
         from backend.ingestion.handlers.clarify import handle_clarify_callback
         await handle_clarify_callback(callback_query, token, http_client)
 
+    elif data.startswith("holiday:") or data.startswith("holiday_cal:"):
+        from backend.ingestion.handlers.engage import handle_holiday_callback
+        await handle_holiday_callback(callback_query, token, http_client)
+
 
 
 async def poll_telegram_unified():

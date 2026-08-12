@@ -648,24 +648,19 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
         await process_next_clarify_item(chat_id, token, http_client)
         return
 
-    # 8. Defer / Tickle Flow
+    # 8. Defer / Tickle Flow — Directly open visual Calendar Picker
     if action == "action_defer":
-        reply_markup = {
-            "inline_keyboard": [
-                [{"text": "📅 Tomorrow (+1d)", "callback_data": "clarify:defer_days:1"},
-                 {"text": "📅 Next Week (+7d)", "callback_data": "clarify:defer_days:7"}],
-                [{"text": "📅 Calendar Picker", "callback_data": "clarify:defer_open_cal"},
-                 {"text": "✍️ Custom Text Date", "callback_data": "clarify:defer_custom"}]
-            ]
-        }
+        today = datetime.now().date()
+        from backend.utils.telegram_calendar import generate_telegram_calendar
+        cal_kb = generate_telegram_calendar(today.year, today.month, "clarify_cal")
         await http_client.post(
             f"https://api.telegram.org/bot{token}/editMessageText",
             json={
                 "chat_id": chat_id,
                 "message_id": message_id,
-                "text": "🔔 <b>Defer until when?</b>",
+                "text": "📅 <b>Select Deferral Date:</b>",
                 "parse_mode": "HTML",
-                "reply_markup": reply_markup
+                "reply_markup": cal_kb
             }
         )
         return

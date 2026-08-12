@@ -317,56 +317,123 @@ async def handle_done_command(chat_id: int, text: str, token: str, http_client: 
 
 async def handle_tickle_command(chat_id: int, text: str, token: str, http_client: httpx.AsyncClient):
     cmd_parts = text.split(maxsplit=2)
-    if len(cmd_parts) < 3:
+TICKLE_SESSIONS = {}
+
+async def handle_tickle_command(chat_id: int, text: str, token: str, http_client: httpx.AsyncClient):
+    cmd_parts = text.split(maxsplit=1)
+    if len(cmd_parts) < 2:
         await send_msg(
             chat_id, token, http_client,
-            "⚠️ Usage: `/tickle <date/days> <task_search>`\n\n"
-            "Examples:\n"
-            "• `/tickle 7d Buy birthday card` (Defers for 7 days)\n"
-            "• `/tickle 2026-09-01 Renew car insurance` (Defers until Sept 1st)\n"
-            "• `/tickle tomorrow Call garage` (Defers until tomorrow)"
+            "⚠️ Usage: `/tickle <task_search>`\n\n"
+            "Example:\n"
+            "• `/tickle Buy birthday card`"
         )
         return
 
-    date_arg = cmd_parts[1].strip()
-    task_query = cmd_parts[2].strip().lower()
+    task_query = cmd_parts[1].strip()
+    TICKLE_SESSIONS[chat_id] = task_query
     
-    from backend.ingestion.handlers.clarify import parse_natural_date_str
-    target_date = parse_natural_date_str(date_arg)
-    defer_str = target_date.strftime("%Y-%m-%d")
+    today = datetime.now().date()
+    from backend.utils.telegram_calendar import generate_telegram_calendar
+    cal_kb = generate_telegram_calendar(today.year, today.month, "tickle_cal")
+    
+    await send_msg(
+        chat_id, token, http_client,
+        f"📅 <b>Select Deferral Date for:</b>\n<i>\"{task_query}\"</i>",
+        reply_markup=cal_kb
+    )
 
-    tasks_dir = os.path.join(OBSIDIAN_VAULT_PATH, "01_Tasks")
-    found_file = None
-    matched_line = None
+async def handle_tickle_callback(callback_query: dict, token: str, http_client: httpx.AsyncClient):
+    chat_id = callback_query["message"]["chat"]["id"]
+    message_id = callback_query["message"]["message_id"]
+    data = callback_query.get("data", "")
+    
+    today = datetime.now().date()
+    parts = data.split(":")
+    cal_action = parts[1]
+    
+    if cal_action == "nav":
+        year = int(parts[2])
+        month = int(parts[3])
+        task_query = TICKLE_SESSIONS.get(chat_id, "Task")
+        from backend.utils.telegram_calendar import generate_telegram_calendar
+        cal_kb = generate_telegram_calendar(year, month, "tickle_cal")
+        await http_client.post(
+            f"https://api.telegram.org/bot{token}/editMessageText",
+            json={
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": f"📅 <b>Select Deferral Date for:</b>\n<i>\"{task_query}\"</i>",
+                "parse_mode": "HTML",
+                "reply_markup": cal_kb
+            }
+        )
+        return
 
-    for fname in ["Next_Actions.md", "Waiting_For.md", "Someday_Maybe.md"]:
-        fp = os.path.join(tasks_dir, fname)
-        if not os.path.exists(fp):
-            continue
-        with open(fp, "r", encoding="utf-8") as f:
-            lines = f.readlines()
+    if cal_action == "pick":
+        iso_str = parts[2]
+        try:
+            date_display = datetime.strptime(iso_str, "%Y-%m-%d").strftime("%d-%m-%Y")
+        except ValueError:
+            date_display = iso_str
 
-        new_lines = []
-        for line in lines:
-            if task_query in line.lower() and line.strip().startswith("- ["):
-                found_file = fp
-                matched_line = line.strip()
-                if "🔔" in line:
-                    line = re.sub(r'🔔\s*\d{4}-\d{2}-\d{2}', f'🔔 {defer_str}', line)
-                else:
-                    line = line.strip() + f" 🔔 {defer_str}\n"
-            new_lines.append(line)
+        task_query = TICKLE_SESSIONS.get(chat_id, "").strip().lower()
+        if not task_query:
+            await http_client.post(
+                f"https://api.telegram.org/bot{token}/editMessageText",
+                json={"chat_id": chat_id, "message_id": message_id, "text": "❌ Session expired. Run `/tickle <task_search>` again."}
+            )
+            return
 
-        if found_file:
-            from backend.vault.writer import atomic_write
-            atomic_write(fp, "".join(new_lines))
-            break
+        tasks_dir = os.path.join(OBSIDIAN_VAULT_PATH, "01_Tasks")
+        found_file = None
+        matched_line = None
 
-    if matched_line:
-        clean_task = re.sub(r'\(Captured on.*?\)', '', matched_line).strip("- [ ]\n")
-        await send_msg(chat_id, token, http_client, f"🔔 Deferred until {defer_str}:\n{clean_task}")
-    else:
-        await send_msg(chat_id, token, http_client, f"❌ Task matching '{task_query}' not found in active task lists.")
+        for fname in ["Next_Actions.md", "Waiting_For.md", "Someday_Maybe.md"]:
+            fp = os.path.join(tasks_dir, fname)
+            if not os.path.exists(fp):
+                continue
+            with open(fp, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+
+            new_lines = []
+            for line in lines:
+                if task_query in line.lower() and line.strip().startswith("- ["):
+                    found_file = fp
+                    matched_line = line.strip()
+                    if "🔔" in line:
+                        line = re.sub(r'🔔\s*\d{4}-\d{2}-\d{2}', f'🔔 {iso_str}', line)
+                    else:
+                        line = line.strip() + f" 🔔 {iso_str}\n"
+                new_lines.append(line)
+
+            if found_file:
+                from backend.vault.writer import atomic_write
+                atomic_write(fp, "".join(new_lines))
+                break
+
+        if matched_line:
+            clean_task = re.sub(r'\(Captured on.*?\)', '', matched_line).strip("- [ ]\n")
+            clean_task = re.sub(r'🔔\s*\d{4}-\d{2}-\d{2}', '', clean_task).strip()
+            await http_client.post(
+                f"https://api.telegram.org/bot{token}/editMessageText",
+                json={
+                    "chat_id": chat_id,
+                    "message_id": message_id,
+                    "text": f"🔔 <b>Deferred until {date_display}:</b>\n{clean_task}",
+                    "parse_mode": "HTML"
+                }
+            )
+        else:
+            await http_client.post(
+                f"https://api.telegram.org/bot{token}/editMessageText",
+                json={
+                    "chat_id": chat_id,
+                    "message_id": message_id,
+                    "text": f"❌ Task matching '<code>{task_query}</code>' not found in active task lists.",
+                    "parse_mode": "HTML"
+                }
+            )
 
 async def handle_status_command(chat_id: int, token: str, http_client: httpx.AsyncClient):
     tasks_dir = os.path.join(OBSIDIAN_VAULT_PATH, "01_Tasks")

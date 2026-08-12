@@ -654,8 +654,8 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
             "inline_keyboard": [
                 [{"text": "📅 Tomorrow (+1d)", "callback_data": "clarify:defer_days:1"},
                  {"text": "📅 Next Week (+7d)", "callback_data": "clarify:defer_days:7"}],
-                [{"text": "📅 Next Month (+30d)", "callback_data": "clarify:defer_days:30"},
-                 {"text": "✍️ Custom Date", "callback_data": "clarify:defer_custom"}]
+                [{"text": "📅 Calendar Picker", "callback_data": "clarify:defer_open_cal"},
+                 {"text": "✍️ Custom Text Date", "callback_data": "clarify:defer_custom"}]
             ]
         }
         await http_client.post(
@@ -670,6 +670,69 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
         )
         return
 
+    if action == "defer_open_cal":
+        today = datetime.now().date()
+        from backend.utils.telegram_calendar import generate_telegram_calendar
+        cal_kb = generate_telegram_calendar(today.year, today.month, "clarify_cal")
+        await http_client.post(
+            f"https://api.telegram.org/bot{token}/editMessageText",
+            json={
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": "📅 <b>Select Deferral Date:</b>",
+                "parse_mode": "HTML",
+                "reply_markup": cal_kb
+            }
+        )
+        return
+
+    if action.startswith("clarify_cal") or data.startswith("clarify_cal:"):
+        parts = data.split(":")
+        cal_action = parts[1]
+        if cal_action == "nav":
+            year = int(parts[2])
+            month = int(parts[3])
+            from backend.utils.telegram_calendar import generate_telegram_calendar
+            cal_kb = generate_telegram_calendar(year, month, "clarify_cal")
+            await http_client.post(
+                f"https://api.telegram.org/bot{token}/editMessageText",
+                json={
+                    "chat_id": chat_id,
+                    "message_id": message_id,
+                    "text": "📅 <b>Select Deferral Date:</b>",
+                    "parse_mode": "HTML",
+                    "reply_markup": cal_kb
+                }
+            )
+            return
+
+        if cal_action == "pick":
+            iso_str = parts[2]
+            try:
+                date_display = datetime.strptime(iso_str, "%Y-%m-%d").strftime("%d-%m-%Y")
+            except ValueError:
+                date_display = iso_str
+
+            session["item_data"]["custom_defer_date"] = iso_str
+            
+            reply_markup = {
+                "inline_keyboard": [
+                    [{"text": "🏠 Personal", "callback_data": "clarify:save_custom_defer:Personal"},
+                     {"text": "💼 Professional", "callback_data": "clarify:save_custom_defer:Professional"}]
+                ]
+            }
+            await http_client.post(
+                f"https://api.telegram.org/bot{token}/editMessageText",
+                json={
+                    "chat_id": chat_id,
+                    "message_id": message_id,
+                    "text": f"🏷️ <b>Select Category for Deferred Item ({date_display}):</b>",
+                    "parse_mode": "HTML",
+                    "reply_markup": reply_markup
+                }
+            )
+            return
+
     if action == "defer_custom":
         session["awaiting_text_input"] = "defer_custom_date"
         await http_client.post(
@@ -677,7 +740,7 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
             json={
                 "chat_id": chat_id,
                 "message_id": message_id,
-                "text": "📅 <b>Reply with the Deferral Date:</b>\ne.g. <code>23rd Aug</code>, <code>23/08</code>, or <code>2026-08-23</code>",
+                "text": "📅 <b>Reply with the Deferral Date:</b>\ne.g. <code>23-08-2026</code>, <code>23rd Aug</code>, or <code>23/08</code>",
                 "parse_mode": "HTML"
             }
         )
@@ -714,6 +777,11 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
             category = parts[3]
             defer_date = (datetime.now().date() + timedelta(days=days)).strftime("%Y-%m-%d")
 
+        try:
+            date_display = datetime.strptime(defer_date, "%Y-%m-%d").strftime("%d-%m-%Y")
+        except ValueError:
+            date_display = defer_date
+
         clean_text = sanitize_task_item_text(item_line)
         cat_tag = "#professional" if category == "Professional" else "#personal"
         
@@ -724,7 +792,7 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
         await archive_and_remove_captured(item_line)
         await http_client.post(
             f"https://api.telegram.org/bot{token}/editMessageText",
-            json={"chat_id": chat_id, "message_id": message_id, "text": f"🔔 Deferred until {defer_date} ({cat_tag}):\n{clean_text}"}
+            json={"chat_id": chat_id, "message_id": message_id, "text": f"🔔 Deferred until {date_display} ({cat_tag}):\n{clean_text}"}
         )
         session["current_index"] += 1
         await process_next_clarify_item(chat_id, token, http_client)

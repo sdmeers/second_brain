@@ -559,6 +559,234 @@ async def handle_archive_project_command(chat_id: int, text: str, token: str, ht
     )
     await send_msg(chat_id, token, http_client, msg)
 
+async def handle_holiday_command(chat_id: int, text: str, token: str, http_client: httpx.AsyncClient):
+    from backend.utils.holiday_manager import set_holiday_pause, clear_holiday_pause, get_holiday_state, is_scope_paused
+    from backend.ingestion.handlers.clarify import parse_natural_date_str
+
+    cmd_parts = text.split()
+    
+    if len(cmd_parts) > 1 and cmd_parts[1].lower() in ["end", "resume", "clear", "cancel"]:
+        scope = cmd_parts[2].lower() if len(cmd_parts) > 2 else "all"
+        clear_holiday_pause(scope)
+        await send_msg(chat_id, token, http_client, f"🌴 <b>Holiday Mode Resumed!</b>\nAll daily and weekly reviews have been reactivated for <b>{scope.replace('#', '')}</b>.")
+        return
+
+    if len(cmd_parts) > 1 and cmd_parts[1].lower() == "status":
+        pers_paused, pers_date = is_scope_paused("personal")
+        prof_paused, prof_date = is_scope_paused("professional")
+        all_paused, all_date = is_scope_paused("all")
+        
+        status_msg = "🌴 <b>Holiday Mode Status</b>\n\n"
+        if all_paused:
+            status_msg += f"• <b>All Reviews:</b> ⏸️ Paused until <code>{all_date}</code>\n"
+        else:
+            status_msg += "• <b>All Reviews:</b> ▶️ Active\n"
+            
+        if pers_paused:
+            status_msg += f"• <b>Personal Reviews:</b> ⏸️ Paused until <code>{pers_date}</code>\n"
+        else:
+            status_msg += "• <b>Personal Reviews:</b> ▶️ Active\n"
+            
+        if prof_paused:
+            status_msg += f"• <b>Professional Reviews:</b> ⏸️ Paused until <code>{prof_date}</code>\n"
+        else:
+            status_msg += "• <b>Professional Reviews:</b> ▶️ Active\n"
+            
+        status_msg += "\n<i>To resume reviews early, run `/holiday resume`.</i>"
+        await send_msg(chat_id, token, http_client, status_msg)
+        return
+
+    if len(cmd_parts) >= 3:
+        scope = cmd_parts[1].lower().replace("#", "").strip()
+        date_str = cmd_parts[2].strip()
+        
+        until_date = parse_natural_date_str(date_str)
+        date_display = until_date.strftime("%d-%m-%Y")
+        
+        set_holiday_pause(scope, until_date)
+        
+        await send_msg(
+            chat_id, token, http_client,
+            f"🌴 <b>Holiday Mode Activated!</b>\n\n"
+            f"• <b>Scope:</b> <code>#{scope}</code>\n"
+            f"• <b>Paused Until:</b> <code>{date_display}</code> ({until_date.strftime('%A')})\n\n"
+            f"<i>Daily/weekly reviews will pause matching items until {date_display}. Run `/holiday resume` anytime to reactivate early.</i>"
+        )
+        return
+
+    reply_markup = {
+        "inline_keyboard": [
+            [{"text": "🏠 Personal", "callback_data": "holiday:scope:personal"},
+             {"text": "💼 Professional", "callback_data": "holiday:scope:professional"}],
+            [{"text": "🌴 All Reviews", "callback_data": "holiday:scope:all"}],
+            [{"text": "📊 Check Status", "callback_data": "holiday:status"},
+             {"text": "▶️ Resume All Reviews Now", "callback_data": "holiday:resume:all"}]
+        ]
+    }
+    await send_msg(
+        chat_id, token, http_client,
+        "🌴 <b>Holiday Mode Setup</b>\nSelect which review scope to pause:",
+        reply_markup=reply_markup
+    )
+
+async def handle_holiday_callback(callback_query: dict, token: str, http_client: httpx.AsyncClient):
+    chat_id = callback_query["message"]["chat"]["id"]
+    message_id = callback_query["message"]["message_id"]
+    data = callback_query.get("data", "")
+    
+    from backend.utils.holiday_manager import set_holiday_pause, clear_holiday_pause, is_scope_paused
+    from backend.utils.telegram_calendar import generate_telegram_calendar
+
+    today = datetime.now().date()
+
+    if data.startswith("holiday:scope:"):
+        scope = data.split(":")[2]
+        reply_markup = {
+            "inline_keyboard": [
+                [{"text": "🌴 1 Week (+7d)", "callback_data": f"holiday:duration:{scope}:7"},
+                 {"text": "🌴 2 Weeks (+14d)", "callback_data": f"holiday:duration:{scope}:14"}],
+                [{"text": "📅 Open Calendar Picker", "callback_data": f"holiday:open_cal:{scope}"},
+                 {"text": "✍️ Custom Text Date", "callback_data": f"holiday:type_date:{scope}"}]
+            ]
+        }
+        await http_client.post(
+            f"https://api.telegram.org/bot{token}/editMessageText",
+            json={
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": f"🌴 <b>Select Duration to Pause #{scope}:</b>",
+                "parse_mode": "HTML",
+                "reply_markup": reply_markup
+            }
+        )
+        return
+
+    if data.startswith("holiday:duration:"):
+        parts = data.split(":")
+        scope = parts[2]
+        days = int(parts[3])
+        
+        until_date = today + timedelta(days=days)
+        set_holiday_pause(scope, until_date)
+        date_display = until_date.strftime("%d-%m-%Y")
+        day_name = until_date.strftime("%A")
+        
+        await http_client.post(
+            f"https://api.telegram.org/bot{token}/editMessageText",
+            json={
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": f"🌴 <b>Holiday Mode Activated!</b>\n\n• <b>Scope:</b> <code>#{scope}</code>\n• <b>Paused Until:</b> <code>{date_display}</code> ({day_name})\n\n<i>Daily/weekly reviews will exclude matching items until {date_display}. Run `/holiday resume` anytime to reactivate early.</i>",
+                "parse_mode": "HTML"
+            }
+        )
+        return
+
+    if data.startswith("holiday:type_date:"):
+        scope = data.split(":")[2]
+        await http_client.post(
+            f"https://api.telegram.org/bot{token}/editMessageText",
+            json={
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": f"📅 <b>Reply with Holiday Return Date for #{scope}:</b>\ne.g. <code>/holiday #{scope} 23-08-2026</code> or <code>/holiday #{scope} 23rd Aug</code>",
+                "parse_mode": "HTML"
+            }
+        )
+        return
+
+    if data.startswith("holiday:open_cal:"):
+        scope = data.split(":")[2]
+        cal_kb = generate_telegram_calendar(today.year, today.month, f"holiday_cal:{scope}")
+        await http_client.post(
+            f"https://api.telegram.org/bot{token}/editMessageText",
+            json={
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": f"📅 <b>Select Holiday Return Date for #{scope}:</b>",
+                "parse_mode": "HTML",
+                "reply_markup": cal_kb
+            }
+        )
+        return
+
+    if data.startswith("holiday_cal:"):
+        parts = data.split(":")
+        scope = parts[1]
+        cal_action = parts[2]
+        
+        if cal_action == "nav":
+            year = int(parts[3])
+            month = int(parts[4])
+            cal_kb = generate_telegram_calendar(year, month, f"holiday_cal:{scope}")
+            await http_client.post(
+                f"https://api.telegram.org/bot{token}/editMessageText",
+                json={
+                    "chat_id": chat_id,
+                    "message_id": message_id,
+                    "text": f"📅 <b>Select Holiday Return Date for #{scope}:</b>",
+                    "parse_mode": "HTML",
+                    "reply_markup": cal_kb
+                }
+            )
+            return
+
+        if cal_action == "pick":
+            iso_str = parts[3]
+            until_date = datetime.strptime(iso_str, "%Y-%m-%d").date()
+            set_holiday_pause(scope, until_date)
+            
+            date_display = until_date.strftime("%d-%m-%Y")
+            day_name = until_date.strftime("%A")
+            
+            await http_client.post(
+                f"https://api.telegram.org/bot{token}/editMessageText",
+                json={
+                    "chat_id": chat_id,
+                    "message_id": message_id,
+                    "text": f"🌴 <b>Holiday Mode Activated!</b>\n\n• <b>Scope:</b> <code>#{scope}</code>\n• <b>Paused Until:</b> <code>{date_display}</code> ({day_name})\n\n<i>Daily/weekly reviews will exclude matching items until {date_display}. Run `/holiday resume` anytime to reactivate early.</i>",
+                    "parse_mode": "HTML"
+                }
+            )
+            return
+
+    if data == "holiday:status":
+        pers_paused, pers_date = is_scope_paused("personal")
+        prof_paused, prof_date = is_scope_paused("professional")
+        all_paused, all_date = is_scope_paused("all")
+        
+        status_msg = "🌴 <b>Holiday Mode Status</b>\n\n"
+        if all_paused:
+            status_msg += f"• <b>All Reviews:</b> ⏸️ Paused until <code>{all_date}</code>\n"
+        else:
+            status_msg += "• <b>All Reviews:</b> ▶️ Active\n"
+            
+        if pers_paused:
+            status_msg += f"• <b>Personal Reviews:</b> ⏸️ Paused until <code>{pers_date}</code>\n"
+        else:
+            status_msg += "• <b>Personal Reviews:</b> ▶️ Active\n"
+            
+        if prof_paused:
+            status_msg += f"• <b>Professional Reviews:</b> ⏸️ Paused until <code>{prof_date}</code>\n"
+        else:
+            status_msg += "• <b>Professional Reviews:</b> ▶️ Active\n"
+            
+        status_msg += "\n<i>To resume reviews early, run `/holiday resume`.</i>"
+        await http_client.post(
+            f"https://api.telegram.org/bot{token}/editMessageText",
+            json={"chat_id": chat_id, "message_id": message_id, "text": status_msg, "parse_mode": "HTML"}
+        )
+        return
+
+    if data.startswith("holiday:resume:"):
+        scope = data.split(":")[2]
+        clear_holiday_pause(scope)
+        await http_client.post(
+            f"https://api.telegram.org/bot{token}/editMessageText",
+            json={"chat_id": chat_id, "message_id": message_id, "text": f"🌴 <b>Holiday Mode Resumed!</b>\nAll daily and weekly reviews have been reactivated for <b>{scope}</b>.", "parse_mode": "HTML"}
+        )
+        return
+
 async def handle_engage_commands(chat_id: int, text: str, token: str, http_client: httpx.AsyncClient) -> bool:
     cmd_part = text.split()[0].lower()
     
@@ -576,6 +804,9 @@ async def handle_engage_commands(chat_id: int, text: str, token: str, http_clien
         return True
     elif cmd_part in ["/archive", "/archive-project"]:
         await handle_archive_project_command(chat_id, text, token, http_client)
+        return True
+    elif cmd_part == "/holiday":
+        await handle_holiday_command(chat_id, text, token, http_client)
         return True
     elif cmd_part == "/done":
         await handle_done_command(chat_id, text, token, http_client)

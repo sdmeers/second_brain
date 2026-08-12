@@ -651,14 +651,15 @@ async def generate_daily_digest():
                 if prof_paused and "#professional" in line.lower(): continue
                 if pers_paused and "#personal" in line.lower(): continue
                 
+                clean_line = re.sub(r'\(Captured .*?\)', '', line)
+                clean_line = re.sub(r'\(Source:.*?\)', '', clean_line).strip("- [ ]\n").strip()
+
                 m_tick = re.search(r'🔔 (\d{4}-\d{2}-\d{2})', line)
                 if m_tick:
                     tick_date = m_tick.group(1)
                     if tick_date > today_str: continue # hidden
-                    elif tick_date == today_str: tickler_surfaced.append(line.strip())
+                    elif tick_date == today_str: tickler_surfaced.append(clean_line)
                 
-                clean_line = re.sub(r'\(Captured .*?\)', '', line)
-                clean_line = re.sub(r'\(Source:.*?\)', '', clean_line).strip("- [ ]\n").strip()
                 active_next_actions.append(clean_line)
                 
                 m_ctx = re.search(r'(@[a-zA-Z0-9_\-]+)', clean_line)
@@ -811,6 +812,11 @@ async def generate_daily_digest():
         if project_deadlines:
             summary_lines.append("🚨 **Upcoming Deadlines:**")
             summary_lines.extend(f"• {dl.replace('**', '')}" for dl in project_deadlines)
+            summary_lines.append("")
+
+        if tickler_surfaced:
+            summary_lines.append(f"🔔 **Surfaced Deferrals ({len(tickler_surfaced)}):**")
+            summary_lines.extend(f"• {it}" for it in tickler_surfaced)
             summary_lines.append("")
             
         if active_actions_by_context:

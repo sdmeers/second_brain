@@ -259,6 +259,7 @@ async def process_telegram_message(message: dict, token: str, http_client):
   /archive [project]   Archive completed project to 05_Archive/
 
 ━━━ 📊 **REFLECT & REVIEWS** ━━━
+  /daily               Show daily review (next actions, deadlines, waitings)
   /status              View GTD list counts & active projects (sitrep)
   /reflect             Guided review routine
   /holiday             Pause daily/weekly reviews during holidays
@@ -274,7 +275,7 @@ async def process_telegram_message(message: dict, token: str, http_client):
                 from backend.ingestion.handlers.clarify import handle_clarify_command
                 await handle_clarify_command(chat_id, token, http_client)
                 return
-            elif cmd_part in ["/next", "/waiting", "/project", "/done", "/tickle", "/reflect", "/status", "/sitrep", "/archive", "/archive-project", "/holiday"]:
+            elif cmd_part in ["/daily", "/next", "/waiting", "/project", "/done", "/tickle", "/reflect", "/status", "/sitrep", "/archive", "/archive-project", "/holiday"]:
                 from backend.ingestion.handlers.engage import handle_engage_commands
                 await handle_engage_commands(chat_id, text, token, http_client)
                 return

@@ -435,6 +435,10 @@ async def handle_tickle_callback(callback_query: dict, token: str, http_client: 
                 }
             )
 
+async def handle_daily_command(chat_id: int, token: str, http_client: httpx.AsyncClient):
+    from backend.brain_cleaner import generate_daily_digest
+    await generate_daily_digest(target_chat_id=chat_id)
+
 async def handle_status_command(chat_id: int, token: str, http_client: httpx.AsyncClient):
     tasks_dir = os.path.join(OBSIDIAN_VAULT_PATH, "01_Tasks")
     proj_dir = os.path.join(OBSIDIAN_VAULT_PATH, "02_Projects")
@@ -860,7 +864,10 @@ async def handle_engage_commands(chat_id: int, text: str, token: str, http_clien
     if cmd_part in ["/status", "/sitrep"]:
         await handle_status_command(chat_id, token, http_client)
         return True
-    elif cmd_part == "/next":
+    if cmd_part == "/daily":
+        await handle_daily_command(chat_id, token, http_client)
+        return True
+    elif cmd_part in ["/next", "/actions"]:
         await handle_next_command(chat_id, text, token, http_client)
         return True
     elif cmd_part == "/waiting":

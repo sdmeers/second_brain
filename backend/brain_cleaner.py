@@ -611,12 +611,12 @@ async def cleanup_old_audio():
                 except Exception:
                     pass
 
-async def generate_daily_digest():
+async def generate_daily_digest(target_chat_id: int = None):
     print("🌅 Generating daily digest...")
     from backend.utils.holiday_manager import is_scope_paused
     
     all_paused, all_date = is_scope_paused("all")
-    if all_paused:
+    if all_paused and not target_chat_id:
         print(f"🌴 Holiday Mode active (all reviews paused until {all_date}). Skipping daily digest.")
         return None
 
@@ -802,8 +802,10 @@ async def generate_daily_digest():
     atomic_write(daily_digest_path, digest_content)
     
     from backend.config import TELEGRAM_BOT_TOKEN, TELEGRAM_ALLOWED_CHAT_IDS
-    if TELEGRAM_BOT_TOKEN and TELEGRAM_ALLOWED_CHAT_IDS:
-        if isinstance(TELEGRAM_ALLOWED_CHAT_IDS, list):
+    if TELEGRAM_BOT_TOKEN and (TELEGRAM_ALLOWED_CHAT_IDS or target_chat_id):
+        if target_chat_id:
+            chat_id = target_chat_id
+        elif isinstance(TELEGRAM_ALLOWED_CHAT_IDS, list):
             chat_id = TELEGRAM_ALLOWED_CHAT_IDS[0] if TELEGRAM_ALLOWED_CHAT_IDS else None
         else:
             chat_id = str(TELEGRAM_ALLOWED_CHAT_IDS).split(",")[0].strip()

@@ -723,10 +723,12 @@ async def generate_daily_digest():
     daily_digest_path = os.path.join(VAULT_PATH, "00_System", "Daily_Digest.md")
     atomic_write(daily_digest_path, digest_content)
     
-    # Send Telegram Summary
     from backend.config import TELEGRAM_BOT_TOKEN, TELEGRAM_ALLOWED_CHAT_IDS
     if TELEGRAM_BOT_TOKEN and TELEGRAM_ALLOWED_CHAT_IDS:
-        chat_id = TELEGRAM_ALLOWED_CHAT_IDS.split(",")[0].strip()
+        if isinstance(TELEGRAM_ALLOWED_CHAT_IDS, list):
+            chat_id = TELEGRAM_ALLOWED_CHAT_IDS[0] if TELEGRAM_ALLOWED_CHAT_IDS else None
+        else:
+            chat_id = str(TELEGRAM_ALLOWED_CHAT_IDS).split(",")[0].strip()
         summary = f"🌅 Daily Digest\n\n- Unclarified: {unclarified_count}\n- Next Actions: {active_actions_count}\n- Stale Waitings: {len(stale_waitings)}\n- Ticklers Surfaced: {len(tickler_surfaced)}\n- Orphaned Projects: {len(orphaned_projects)}\n- Recent Notes: {len(recent_activity)}"
         try:
             async with httpx.AsyncClient() as client:

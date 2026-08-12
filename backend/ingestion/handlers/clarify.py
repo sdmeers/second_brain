@@ -419,8 +419,8 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
     if action == "action_waiting":
         reply_markup = {
             "inline_keyboard": [
-                [{"text": "🏠 Personal (#personal)", "callback_data": "clarify:save_waiting:Personal"},
-                 {"text": "💼 Professional (#professional)", "callback_data": "clarify:save_waiting:Professional"}]
+                [{"text": "🏠 Personal", "callback_data": "clarify:save_waiting:Personal"},
+                 {"text": "💼 Professional", "callback_data": "clarify:save_waiting:Professional"}]
             ]
         }
         await http_client.post(
@@ -503,8 +503,8 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
     if action == "standalone_cat":
         reply_markup = {
             "inline_keyboard": [
-                [{"text": "🏠 Personal (#personal)", "callback_data": "clarify:save_action:Personal:none"},
-                 {"text": "💼 Professional (#professional)", "callback_data": "clarify:save_action:Professional:none"}]
+                [{"text": "🏠 Personal", "callback_data": "clarify:save_action:Personal:none"},
+                 {"text": "💼 Professional", "callback_data": "clarify:save_action:Professional:none"}]
             ]
         }
         await http_client.post(

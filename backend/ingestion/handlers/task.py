@@ -81,14 +81,9 @@ For each task, provide:
         else:
             existing_content = "# Next Actions\n\n## ⚡ Next Actions\n\n"
             
-        # Append new task entries
-        updated_content = existing_content
-        if not updated_content.endswith("\n") and updated_content.strip():
-            updated_content += "\n"
+        from backend.utils.tasks_dashboard import append_gtd_item
         for entry in new_entries:
-            updated_content += entry
-            
-        atomic_write(tasks_file, updated_content)
+            append_gtd_item(tasks_file, entry)
         print(f"Task Handler: Appended {len(new_entries)} tasks to Next_Actions.md")
         return f"Successfully added {len(new_entries)} tasks to your Tasks list."
     except Exception as e:

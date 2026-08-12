@@ -417,14 +417,37 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
 
     # 6. Waiting For Flow
     if action == "action_waiting":
+        reply_markup = {
+            "inline_keyboard": [
+                [{"text": "🏠 Personal (#personal)", "callback_data": "clarify:save_waiting:Personal"},
+                 {"text": "💼 Professional (#professional)", "callback_data": "clarify:save_waiting:Professional"}]
+            ]
+        }
+        await http_client.post(
+            f"https://api.telegram.org/bot{token}/editMessageText",
+            json={
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": "🏷️ <b>Select Category for Waiting For Item:</b>",
+                "parse_mode": "HTML",
+                "reply_markup": reply_markup
+            }
+        )
+        return
+
+    if action.startswith("save_waiting"):
+        category = data.split(":")[2]
         clean_text = sanitize_task_item_text(item_line)
+        cat_tag = "#professional" if category == "Professional" else "#personal"
         waiting_md = os.path.join(TASKS_PATH, "Waiting_For.md")
-        with open(waiting_md, "a", encoding="utf-8") as f:
-            f.write(f"- [ ] {clean_text} #waiting\n")
+        
+        from backend.utils.tasks_dashboard import append_gtd_item
+        append_gtd_item(waiting_md, f"- [ ] {clean_text} #waiting {cat_tag}")
+        
         await archive_and_remove_captured(item_line)
         await http_client.post(
             f"https://api.telegram.org/bot{token}/editMessageText",
-            json={"chat_id": chat_id, "message_id": message_id, "text": f"⏳ Added to Waiting For:\n{clean_text}"}
+            json={"chat_id": chat_id, "message_id": message_id, "text": f"⏳ Added to Waiting For ({cat_tag}):\n{clean_text}"}
         )
         session["current_index"] += 1
         await process_next_clarify_item(chat_id, token, http_client)
@@ -460,7 +483,7 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
         
         reply_markup = {
             "inline_keyboard": [
-                [{"text": "🚫 No Project Tag", "callback_data": "clarify:tag_proj:none"}],
+                [{"text": "🚫 No Project Tag (Standalone)", "callback_data": "clarify:standalone_cat"}],
                 [{"text": "🏠 Tag Personal Project", "callback_data": "clarify:tag_cat:Personal"},
                  {"text": "💼 Tag Professional Project", "callback_data": "clarify:tag_cat:Professional"}]
             ]
@@ -477,8 +500,28 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
         )
         return
 
+    if action == "standalone_cat":
+        reply_markup = {
+            "inline_keyboard": [
+                [{"text": "🏠 Personal (#personal)", "callback_data": "clarify:save_action:Personal:none"},
+                 {"text": "💼 Professional (#professional)", "callback_data": "clarify:save_action:Professional:none"}]
+            ]
+        }
+        await http_client.post(
+            f"https://api.telegram.org/bot{token}/editMessageText",
+            json={
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": "🏷️ <b>Select Category for Action:</b>",
+                "parse_mode": "HTML",
+                "reply_markup": reply_markup
+            }
+        )
+        return
+
     if action.startswith("tag_cat"):
         category = data.split(":")[2]
+        session["item_data"]["selected_category"] = category
         keyboard = get_category_project_buttons(category, action_prefix="tag_proj")
         reply_markup = {"inline_keyboard": keyboard}
         await http_client.post(
@@ -493,22 +536,33 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
         )
         return
 
-    if action.startswith("tag_proj"):
-        proj_tag = data.split(":")[2]
+    if action.startswith("tag_proj") or action.startswith("save_action"):
+        parts = data.split(":")
+        if action.startswith("save_action"):
+            category = parts[2]
+            proj_tag = parts[3]
+        else:
+            proj_tag = parts[2]
+            category = session["item_data"].get("selected_category")
+            if not category:
+                from backend.utils.tasks_dashboard import get_project_category
+                category = get_project_category(proj_tag)
+
         ctx = session["item_data"].get("selected_context", "@computer")
         clean_text = sanitize_task_item_text(item_line)
+        cat_tag = "#professional" if category == "Professional" else "#personal"
         
-        task_str = f"- [ ] {clean_text} {ctx}"
-        tag_disp = ""
+        task_str = f"- [ ] {clean_text} {ctx} {cat_tag}"
+        tag_disp = f" {cat_tag}"
         if proj_tag != "none":
             proj_tag_clean = proj_tag.strip().replace(" ", "_")
             task_str += f" #project/{proj_tag_clean}"
-            ensure_project_note_exists(proj_tag)
-            tag_disp = f" #project/{proj_tag_clean}"
+            ensure_project_note_exists(proj_tag, category=category)
+            tag_disp += f" #project/{proj_tag_clean}"
             
         tasks_md = os.path.join(TASKS_PATH, "Next_Actions.md")
-        with open(tasks_md, "a", encoding="utf-8") as f:
-            f.write(f"{task_str}\n")
+        from backend.utils.tasks_dashboard import append_gtd_item
+        append_gtd_item(tasks_md, task_str)
             
         await archive_and_remove_captured(item_line)
         await http_client.post(

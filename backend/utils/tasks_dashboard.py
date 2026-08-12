@@ -41,6 +41,60 @@ def parse_deadline(line: str) -> datetime:
 
     return None
 
+def get_project_category(project_name: str) -> str:
+    """Determines if project lives under Personal or Professional directory in 02_Projects."""
+    from backend.config import OBSIDIAN_VAULT_PATH
+    if not project_name:
+        return "Personal"
+    proj_clean = project_name.strip().lower().replace(" ", "_")
+    proj_dir = os.path.join(OBSIDIAN_VAULT_PATH, "02_Projects")
+    
+    prof_dir = os.path.join(proj_dir, "Professional")
+    if os.path.exists(prof_dir):
+        for root, dirs, files in os.walk(prof_dir):
+            r_name = os.path.basename(root).lower().replace(" ", "_")
+            if r_name == proj_clean:
+                return "Professional"
+            for f in files:
+                f_name = f.replace(".md", "").lower().replace(" ", "_")
+                if f_name == proj_clean:
+                    return "Professional"
+
+    pers_dir = os.path.join(proj_dir, "Personal")
+    if os.path.exists(pers_dir):
+        for root, dirs, files in os.walk(pers_dir):
+            r_name = os.path.basename(root).lower().replace(" ", "_")
+            if r_name == proj_clean:
+                return "Personal"
+            for f in files:
+                f_name = f.replace(".md", "").lower().replace(" ", "_")
+                if f_name == proj_clean:
+                    return "Personal"
+
+    return "Personal"
+
+def ensure_category_tag(task_line: str, category: str = None, project_name: str = None) -> str:
+    """Ensures task_line has either #personal or #professional tag."""
+    line = task_line.strip()
+    if "#personal" in line or "#professional" in line:
+        return line
+
+    if not project_name:
+        proj_match = re.search(r'#project/([A-Za-z0-9_\-]+)', line)
+        if proj_match:
+            project_name = proj_match.group(1)
+
+    if not category and project_name:
+        category = get_project_category(project_name)
+
+    cat_tag = "#professional" if (category and category.lower() == "professional") else "#personal"
+
+    if " (Captured" in line:
+        parts = line.split(" (Captured", 1)
+        return f"{parts[0].strip()} {cat_tag} (Captured{parts[1]}"
+    else:
+        return f"{line} {cat_tag}"
+
 def append_gtd_item(filepath: str, item_line: str):
     """Appends an item to a GTD task file, automatically stripping any clear messages."""
     from backend.vault.writer import atomic_write
@@ -70,7 +124,11 @@ def append_gtd_item(filepath: str, item_line: str):
                     if s.startswith("- ["):
                         existing_items.append(s)
 
-    existing_items.append(item_line.strip())
+    clean_item = item_line.strip()
+    if fname in ["Next_Actions.md", "Waiting_For.md"]:
+        clean_item = ensure_category_tag(clean_item)
+
+    existing_items.append(clean_item)
     content = (header or "") + "\n".join(existing_items) + "\n"
     atomic_write(filepath, content)
 
@@ -116,7 +174,8 @@ async def maintain_tasks_dashboard():
                         if checkbox.lower() in ["x", "v"]:
                             file_newly_completed.append(stripped)
                         else:
-                            file_active.append(stripped)
+                            tagged_item = ensure_category_tag(stripped) if fname in ["Next_Actions.md", "Waiting_For.md"] else stripped
+                            file_active.append(tagged_item)
 
             if fname == "Next_Actions.md":
                 active_next_actions = file_active

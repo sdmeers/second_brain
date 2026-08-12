@@ -1,5 +1,6 @@
 import os
 import re
+import shutil
 from datetime import datetime, timedelta
 import httpx
 from backend.config import OBSIDIAN_VAULT_PATH
@@ -418,6 +419,96 @@ async def handle_status_command(chat_id: int, token: str, http_client: httpx.Asy
         
     await send_msg(chat_id, token, http_client, msg)
 
+async def handle_archive_project_command(chat_id: int, text: str, token: str, http_client: httpx.AsyncClient):
+    cmd_parts = text.split(maxsplit=1)
+    if len(cmd_parts) < 2:
+        await send_msg(chat_id, token, http_client, "⚠️ Please specify a project name to archive:\nExample: `/archive Garage` or `/archive Police AI Director`")
+        return
+
+    proj_input = cmd_parts[1].strip()
+    proj_clean = proj_input.replace(" ", "_").lower()
+    
+    proj_dir = os.path.join(OBSIDIAN_VAULT_PATH, "02_Projects")
+    found_path = None
+    category = "Personal"
+    
+    # 1. Search Personal & Professional subfolders
+    for cat in ["Personal", "Professional"]:
+        cat_path = os.path.join(proj_dir, cat)
+        if os.path.exists(cat_path):
+            for entry in os.listdir(cat_path):
+                e_clean = entry.replace(".md", "").strip().lower().replace(" ", "_")
+                if e_clean == proj_clean or entry.strip().lower() == proj_input.lower():
+                    found_path = os.path.join(cat_path, entry)
+                    category = cat
+                    break
+        if found_path:
+            break
+
+    # 2. Search top-level 02_Projects
+    if not found_path and os.path.exists(proj_dir):
+        for entry in os.listdir(proj_dir):
+            if entry not in ["Personal", "Professional"] and not entry.startswith(".") and not entry.startswith("_"):
+                e_clean = entry.replace(".md", "").strip().lower().replace(" ", "_")
+                if e_clean == proj_clean or entry.strip().lower() == proj_input.lower():
+                    found_path = os.path.join(proj_dir, entry)
+                    category = "Personal"
+                    break
+
+    if not found_path or not os.path.exists(found_path):
+        await send_msg(chat_id, token, http_client, f"❌ Project note or folder not found for `{proj_input}` in `02_Projects/`.")
+        return
+
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    proj_name = os.path.basename(found_path).replace(".md", "")
+
+    # Update status in markdown note if single file or if folder has <ProjectName>.md
+    note_to_update = found_path if os.path.isfile(found_path) else os.path.join(found_path, f"{proj_name}.md")
+    if os.path.exists(note_to_update):
+        with open(note_to_update, "r", encoding="utf-8") as f:
+            content = f.read()
+        
+        if "status:" in content:
+            content = re.sub(r'status:\s*"?.*?"?', 'status: "completed"', content)
+        else:
+            content = content.replace("---", f"---\nstatus: \"completed\"\ndate_completed: \"{today_str}\"", 1)
+
+        if "date_completed:" not in content:
+            content = re.sub(r'(status:\s*"completed")', r'\1\ndate_completed: "' + today_str + '"', content)
+
+        with open(note_to_update, "w", encoding="utf-8") as f:
+            f.write(content)
+
+    # Move filesystem entry to 05_Archive/<Category>/
+    archive_dir = os.path.join(OBSIDIAN_VAULT_PATH, "05_Archive", category)
+    os.makedirs(archive_dir, exist_ok=True)
+    
+    dest_path = os.path.join(archive_dir, os.path.basename(found_path))
+    if os.path.exists(dest_path):
+        if os.path.isdir(dest_path):
+            shutil.rmtree(dest_path)
+        else:
+            os.remove(dest_path)
+    shutil.move(found_path, dest_path)
+
+    rel_dest = os.path.relpath(dest_path, OBSIDIAN_VAULT_PATH)
+    
+    # Re-run index autoupdater & tasks dashboard to ensure clean state
+    from backend.brain_cleaner import auto_update_index
+    from backend.utils.tasks_dashboard import maintain_tasks_dashboard
+    await auto_update_index()
+    await maintain_tasks_dashboard()
+
+    msg = (
+        f"📦 <b>Project Archived: {proj_name}</b>\n\n"
+        f"• <b>Category:</b> {category}\n"
+        f"• <b>Vault Location:</b> <code>{rel_dest}</code>\n"
+        f"• <b>Status:</b> <code>completed</code>\n"
+        f"• <b>Date Completed:</b> {today_str}\n\n"
+        f"<i>Notes and vector embeddings remain 100% searchable via RAG Q&A.</i>"
+    )
+    await send_msg(chat_id, token, http_client, msg)
+
 async def handle_engage_commands(chat_id: int, text: str, token: str, http_client: httpx.AsyncClient) -> bool:
     cmd_part = text.split()[0].lower()
     
@@ -432,6 +523,9 @@ async def handle_engage_commands(chat_id: int, text: str, token: str, http_clien
         return True
     elif cmd_part == "/project":
         await handle_project_command(chat_id, text, token, http_client)
+        return True
+    elif cmd_part in ["/archive", "/archive-project"]:
+        await handle_archive_project_command(chat_id, text, token, http_client)
         return True
     elif cmd_part == "/done":
         await handle_done_command(chat_id, text, token, http_client)

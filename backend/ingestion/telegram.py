@@ -228,6 +228,7 @@ async def process_telegram_message(message: dict, token: str, http_client):
   /next @errands       Filter by context
   /waiting             View delegated items
   /project <name>      View project roadmap
+  /archive <project>   Archive completed project to 05_Archive/
 
 ━━━ REFLECT & STATUS ━━━
   /status              View GTD list counts & active projects
@@ -247,7 +248,7 @@ async def process_telegram_message(message: dict, token: str, http_client):
                 from backend.ingestion.handlers.clarify import handle_clarify_command
                 await handle_clarify_command(chat_id, token, http_client)
                 return
-            elif cmd_part in ["/next", "/waiting", "/project", "/done", "/tickle", "/reflect", "/status", "/sitrep"]:
+            elif cmd_part in ["/next", "/waiting", "/project", "/done", "/tickle", "/reflect", "/status", "/sitrep", "/archive", "/archive-project"]:
                 from backend.ingestion.handlers.engage import handle_engage_commands
                 await handle_engage_commands(chat_id, text, token, http_client)
                 return

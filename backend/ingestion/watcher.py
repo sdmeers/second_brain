@@ -27,7 +27,7 @@ from backend.ingestion.queue import (
 )
 from backend.ingestion.classifier import classify_input
 from backend.processing.capture import process_capture_core, DuplicateURLError
-from backend.ingestion.telegram import poll_telegram_unified, notify_via_telegram
+from backend.ingestion.telegram import poll_telegram_unified, run_telegram_bot_loop, notify_via_telegram
 from backend.ingestion.gmail import poll_gmail
 
 # Specific Ingestion Handlers
@@ -893,6 +893,9 @@ async def watch_inbox_loop():
 
     print(f"Backend [Watcher]: Settings -> Obsidian polling: {enable_obsidian}, Telegram polling: {enable_telegram}, Gmail polling: {enable_gmail}")
 
+    if enable_telegram:
+        asyncio.create_task(run_telegram_bot_loop())
+
     counter = 0
     while True:
         try:
@@ -901,9 +904,6 @@ async def watch_inbox_loop():
             if enable_obsidian:
                 tasks.append(scan_and_process_import())
                 tasks.append(scan_and_process_inbox())
-            
-            if enable_telegram:
-                tasks.append(poll_telegram_unified())
                 
             if enable_gmail and (counter % 4 == 0):
                 tasks.append(poll_gmail())

@@ -388,7 +388,7 @@ async def handle_telegram_callback_query(callback_query: dict, token: str, http_
     try:
         await http_client.post(
             f"https://api.telegram.org/bot{token}/answerCallbackQuery",
-            json={"callback_query_id": callback_query_id, "text": "Creating Jira issue..."}
+            json={"callback_query_id": callback_query_id}
         )
     except Exception as e:
         print(f"Backend [Telegram callback]: Failed to answer callback query: {e}")
@@ -537,5 +537,66 @@ async def poll_telegram_unified():
 
         except Exception as e:
             print(f"Backend [Telegram Watcher]: Error polling Telegram: {type(e).__name__} - {e}")
+
+async def run_telegram_bot_loop():
+    """Runs a dedicated, continuous long-polling loop for Telegram updates with zero sleep delay."""
+    token = TELEGRAM_BOT_TOKEN
+    if not token:
+        print("Backend [Telegram Bot]: No TELEGRAM_BOT_TOKEN found. Bot loop disabled.")
+        return
+
+    allowed_chat_ids = TELEGRAM_ALLOWED_CHAT_IDS
+    offset_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".telegram_offset")
+    offset = 0
+    if os.path.exists(offset_file):
+        try:
+            with open(offset_file, "r") as f:
+                offset = int(f.read().strip())
+        except Exception:
+            pass
+
+    print("Backend [Telegram Bot]: Fast dedicated long-polling loop started (sub-second responsiveness)...")
+
+    async with httpx.AsyncClient(timeout=35.0) as client:
+        while True:
+            try:
+                url = f"https://api.telegram.org/bot{token}/getUpdates"
+                params = {"timeout": 10}
+                if offset > 0:
+                    params["offset"] = offset
+
+                response = await client.get(url, params=params)
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get("ok"):
+                        updates = data.get("result", [])
+                        for update in updates:
+                            new_offset = update["update_id"] + 1
+                            if new_offset > offset:
+                                offset = new_offset
+                                try:
+                                    with open(offset_file, "w") as f:
+                                        f.write(str(offset))
+                                except Exception:
+                                    pass
+
+                            callback_query = update.get("callback_query")
+                            if callback_query:
+                                chat_id = callback_query["message"]["chat"]["id"]
+                                if allowed_chat_ids and chat_id not in allowed_chat_ids:
+                                    continue
+                                asyncio.create_task(handle_telegram_callback_query(callback_query, token, client))
+                                continue
+
+                            message = update.get("message") or update.get("channel_post")
+                            if message:
+                                chat_id = message["chat"]["id"]
+                                if allowed_chat_ids and chat_id not in allowed_chat_ids:
+                                    continue
+                                asyncio.create_task(process_telegram_message(message, token, client))
+                else:
+                    await asyncio.sleep(1)
+            except Exception as e:
+                await asyncio.sleep(1)
 
 

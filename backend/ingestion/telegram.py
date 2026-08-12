@@ -211,35 +211,35 @@ async def process_telegram_message(message: dict, token: str, http_client):
                 await handle_qa_query(query_text, chat_id, token, http_client)
                 return
             elif cmd_part == "/help":
-                help_text = """🧠 <b>Second Brain — GTD + PARA Command Reference</b>
+                help_text = """🧠 **Second Brain — GTD + PARA Command Reference**
 
-━━━ 📥 <b>CAPTURE</b> ━━━
-  /in &lt;text/voice&gt;    Quick capture (or send voice note)
-  /capture &lt;text&gt;     Explicit capture to Captured.md
-  /research &lt;URL&gt;     Deep research ingestion
+━━━ 📥 **CAPTURE** ━━━
+  /in [text/voice]    Quick capture (or send voice note)
+  /capture [text]     Explicit capture to Captured.md
+  /research [URL]     Deep research ingestion
 
-━━━ ⚙️ <b>CLARIFY & ORGANISE</b> ━━━
+━━━ ⚙️ **CLARIFY & ORGANISE** ━━━
   /clarify             Process captured items through GTD workflow
-  /done &lt;item&gt;         Mark task complete & promote project next step
-  /tickle &lt;date&gt; &lt;item&gt; Defer item (e.g. /tickle 23rd Aug Send card)
+  /done [item]         Mark task complete & promote project next step
+  /tickle [date] [item] Defer item (e.g. /tickle 23rd Aug Send card)
 
-━━━ ⚡ <b>ENGAGE & PROJECTS</b> ━━━
+━━━ ⚡ **ENGAGE & PROJECTS** ━━━
   /next                View active next actions
   /next @errands       Filter actions by context (@home, @computer, etc.)
   /waiting             View delegated items
-  /project &lt;name&gt;      View project roadmap & active actions
-  /project &lt;name&gt; add &lt;step&gt;  Add step to project roadmap
-  /archive &lt;project&gt;   Archive completed project to 05_Archive/
+  /project [name]      View project roadmap & active actions
+  /project [name] add [step]  Add step to project roadmap
+  /archive [project]   Archive completed project to 05_Archive/
 
-━━━ 📊 <b>REFLECT & REVIEWS</b> ━━━
+━━━ 📊 **REFLECT & REVIEWS** ━━━
   /status              View GTD list counts & active projects (sitrep)
   /reflect             Guided review routine
   /holiday             Pause daily/weekly reviews during holidays
   /holiday resume      Resume reviews early
 
-━━━ 💬 <b>Q&A & SYSTEM</b> ━━━
-  /ask &lt;question&gt;      Ask anything (or type naturally)
-  /jira &lt;summary&gt;      Create Jira ticket in backlog
+━━━ 💬 **Q&A & SYSTEM** ━━━
+  /ask [question]      Ask anything (or type naturally)
+  /jira [summary]      Create Jira ticket in backlog
   /help                Show this command reference"""
                 await send_telegram_message_safe(http_client, token, chat_id, help_text)
                 return

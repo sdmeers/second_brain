@@ -613,6 +613,16 @@ async def cleanup_old_audio():
 
 async def generate_daily_digest():
     print("🌅 Generating daily digest...")
+    from backend.utils.holiday_manager import is_scope_paused
+    
+    all_paused, all_date = is_scope_paused("all")
+    if all_paused:
+        print(f"🌴 Holiday Mode active (all reviews paused until {all_date}). Skipping daily digest.")
+        return None
+
+    pers_paused, pers_date = is_scope_paused("personal")
+    prof_paused, prof_date = is_scope_paused("professional")
+
     today_dt = datetime.now()
     today_str = today_dt.strftime("%Y-%m-%d")
     is_weekend = today_dt.weekday() >= 5
@@ -749,6 +759,13 @@ async def generate_sitrep_summary() -> str:
 
 async def generate_weekly_review():
     print("🗓️ Generating Friday 14:00 Weekly Review...")
+    from backend.utils.holiday_manager import is_scope_paused
+    
+    all_paused, all_date = is_scope_paused("all")
+    if all_paused:
+        print(f"🌴 Holiday Mode active (all reviews paused until {all_date}). Skipping weekly review.")
+        return None
+
     today_dt = datetime.now()
     today_str = today_dt.strftime("%Y-%m-%d")
     seven_days_ago = today_dt - timedelta(days=7)

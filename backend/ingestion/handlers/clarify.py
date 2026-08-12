@@ -88,10 +88,11 @@ async def process_next_clarify_item(chat_id: int, token: str, http_client: httpx
              {"text": "📌 Existing Project Roadmap", "callback_data": "clarify:action_roadmap_cat"}],
             [{"text": "📁 New Project", "callback_data": "clarify:action_new_proj_cat"},
              {"text": "⏳ Waiting For", "callback_data": "clarify:action_waiting"}],
-            [{"text": "💡 Someday / Maybe", "callback_data": "clarify:action_someday"},
-             {"text": "📚 Pass to AI Librarian", "callback_data": "clarify:action_librarian"}],
-            [{"text": "⚡ 2-Min Rule (Done)", "callback_data": "clarify:action_2min"},
-             {"text": "🗑️ Trash", "callback_data": "clarify:action_trash"}]
+            [{"text": "🔔 Defer / Tickle", "callback_data": "clarify:action_defer"},
+             {"text": "💡 Someday / Maybe", "callback_data": "clarify:action_someday"}],
+            [{"text": "📚 Pass to AI Librarian", "callback_data": "clarify:action_librarian"},
+             {"text": "⚡ 2-Min Rule (Done)", "callback_data": "clarify:action_2min"}],
+            [{"text": "🗑️ Trash", "callback_data": "clarify:action_trash"}]
         ]
     }
 
@@ -573,7 +574,71 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
         await process_next_clarify_item(chat_id, token, http_client)
         return
 
-    # 8. Someday / Maybe Flow
+    # 8. Defer / Tickle Flow
+    if action == "action_defer":
+        reply_markup = {
+            "inline_keyboard": [
+                [{"text": "📅 Tomorrow (+1d)", "callback_data": "clarify:defer_days:1"},
+                 {"text": "📅 Next Week (+7d)", "callback_data": "clarify:defer_days:7"}],
+                [{"text": "📅 Next Month (+30d)", "callback_data": "clarify:defer_days:30"}]
+            ]
+        }
+        await http_client.post(
+            f"https://api.telegram.org/bot{token}/editMessageText",
+            json={
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": "🔔 <b>Defer until when?</b>",
+                "parse_mode": "HTML",
+                "reply_markup": reply_markup
+            }
+        )
+        return
+
+    if action.startswith("defer_days"):
+        days = int(data.split(":")[2])
+        session["item_data"]["defer_days"] = days
+        reply_markup = {
+            "inline_keyboard": [
+                [{"text": "🏠 Personal", "callback_data": f"clarify:save_defer:{days}:Personal"},
+                 {"text": "💼 Professional", "callback_data": f"clarify:save_defer:{days}:Professional"}]
+            ]
+        }
+        await http_client.post(
+            f"https://api.telegram.org/bot{token}/editMessageText",
+            json={
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": f"🏷️ <b>Select Category for Deferred Item (+{days}d):</b>",
+                "parse_mode": "HTML",
+                "reply_markup": reply_markup
+            }
+        )
+        return
+
+    if action.startswith("save_defer"):
+        parts = data.split(":")
+        days = int(parts[2])
+        category = parts[3]
+        
+        defer_date = (datetime.now().date() + timedelta(days=days)).strftime("%Y-%m-%d")
+        clean_text = sanitize_task_item_text(item_line)
+        cat_tag = "#professional" if category == "Professional" else "#personal"
+        
+        tasks_md = os.path.join(TASKS_PATH, "Next_Actions.md")
+        from backend.utils.tasks_dashboard import append_gtd_item
+        append_gtd_item(tasks_md, f"- [ ] {clean_text} {cat_tag} 🔔 {defer_date}")
+        
+        await archive_and_remove_captured(item_line)
+        await http_client.post(
+            f"https://api.telegram.org/bot{token}/editMessageText",
+            json={"chat_id": chat_id, "message_id": message_id, "text": f"🔔 Deferred until {defer_date} ({cat_tag}):\n{clean_text}"}
+        )
+        session["current_index"] += 1
+        await process_next_clarify_item(chat_id, token, http_client)
+        return
+
+    # 9. Someday / Maybe Flow
     if action == "action_someday":
         clean_text = sanitize_task_item_text(item_line)
         someday_md = os.path.join(TASKS_PATH, "Someday_Maybe.md")

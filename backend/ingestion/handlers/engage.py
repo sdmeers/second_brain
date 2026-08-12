@@ -316,7 +316,73 @@ async def handle_done_command(chat_id: int, text: str, token: str, http_client: 
                     return
 
 async def handle_tickle_command(chat_id: int, text: str, token: str, http_client: httpx.AsyncClient):
-    await send_msg(chat_id, token, http_client, "✅ Tickle command handled (simplified implementation for phase 4).")
+    cmd_parts = text.split(maxsplit=2)
+    if len(cmd_parts) < 3:
+        await send_msg(
+            chat_id, token, http_client,
+            "⚠️ Usage: `/tickle <date/days> <task_search>`\n\n"
+            "Examples:\n"
+            "• `/tickle 7d Buy birthday card` (Defers for 7 days)\n"
+            "• `/tickle 2026-09-01 Renew car insurance` (Defers until Sept 1st)\n"
+            "• `/tickle tomorrow Call garage` (Defers until tomorrow)"
+        )
+        return
+
+    date_arg = cmd_parts[1].strip()
+    task_query = cmd_parts[2].strip().lower()
+    
+    today = datetime.now().date()
+    target_date = today + timedelta(days=7)
+    if date_arg.lower() in ["tomorrow", "+1d", "1d"]:
+        target_date = today + timedelta(days=1)
+    elif date_arg.lower() in ["next_week", "+7d", "7d", "week"]:
+        target_date = today + timedelta(days=7)
+    elif date_arg.lower() in ["next_month", "+30d", "30d", "month"]:
+        target_date = today + timedelta(days=30)
+    elif date_arg.startswith("+") and date_arg[1:-1].isdigit():
+        target_date = today + timedelta(days=int(date_arg[1:-1]))
+    elif date_arg.endswith("d") and date_arg[:-1].isdigit():
+        target_date = today + timedelta(days=int(date_arg[:-1]))
+    else:
+        try:
+            target_date = datetime.strptime(date_arg, "%Y-%m-%d").date()
+        except ValueError:
+            target_date = today + timedelta(days=7)
+
+    defer_str = target_date.strftime("%Y-%m-%d")
+
+    tasks_dir = os.path.join(OBSIDIAN_VAULT_PATH, "01_Tasks")
+    found_file = None
+    matched_line = None
+
+    for fname in ["Next_Actions.md", "Waiting_For.md", "Someday_Maybe.md"]:
+        fp = os.path.join(tasks_dir, fname)
+        if not os.path.exists(fp):
+            continue
+        with open(fp, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+
+        new_lines = []
+        for line in lines:
+            if task_query in line.lower() and line.strip().startswith("- ["):
+                found_file = fp
+                matched_line = line.strip()
+                if "🔔" in line:
+                    line = re.sub(r'🔔\s*\d{4}-\d{2}-\d{2}', f'🔔 {defer_str}', line)
+                else:
+                    line = line.strip() + f" 🔔 {defer_str}\n"
+            new_lines.append(line)
+
+        if found_file:
+            from backend.vault.writer import atomic_write
+            atomic_write(fp, "".join(new_lines))
+            break
+
+    if matched_line:
+        clean_task = re.sub(r'\(Captured on.*?\)', '', matched_line).strip("- [ ]\n")
+        await send_msg(chat_id, token, http_client, f"🔔 Deferred until {defer_str}:\n{clean_task}")
+    else:
+        await send_msg(chat_id, token, http_client, f"❌ Task matching '{task_query}' not found in active task lists.")
 
 async def handle_status_command(chat_id: int, token: str, http_client: httpx.AsyncClient):
     tasks_dir = os.path.join(OBSIDIAN_VAULT_PATH, "01_Tasks")

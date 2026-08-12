@@ -558,6 +558,8 @@ async def run_telegram_bot_loop():
 
     print("Backend [Telegram Bot]: Fast dedicated long-polling loop started (sub-second responsiveness)...")
 
+    allowed_ids = [int(cid) for cid in allowed_chat_ids] if allowed_chat_ids else []
+
     async with httpx.AsyncClient(timeout=35.0) as client:
         while True:
             try:
@@ -584,7 +586,8 @@ async def run_telegram_bot_loop():
                             callback_query = update.get("callback_query")
                             if callback_query:
                                 chat_id = callback_query["message"]["chat"]["id"]
-                                if allowed_chat_ids and chat_id not in allowed_chat_ids:
+                                if allowed_ids and int(chat_id) not in allowed_ids:
+                                    print(f"Backend [Telegram Bot]: Ignored callback query from unauthorized chat {chat_id}")
                                     continue
                                 asyncio.create_task(handle_telegram_callback_query(callback_query, token, client))
                                 continue
@@ -592,12 +595,18 @@ async def run_telegram_bot_loop():
                             message = update.get("message") or update.get("channel_post")
                             if message:
                                 chat_id = message["chat"]["id"]
-                                if allowed_chat_ids and chat_id not in allowed_chat_ids:
+                                if allowed_ids and int(chat_id) not in allowed_ids:
+                                    print(f"Backend [Telegram Bot]: Ignored message from unauthorized chat {chat_id}")
                                     continue
                                 asyncio.create_task(process_telegram_message(message, token, client))
+                elif response.status_code == 409:
+                    print("Backend [Telegram Bot]: Telegram returned HTTP 409 (Conflict with another polling loop). Retrying in 3s...")
+                    await asyncio.sleep(3)
                 else:
-                    await asyncio.sleep(1)
+                    print(f"Backend [Telegram Bot]: API returned status {response.status_code}: {response.text}")
+                    await asyncio.sleep(2)
             except Exception as e:
-                await asyncio.sleep(1)
+                print(f"Backend [Telegram Bot Loop]: Unexpected polling error: {e}")
+                await asyncio.sleep(2)
 
 

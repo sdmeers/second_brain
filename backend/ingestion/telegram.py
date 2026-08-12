@@ -193,6 +193,33 @@ async def process_telegram_message(message: dict, token: str, http_client):
                     json={"chat_id": chat_id, "text": f"📥 Captured: \"{preview}\"\n   → Saved to Captured.md. Process with /clarify when ready."}
                 )
                 return
+            elif cmd_part == "/file":
+                file_input = text[5:].strip()
+                doc_obj = document or photo or voice or audio
+                if not file_input and not doc_obj:
+                    await send_telegram_message_safe(http_client, token, chat_id, "⚠️ Please provide a URL, text, or attach a document with `/file`.")
+                    return
+                
+                payload = {"chat_id": chat_id, "type": "file_command"}
+                from backend.ingestion.queue import add_to_queue
+                
+                staged_path = None
+                if doc_obj:
+                    if isinstance(doc_obj, list):
+                        doc_obj = doc_obj[-1]
+                    file_id = doc_obj["file_id"]
+                    file_name = doc_obj.get("file_name", f"doc_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf")
+                    file_bytes = await download_telegram_file(file_id, token, http_client)
+                    staged_path = os.path.join(staging_path, file_name)
+                    with open(staged_path, "wb") as f:
+                        f.write(file_bytes)
+                    payload["filename"] = file_name
+                    
+                add_to_queue(source_type="file_command", raw_payload=payload, content_text=file_input if file_input else None, file_path=staged_path)
+                
+                disp_text = file_input[:60] if file_input else (payload.get("filename", "attached file"))
+                await send_telegram_message_safe(http_client, token, chat_id, f"📚 **Filing with AI Librarian...**\n`{disp_text}`\n\n*Skipping GTD workflow. Filing directly into your PARA vault notes.*")
+                return
             elif cmd_part == "/research":
                 research_text = text[10:].strip()
                 payload = {"chat_id": chat_id, "type": "text", "subject": "research"}
@@ -214,9 +241,9 @@ async def process_telegram_message(message: dict, token: str, http_client):
                 help_text = """🧠 **Second Brain — GTD + PARA Command Reference**
 
 ━━━ 📥 **CAPTURE** ━━━
-  /in [text/voice]    Quick capture (or send voice note)
-  /capture [text]     Explicit capture to Captured.md
-  /research [URL]     Deep research ingestion
+  /in [text/voice]    Quick capture (awaits /clarify)
+  /file [URL/doc]     Direct filing to PARA (skips /clarify)
+  /research [URL]     Deep research & concept extraction
 
 ━━━ ⚙️ **CLARIFY & ORGANISE** ━━━
   /clarify             Process captured items through GTD workflow

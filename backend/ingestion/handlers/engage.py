@@ -331,24 +331,8 @@ async def handle_tickle_command(chat_id: int, text: str, token: str, http_client
     date_arg = cmd_parts[1].strip()
     task_query = cmd_parts[2].strip().lower()
     
-    today = datetime.now().date()
-    target_date = today + timedelta(days=7)
-    if date_arg.lower() in ["tomorrow", "+1d", "1d"]:
-        target_date = today + timedelta(days=1)
-    elif date_arg.lower() in ["next_week", "+7d", "7d", "week"]:
-        target_date = today + timedelta(days=7)
-    elif date_arg.lower() in ["next_month", "+30d", "30d", "month"]:
-        target_date = today + timedelta(days=30)
-    elif date_arg.startswith("+") and date_arg[1:-1].isdigit():
-        target_date = today + timedelta(days=int(date_arg[1:-1]))
-    elif date_arg.endswith("d") and date_arg[:-1].isdigit():
-        target_date = today + timedelta(days=int(date_arg[:-1]))
-    else:
-        try:
-            target_date = datetime.strptime(date_arg, "%Y-%m-%d").date()
-        except ValueError:
-            target_date = today + timedelta(days=7)
-
+    from backend.ingestion.handlers.clarify import parse_natural_date_str
+    target_date = parse_natural_date_str(date_arg)
     defer_str = target_date.strftime("%Y-%m-%d")
 
     tasks_dir = os.path.join(OBSIDIAN_VAULT_PATH, "01_Tasks")

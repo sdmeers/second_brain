@@ -249,7 +249,81 @@ async def archive_and_remove_captured(item_line: str) -> str:
         with open(captured_md, "w", encoding="utf-8") as f:
             f.write(content)
             
-    return filename
+def parse_natural_date_str(date_str: str):
+    """Parses natural dates like '23rd Aug', '23 Aug', '23/08', 'tomorrow', '7d', '2026-08-23'."""
+    today = datetime.now().date()
+    ds = date_str.lower().strip()
+    
+    if ds in ["tomorrow", "+1d", "1d"]:
+        return today + timedelta(days=1)
+    if ds in ["next week", "+7d", "7d", "week"]:
+        return today + timedelta(days=7)
+    if ds in ["next month", "+30d", "30d", "month"]:
+        return today + timedelta(days=30)
+    if ds.startswith("+") and ds[1:-1].isdigit():
+        return today + timedelta(days=int(ds[1:-1]))
+    if ds.endswith("d") and ds[:-1].isdigit():
+        return today + timedelta(days=int(ds[:-1]))
+
+    cleaned_ds = re.sub(r'(\d+)(st|nd|rd|th)', r'\1', ds)
+
+    try:
+        return datetime.strptime(cleaned_ds, "%Y-%m-%d").date()
+    except ValueError:
+        pass
+
+    m_slash = re.match(r'^(\d{1,2})[/.\-](\d{1,2})(?:[/.\-](\d{2,4}))?$', cleaned_ds)
+    if m_slash:
+        day = int(m_slash.group(1))
+        month = int(m_slash.group(2))
+        year = int(m_slash.group(3)) if m_slash.group(3) else today.year
+        if year < 100: year += 2000
+        try:
+            target = datetime(year, month, day).date()
+            if target < today and not m_slash.group(3):
+                target = datetime(year + 1, month, day).date()
+            return target
+        except ValueError:
+            pass
+
+    months = {
+        "jan": 1, "january": 1, "feb": 2, "february": 2, "mar": 3, "march": 3,
+        "apr": 4, "april": 4, "may": 5, "june": 6, "jul": 7, "july": 7,
+        "aug": 8, "august": 8, "sep": 9, "september": 9, "oct": 10, "october": 10,
+        "nov": 11, "november": 11, "dec": 12, "december": 12
+    }
+    
+    m_day_month = re.match(r'^(\d{1,2})\s*([a-z]+)(?:\s+(\d{4}))?$', cleaned_ds)
+    if m_day_month:
+        day = int(m_day_month.group(1))
+        month_name = m_day_month.group(2)
+        year = int(m_day_month.group(3)) if m_day_month.group(3) else today.year
+        if month_name in months:
+            month = months[month_name]
+            try:
+                target = datetime(year, month, day).date()
+                if target < today and not m_day_month.group(3):
+                    target = datetime(year + 1, month, day).date()
+                return target
+            except ValueError:
+                pass
+
+    m_month_day = re.match(r'^([a-z]+)\s*(\d{1,2})(?:\s+(\d{4}))?$', cleaned_ds)
+    if m_month_day:
+        month_name = m_month_day.group(1)
+        day = int(m_month_day.group(2))
+        year = int(m_month_day.group(3)) if m_month_day.group(3) else today.year
+        if month_name in months:
+            month = months[month_name]
+            try:
+                target = datetime(year, month, day).date()
+                if target < today and not m_month_day.group(3):
+                    target = datetime(year + 1, month, day).date()
+                return target
+            except ValueError:
+                pass
+
+    return today + timedelta(days=7)
 
 async def handle_clarify_callback(callback_query: dict, token: str, http_client: httpx.AsyncClient):
     chat_id = callback_query["message"]["chat"]["id"]
@@ -580,7 +654,8 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
             "inline_keyboard": [
                 [{"text": "📅 Tomorrow (+1d)", "callback_data": "clarify:defer_days:1"},
                  {"text": "📅 Next Week (+7d)", "callback_data": "clarify:defer_days:7"}],
-                [{"text": "📅 Next Month (+30d)", "callback_data": "clarify:defer_days:30"}]
+                [{"text": "📅 Next Month (+30d)", "callback_data": "clarify:defer_days:30"},
+                 {"text": "✍️ Custom Date", "callback_data": "clarify:defer_custom"}]
             ]
         }
         await http_client.post(
@@ -591,6 +666,19 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
                 "text": "🔔 <b>Defer until when?</b>",
                 "parse_mode": "HTML",
                 "reply_markup": reply_markup
+            }
+        )
+        return
+
+    if action == "defer_custom":
+        session["awaiting_text_input"] = "defer_custom_date"
+        await http_client.post(
+            f"https://api.telegram.org/bot{token}/editMessageText",
+            json={
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": "📅 <b>Reply with the Deferral Date:</b>\ne.g. <code>23rd Aug</code>, <code>23/08</code>, or <code>2026-08-23</code>",
+                "parse_mode": "HTML"
             }
         )
         return
@@ -616,12 +704,16 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
         )
         return
 
-    if action.startswith("save_defer"):
+    if action.startswith("save_defer") or action.startswith("save_custom_defer"):
         parts = data.split(":")
-        days = int(parts[2])
-        category = parts[3]
-        
-        defer_date = (datetime.now().date() + timedelta(days=days)).strftime("%Y-%m-%d")
+        if action.startswith("save_custom_defer"):
+            category = parts[2]
+            defer_date = session["item_data"].get("custom_defer_date", datetime.now().strftime("%Y-%m-%d"))
+        else:
+            days = int(parts[2])
+            category = parts[3]
+            defer_date = (datetime.now().date() + timedelta(days=days)).strftime("%Y-%m-%d")
+
         clean_text = sanitize_task_item_text(item_line)
         cat_tag = "#professional" if category == "Professional" else "#personal"
         
@@ -705,6 +797,29 @@ async def handle_clarify_text_input(chat_id: int, text: str, token: str, http_cl
         session["awaiting_text_input"] = None
         session["current_index"] += 1
         await process_next_clarify_item(chat_id, token, http_client)
+        return True
+
+    if input_type == "defer_custom_date":
+        parsed_date = parse_natural_date_str(text)
+        date_str = parsed_date.strftime("%Y-%m-%d")
+        session["item_data"]["custom_defer_date"] = date_str
+        session["awaiting_text_input"] = None
+        
+        reply_markup = {
+            "inline_keyboard": [
+                [{"text": "🏠 Personal", "callback_data": "clarify:save_custom_defer:Personal"},
+                 {"text": "💼 Professional", "callback_data": "clarify:save_custom_defer:Professional"}]
+            ]
+        }
+        await http_client.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={
+                "chat_id": chat_id,
+                "text": f"🏷️ <b>Select Category for Deferred Item ({date_str}):</b>",
+                "parse_mode": "HTML",
+                "reply_markup": reply_markup
+            }
+        )
         return True
         
     return False

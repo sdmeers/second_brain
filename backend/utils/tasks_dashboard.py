@@ -232,7 +232,22 @@ async def maintain_tasks_dashboard():
             out_content = "".join(header_lines) + "\n".join(all_completed) + "\n"
             atomic_write(completed_file, out_content)
             print(f"Tasks Dashboard: Moved {len(newly_completed)} completed tasks to z_Completed.md")
-                
+            
+            # Check newly completed tasks for #project/<tag> and prompt Telegram promotion
+            from backend.config import TELEGRAM_ALLOWED_CHAT_IDS, TELEGRAM_BOT_TOKEN
+            if TELEGRAM_BOT_TOKEN and TELEGRAM_ALLOWED_CHAT_IDS:
+                primary_chat_id = TELEGRAM_ALLOWED_CHAT_IDS[0] if isinstance(TELEGRAM_ALLOWED_CHAT_IDS, list) else int(str(TELEGRAM_ALLOWED_CHAT_IDS).split(",")[0].strip())
+                for task_str in newly_completed:
+                    m_proj = re.search(r'#project/([a-zA-Z0-9_\-]+)', task_str)
+                    if m_proj:
+                        proj_tag = m_proj.group(1)
+                        try:
+                            from backend.ingestion.handlers.engage import prompt_project_step_promotion
+                            await prompt_project_step_promotion(primary_chat_id, proj_tag)
+                        except Exception as pe:
+                            print(f"Tasks Dashboard: Error prompting project promotion for {proj_tag}: {pe}")
+                        break
+
         # 2. Categorize active tasks
         today = datetime.now().date()
         overdue_tasks = []

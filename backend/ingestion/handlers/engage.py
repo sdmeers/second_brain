@@ -313,84 +313,97 @@ async def handle_done_command(chat_id: int, text: str, token: str, http_client: 
     
     # Project auto-promotion flow with interactive Telegram buttons
     if project_tag:
-        proj_dir = os.path.join(OBSIDIAN_VAULT_PATH, "02_Projects")
-        proj_found_path = None
-        proj_clean = project_tag.strip().title()
+        await prompt_project_step_promotion(chat_id, project_tag, token, http_client)
+
+async def prompt_project_step_promotion(chat_id: int, project_tag: str, token: str = None, http_client: httpx.AsyncClient = None):
+    from backend.config import TELEGRAM_BOT_TOKEN
+    tok = token or TELEGRAM_BOT_TOKEN
+    if not tok or not chat_id:
+        return
         
-        # 1. Search for project master note
+    proj_dir = os.path.join(OBSIDIAN_VAULT_PATH, "02_Projects")
+    proj_found_path = None
+    proj_clean = project_tag.strip().replace("_", " ").title()
+    
+    # 1. Search for project master note
+    for root, dirs, files in os.walk(proj_dir):
+        for f in files:
+            if f.lower() in [f"{proj_clean.lower()}.md", f"{project_tag.lower()}.md", f"{project_tag.replace(' ', '_').lower()}.md"]:
+                proj_found_path = os.path.join(root, f)
+                break
+        if proj_found_path: break
+        
+    if not proj_found_path:
         for root, dirs, files in os.walk(proj_dir):
             for f in files:
-                if f.lower() in [f"{proj_clean.lower()}.md", f"{project_tag.lower()}.md", f"{project_tag.replace(' ', '_').lower()}.md"]:
+                if project_tag.lower() in f.lower() and f.endswith(".md"):
                     proj_found_path = os.path.join(root, f)
                     break
             if proj_found_path: break
-            
-        if not proj_found_path:
-            for root, dirs, files in os.walk(proj_dir):
-                for f in files:
-                    if project_tag.lower() in f.lower() and f.endswith(".md"):
-                        proj_found_path = os.path.join(root, f)
-                        break
-                if proj_found_path: break
 
-        if proj_found_path:
-            with open(proj_found_path, "r", encoding="utf-8") as pf:
-                proj_content = pf.read()
+    if not proj_found_path or not os.path.exists(proj_found_path):
+        return
 
-            # Determine category
-            category = "Personal"
-            m_cat = re.search(r'category:\s*"?([a-zA-Z0-9_\-]+)"?', proj_content)
-            if m_cat:
-                category = m_cat.group(1)
-            elif "Professional" in proj_found_path:
-                category = "Professional"
+    with open(proj_found_path, "r", encoding="utf-8") as pf:
+        proj_content = pf.read()
 
-            # Parse steps under ## Project Steps
-            steps_match = re.search(r'## Project Steps\s*([\s\S]*?)(?=\n## |\Z)', proj_content)
-            candidate_steps = []
-            if steps_match:
-                for line in steps_match.group(1).splitlines():
-                    if line.strip().startswith("- [ ]"):
-                        clean_step = re.sub(r'\(Captured .*?\)', '', line)
-                        clean_step = re.sub(r'\(Source:.*?\)', '', clean_step).strip("- [ ]\n").strip()
-                        if clean_step:
-                            candidate_steps.append(clean_step)
+    # Determine category
+    category = "Personal"
+    m_cat = re.search(r'category:\s*"?([a-zA-Z0-9_\-]+)"?', proj_content)
+    if m_cat:
+        category = m_cat.group(1)
+    elif "Professional" in proj_found_path:
+        category = "Professional"
 
-            # Check currently active tasks in Next_Actions.md to avoid duplicate promotion
-            next_actions_fp = os.path.join(OBSIDIAN_VAULT_PATH, "01_Tasks", "Next_Actions.md")
-            active_next_texts = []
-            if os.path.exists(next_actions_fp):
-                with open(next_actions_fp, "r", encoding="utf-8") as nf:
-                    active_next_texts = [nl.strip().lower() for nl in nf if nl.strip().startswith("- [ ]")]
+    # Parse steps under ## Project Steps
+    steps_match = re.search(r'## Project Steps\s*([\s\S]*?)(?=\n## |\Z)', proj_content)
+    candidate_steps = []
+    if steps_match:
+        for line in steps_match.group(1).splitlines():
+            if line.strip().startswith("- [ ]"):
+                clean_step = re.sub(r'\(Captured .*?\)', '', line)
+                clean_step = re.sub(r'\(Source:.*?\)', '', clean_step).strip("- [ ]\n").strip()
+                if clean_step:
+                    candidate_steps.append(clean_step)
 
-            unpromoted_steps = [s for s in candidate_steps if not any(s.lower() in ant for ant in active_next_texts)]
+    # Check currently active tasks in Next_Actions.md to avoid duplicate promotion
+    next_actions_fp = os.path.join(OBSIDIAN_VAULT_PATH, "01_Tasks", "Next_Actions.md")
+    active_next_texts = []
+    if os.path.exists(next_actions_fp):
+        with open(next_actions_fp, "r", encoding="utf-8") as nf:
+            active_next_texts = [nl.strip().lower() for nl in nf if nl.strip().startswith("- [ ]")]
 
-            if unpromoted_steps:
-                PROMOTION_SESSIONS[chat_id] = {
-                    "project_tag": project_tag.replace(" ", "_"),
-                    "project_title": proj_clean,
-                    "category": category,
-                    "steps": unpromoted_steps[:8]
-                }
-                
-                keyboard = []
-                for i, step_str in enumerate(unpromoted_steps[:5]):
-                    btn_text = f"{i+1}. " + (step_str[:36] + "..." if len(step_str) > 36 else step_str)
-                    keyboard.append([{"text": btn_text, "callback_data": f"promote:step:{i}"}])
-                
-                keyboard.append([{"text": "⏭️ Skip / None for now", "callback_data": "promote:skip"}])
-                
-                reply_markup = {"inline_keyboard": keyboard}
-                
-                await http_client.post(
-                    f"https://api.telegram.org/bot{token}/sendMessage",
-                    json={
-                        "chat_id": chat_id,
-                        "text": f"🎯 <b>Project Roadmap: #{project_tag.replace(' ', '_')}</b>\n\nWhich step would you like to promote to <b>Next Actions</b>?",
-                        "parse_mode": "HTML",
-                        "reply_markup": reply_markup
-                    }
-                )
+    unpromoted_steps = [s for s in candidate_steps if not any(s.lower() in ant for ant in active_next_texts)]
+
+    if unpromoted_steps:
+        PROMOTION_SESSIONS[chat_id] = {
+            "project_tag": project_tag.replace(" ", "_"),
+            "project_title": proj_clean,
+            "category": category,
+            "steps": unpromoted_steps[:8]
+        }
+        
+        keyboard = []
+        for i, step_str in enumerate(unpromoted_steps[:5]):
+            btn_text = f"{i+1}. " + (step_str[:36] + "..." if len(step_str) > 36 else step_str)
+            keyboard.append([{"text": btn_text, "callback_data": f"promote:step:{i}"}])
+        
+        keyboard.append([{"text": "⏭️ Skip / None for now", "callback_data": "promote:skip"}])
+        
+        reply_markup = {"inline_keyboard": keyboard}
+        
+        payload = {
+            "chat_id": chat_id,
+            "text": f"🎯 <b>Project Roadmap: #{project_tag.replace(' ', '_')}</b>\n\nWhich step would you like to promote to <b>Next Actions</b>?",
+            "parse_mode": "HTML",
+            "reply_markup": reply_markup
+        }
+        
+        if http_client:
+            await http_client.post(f"https://api.telegram.org/bot{tok}/sendMessage", json=payload)
+        else:
+            async with httpx.AsyncClient() as client:
+                await client.post(f"https://api.telegram.org/bot{tok}/sendMessage", json=payload)
 
 
 async def handle_promote_callback(callback_query: dict, token: str, http_client: httpx.AsyncClient):

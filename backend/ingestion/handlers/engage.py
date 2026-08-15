@@ -379,6 +379,7 @@ async def prompt_project_step_promotion(chat_id: int, project_tag: str, token: s
         PROMOTION_SESSIONS[chat_id] = {
             "project_tag": project_tag.replace(" ", "_"),
             "project_title": proj_clean,
+            "project_path": proj_found_path,
             "category": category,
             "steps": unpromoted_steps[:8]
         }
@@ -475,22 +476,56 @@ async def handle_promote_callback(callback_query: dict, token: str, http_client:
         selected_step = session.get("selected_step", "")
         project_tag = session.get("project_tag", "")
         category = session.get("category", "Personal")
+        proj_path = session.get("project_path")
         
         clean_step = re.sub(r'\(Captured .*?\)', '', selected_step)
         clean_step = re.sub(r'\(Source:.*?\)', '', clean_step).strip("- [ ]\n").strip()
         
+        # 1. Add to Next_Actions.md
         task_str = f"- [ ] {clean_step} {chosen_ctx} #project/{project_tag} #{category.lower()}"
         tasks_md = os.path.join(OBSIDIAN_VAULT_PATH, "01_Tasks", "Next_Actions.md")
         
         from backend.utils.tasks_dashboard import append_gtd_item
         append_gtd_item(tasks_md, task_str)
+
+        # 2. Delete the promoted step from ## Project Steps in the project master note
+        if not proj_path or not os.path.exists(proj_path):
+            proj_dir = os.path.join(OBSIDIAN_VAULT_PATH, "02_Projects")
+            proj_clean = project_tag.strip().replace("_", " ").title()
+            for root, dirs, files in os.walk(proj_dir):
+                for f in files:
+                    if f.lower() in [f"{proj_clean.lower()}.md", f"{project_tag.lower()}.md", f"{project_tag.replace(' ', '_').lower()}.md"]:
+                        proj_path = os.path.join(root, f)
+                        break
+                if proj_path: break
+
+        if proj_path and os.path.exists(proj_path):
+            with open(proj_path, "r", encoding="utf-8") as pf:
+                proj_lines = pf.readlines()
+
+            new_proj_lines = []
+            removed = False
+            clean_target = clean_step.lower()
+
+            for pl in proj_lines:
+                if not removed and pl.strip().startswith("- [ ]"):
+                    pl_clean = re.sub(r'\(Captured .*?\)', '', pl)
+                    pl_clean = re.sub(r'\(Source:.*?\)', '', pl_clean).strip("- [ ]\n").strip().lower()
+                    if clean_target == pl_clean or clean_target in pl_clean or pl_clean in clean_target:
+                        removed = True
+                        continue  # Skip to delete from project roadmap
+                new_proj_lines.append(pl)
+
+            if removed:
+                from backend.vault.writer import atomic_write
+                atomic_write(proj_path, "".join(new_proj_lines))
         
         await http_client.post(
             f"https://api.telegram.org/bot{token}/editMessageText",
             json={
                 "chat_id": chat_id,
                 "message_id": message_id,
-                "text": f"⚡ <b>Promoted to Next Actions:</b>\n• {clean_step} {chosen_ctx} #project/{project_tag}",
+                "text": f"⚡ <b>Promoted to Next Actions:</b>\n• {clean_step} {chosen_ctx} #project/{project_tag}\n\n<i>Removed from project roadmap backlog.</i>",
                 "parse_mode": "HTML"
             }
         )

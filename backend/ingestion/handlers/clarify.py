@@ -537,7 +537,7 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
                  {"text": "@computer", "callback_data": "clarify:ctx:@computer"},
                  {"text": "@errands", "callback_data": "clarify:ctx:@errands"}],
                 [{"text": "@phone", "callback_data": "clarify:ctx:@phone"},
-                 {"text": "@garage", "callback_data": "clarify:ctx:@garage"},
+                 {"text": "@anywhere", "callback_data": "clarify:ctx:@anywhere"},
                  {"text": "@office", "callback_data": "clarify:ctx:@office"}]
             ]
         }

@@ -236,10 +236,12 @@ WHERE contains(tags, "#project/{proj_tag}") AND !completed
         
     await send_msg(chat_id, token, http_client, msg)
 
+PROMOTION_SESSIONS = {}
+
 async def handle_done_command(chat_id: int, text: str, token: str, http_client: httpx.AsyncClient):
     parts = text.split(maxsplit=1)
     if len(parts) < 2:
-        await send_msg(chat_id, token, http_client, "Usage: /done <task text>")
+        await send_msg(chat_id, token, http_client, "Usage: `/done <task text>`")
         return
         
     task_query = parts[1].strip().lower()
@@ -283,7 +285,7 @@ async def handle_done_command(chat_id: int, text: str, token: str, http_client: 
             break
             
     if not found:
-        await send_msg(chat_id, token, http_client, f"❌ Task matching '{task_query}' not found.")
+        await send_msg(chat_id, token, http_client, f"❌ Task matching '`{task_query}`' not found in active task lists.")
         return
         
     from backend.config import COMPLETED_TASKS_MD_FILE
@@ -298,26 +300,190 @@ async def handle_done_command(chat_id: int, text: str, token: str, http_client: 
                 if line.strip().startswith("- [x]") or line.strip().startswith("- [X]"):
                     existing_tasks.append(line.strip())
 
-    new_task = task_line.replace("- [ ]", f"- [x] ~~", 1) + f"~~ (Completed on {get_today_str()})" if "Completed on" not in task_line else task_line.replace("- [ ]", "- [x]", 1)
+    clean_task_name = re.sub(r'\(Captured .*?\)', '', task_line)
+    clean_task_name = re.sub(r'\(Source:.*?\)', '', clean_task_name).strip("- [ ]\n").strip()
+
+    new_task = f"- [x] ~~{clean_task_name}~~ (Completed on {get_today_str()})"
     
     all_completed = [new_task] + existing_tasks
     out_content = header_str + "\n".join(all_completed) + "\n"
     atomic_write(completed_file, out_content)
         
-    await send_msg(chat_id, token, http_client, f"✅ Done! Archived to z_Completed.md")
+    await send_msg(chat_id, token, http_client, f"✅ <b>Task Completed:</b>\n<s>{clean_task_name}</s>")
     
-    # Project auto promotion
+    # Project auto-promotion flow with interactive Telegram buttons
     if project_tag:
         proj_dir = os.path.join(OBSIDIAN_VAULT_PATH, "02_Projects")
+        proj_found_path = None
+        proj_clean = project_tag.strip().title()
+        
+        # 1. Search for project master note
         for root, dirs, files in os.walk(proj_dir):
             for f in files:
-                if project_tag.lower() in f.lower() and f.endswith(".md"):
-                    await send_msg(chat_id, token, http_client, f"🎯 Task was tagged for {project_tag}. Make sure to promote the next step in `/project {project_tag}`.")
-                    return
+                if f.lower() in [f"{proj_clean.lower()}.md", f"{project_tag.lower()}.md", f"{project_tag.replace(' ', '_').lower()}.md"]:
+                    proj_found_path = os.path.join(root, f)
+                    break
+            if proj_found_path: break
+            
+        if not proj_found_path:
+            for root, dirs, files in os.walk(proj_dir):
+                for f in files:
+                    if project_tag.lower() in f.lower() and f.endswith(".md"):
+                        proj_found_path = os.path.join(root, f)
+                        break
+                if proj_found_path: break
 
-async def handle_tickle_command(chat_id: int, text: str, token: str, http_client: httpx.AsyncClient):
-    cmd_parts = text.split(maxsplit=2)
-TICKLE_SESSIONS = {}
+        if proj_found_path:
+            with open(proj_found_path, "r", encoding="utf-8") as pf:
+                proj_content = pf.read()
+
+            # Determine category
+            category = "Personal"
+            m_cat = re.search(r'category:\s*"?([a-zA-Z0-9_\-]+)"?', proj_content)
+            if m_cat:
+                category = m_cat.group(1)
+            elif "Professional" in proj_found_path:
+                category = "Professional"
+
+            # Parse steps under ## Project Steps
+            steps_match = re.search(r'## Project Steps\s*([\s\S]*?)(?=\n## |\Z)', proj_content)
+            candidate_steps = []
+            if steps_match:
+                for line in steps_match.group(1).splitlines():
+                    if line.strip().startswith("- [ ]"):
+                        clean_step = re.sub(r'\(Captured .*?\)', '', line)
+                        clean_step = re.sub(r'\(Source:.*?\)', '', clean_step).strip("- [ ]\n").strip()
+                        if clean_step:
+                            candidate_steps.append(clean_step)
+
+            # Check currently active tasks in Next_Actions.md to avoid duplicate promotion
+            next_actions_fp = os.path.join(OBSIDIAN_VAULT_PATH, "01_Tasks", "Next_Actions.md")
+            active_next_texts = []
+            if os.path.exists(next_actions_fp):
+                with open(next_actions_fp, "r", encoding="utf-8") as nf:
+                    active_next_texts = [nl.strip().lower() for nl in nf if nl.strip().startswith("- [ ]")]
+
+            unpromoted_steps = [s for s in candidate_steps if not any(s.lower() in ant for ant in active_next_texts)]
+
+            if unpromoted_steps:
+                PROMOTION_SESSIONS[chat_id] = {
+                    "project_tag": project_tag.replace(" ", "_"),
+                    "project_title": proj_clean,
+                    "category": category,
+                    "steps": unpromoted_steps[:8]
+                }
+                
+                keyboard = []
+                for i, step_str in enumerate(unpromoted_steps[:5]):
+                    btn_text = f"{i+1}. " + (step_str[:36] + "..." if len(step_str) > 36 else step_str)
+                    keyboard.append([{"text": btn_text, "callback_data": f"promote:step:{i}"}])
+                
+                keyboard.append([{"text": "⏭️ Skip / None for now", "callback_data": "promote:skip"}])
+                
+                reply_markup = {"inline_keyboard": keyboard}
+                
+                await http_client.post(
+                    f"https://api.telegram.org/bot{token}/sendMessage",
+                    json={
+                        "chat_id": chat_id,
+                        "text": f"🎯 <b>Project Roadmap: #{project_tag.replace(' ', '_')}</b>\n\nWhich step would you like to promote to <b>Next Actions</b>?",
+                        "parse_mode": "HTML",
+                        "reply_markup": reply_markup
+                    }
+                )
+
+
+async def handle_promote_callback(callback_query: dict, token: str, http_client: httpx.AsyncClient):
+    chat_id = callback_query["message"]["chat"]["id"]
+    message_id = callback_query["message"]["message_id"]
+    data = callback_query.get("data", "")
+    
+    parts = data.split(":")
+    action = parts[1]
+    
+    session = PROMOTION_SESSIONS.get(chat_id)
+    
+    if action == "skip":
+        await http_client.post(
+            f"https://api.telegram.org/bot{token}/editMessageText",
+            json={
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": "🎯 No next steps promoted. Active project roadmap kept intact.",
+                "parse_mode": "HTML"
+            }
+        )
+        if chat_id in PROMOTION_SESSIONS:
+            del PROMOTION_SESSIONS[chat_id]
+        return
+
+    if not session:
+        await http_client.post(
+            f"https://api.telegram.org/bot{token}/editMessageText",
+            json={
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": "❌ Promotion session expired. Use `/project <name>` to view roadmap.",
+                "parse_mode": "HTML"
+            }
+        )
+        return
+
+    if action == "step":
+        step_idx = int(parts[2])
+        if step_idx < len(session["steps"]):
+            selected_step = session["steps"][step_idx]
+            session["selected_step"] = selected_step
+            
+            reply_markup = {
+                "inline_keyboard": [
+                    [{"text": "@home", "callback_data": "promote:ctx:@home"},
+                     {"text": "@computer", "callback_data": "promote:ctx:@computer"},
+                     {"text": "@errands", "callback_data": "promote:ctx:@errands"}],
+                    [{"text": "@phone", "callback_data": "promote:ctx:@phone"},
+                     {"text": "@anywhere", "callback_data": "promote:ctx:@anywhere"},
+                     {"text": "@office", "callback_data": "promote:ctx:@office"}]
+                ]
+            }
+            await http_client.post(
+                f"https://api.telegram.org/bot{token}/editMessageText",
+                json={
+                    "chat_id": chat_id,
+                    "message_id": message_id,
+                    "text": f"🏷️ <b>Select Context for:</b>\n<i>\"{selected_step}\"</i>",
+                    "parse_mode": "HTML",
+                    "reply_markup": reply_markup
+                }
+            )
+        return
+
+    if action == "ctx":
+        chosen_ctx = parts[2]
+        selected_step = session.get("selected_step", "")
+        project_tag = session.get("project_tag", "")
+        category = session.get("category", "Personal")
+        
+        clean_step = re.sub(r'\(Captured .*?\)', '', selected_step)
+        clean_step = re.sub(r'\(Source:.*?\)', '', clean_step).strip("- [ ]\n").strip()
+        
+        task_str = f"- [ ] {clean_step} {chosen_ctx} #project/{project_tag} #{category.lower()}"
+        tasks_md = os.path.join(OBSIDIAN_VAULT_PATH, "01_Tasks", "Next_Actions.md")
+        
+        from backend.utils.tasks_dashboard import append_gtd_item
+        append_gtd_item(tasks_md, task_str)
+        
+        await http_client.post(
+            f"https://api.telegram.org/bot{token}/editMessageText",
+            json={
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": f"⚡ <b>Promoted to Next Actions:</b>\n• {clean_step} {chosen_ctx} #project/{project_tag}",
+                "parse_mode": "HTML"
+            }
+        )
+        if chat_id in PROMOTION_SESSIONS:
+            del PROMOTION_SESSIONS[chat_id]
+        return
 
 async def handle_tickle_command(chat_id: int, text: str, token: str, http_client: httpx.AsyncClient):
     cmd_parts = text.split(maxsplit=1)

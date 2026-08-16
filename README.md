@@ -41,9 +41,11 @@ The **Second Brain** operates on the **"Agent-as-Librarian"** paradigm: an intel
 ## ✨ Key Capabilities
 
 ### 1. 📥 Frictionless Multi-Channel Capture
-* **Voice Notes:** Send raw voice notes to your Telegram bot. Transcribed locally via `faster-whisper` on CUDA GPU with multi-topic splitting.
-* **Quick Text:** Capture quick thoughts via `/in <text>` in Telegram or by dropping files into `00_System/Inbox/`.
-* **Direct Filing:** Send `/file <URL/doc>` to bypass GTD triage and file documents straight into P.A.R.A reference folders.
+* **Voice Notes (Telegram):** Send raw voice notes to your Telegram bot. Transcribed locally via `faster-whisper` on CUDA GPU with multi-topic splitting.
+* **Quick Text (Telegram):** Capture quick thoughts via `/in <text>` in Telegram.
+* **Direct Filing (Telegram):** Send `/file <URL/doc>` to bypass GTD triage and file documents straight into P.A.R.A reference folders.
+* **Drop Folder:** Drop PDFs, notes, or audio files into `00_System/Inbox/` for automatic ingestion.
+* **Gmail IMAP Poller:** Auto-polls your email for flagged receipts, invoices, and PDF attachments, extracting content and filing it directly to your vault.
 
 ### 2. ⚡ Interactive Clarification Engine (`/clarify`)
 * Triages captured items in manageable 5-item batches using an 8-option decision tree:
@@ -147,44 +149,53 @@ vault/
 
 ```mermaid
 flowchart TD
-    subgraph Capture["📥 Ingestion Layer"]
-        TG_Voice["Telegram Voice (Faster-Whisper CUDA)"]
-        TG_Text["Telegram Commands (/in, /file, /research)"]
-        File_Drop["00_System/Inbox/ Drop Folder"]
-        Gmail["Gmail Poller (PDFs/Invoices)"]
+    subgraph Ingest["📥 Multi-Channel Ingestion"]
+        direction TB
+        TG["📱 Telegram (Voice Notes, /in, /file, /research, Q&A)"]
+        InboxDrop["📂 00_System/Inbox/ (File & Document Drops)"]
+        Gmail["📧 Gmail IMAP (PDF Invoices & Attachments)"]
     end
 
-    subgraph Core["⚙️ Backend Orchestrator (FastAPI / systemd)"]
-        Queue["SQLite Ingestion Queue"]
-        Watcher["Ingestion Watcher & Auto-Healer"]
-        Classifier["LLM Intent Router & Classifier"]
-        Clarifier["GTD Clarify Engine (clarify.py)"]
-        CalendarEngine["Telegram Calendar Engine (telegram_calendar.py)"]
-        EngageEngine["Engage & Project Promotion (engage.py)"]
-        Librarian["AI Librarian (PARA Semantic Filer)"]
-        ResearchEngine["Research Brain & Concept Graph (capture.py)"]
-        Cleaner["Brain Cleaner & Daily/Weekly Reviews (brain_cleaner.py)"]
-        HolidayEngine["Holiday Pause Manager (holiday_manager.py)"]
-        VectorDB["sqlite-vss (768-dim Embeddings)"]
+    subgraph Pipeline["⚙️ Backend Orchestration Engine"]
+        direction TB
+        Queue["📥 SQLite Queue & File Watcher"]
+        Classifier{"🤖 LLM Router / Command Filter"}
+        
+        subgraph Subsystems["Core Subsystems"]
+            direction LR
+            subgraph GTD_Col["⚡ GTD Engine"]
+                direction TB
+                Clarify["Interactive Clarify & Calendar"]
+                Engage["Project Promotion & /next Filter"]
+            end
+            subgraph PARA_Col["📚 P.A.R.A & Research"]
+                direction TB
+                Librarian["AI Librarian (Semantic Filer)"]
+                Research["Research Brain & Concept Graph"]
+            end
+            subgraph Ops_Col["🌅 Review & Maintenance"]
+                direction TB
+                Reviews["Daily (/daily) & Weekly Reviews"]
+                AutoHealer["Syncthing Auto-Healer"]
+            end
+        end
     end
 
-    subgraph Storage["📂 Vault File System (Obsidian / Syncthing)"]
-        System_Dir["00_System/"]
-        Tasks_Dir["01_Tasks/"]
-        Projects_Dir["02_Projects/"]
-        Areas_Dir["03_Areas/"]
-        Resources_Dir["04_Resources/"]
-        Archive_Dir["05_Archive/"]
+    subgraph Vault["📂 Synced Markdown Vault (Obsidian)"]
+        direction TB
+        S_Tasks["01_Tasks/ (Next_Actions, Waiting_For, Someday_Maybe)"]
+        S_Proj["02_Projects/ (Project Master Notes & Roadmaps)"]
+        S_Para["03_Areas/ & 04_Resources/ (Knowledge & Concepts)"]
+        S_Sys["00_System/ (Inbox, Daily_Digest) & 05_Archive/"]
     end
 
-    Capture --> Queue --> Watcher
-    Watcher --> Classifier
-    Classifier -->|GTD Capture| Clarifier --> Tasks_Dir & Projects_Dir
-    Classifier -->|Direct File| Librarian --> Areas_Dir & Resources_Dir
-    Classifier -->|Deep Research| ResearchEngine --> Resources_Dir & VectorDB
-    EngageEngine <--> Tasks_Dir & Projects_Dir
-    Cleaner --> System_Dir & Tasks_Dir
-    HolidayEngine -.-> Cleaner
+    Ingest --> Queue --> Classifier
+    Classifier -->|GTD Task| Clarify --> S_Tasks & S_Proj
+    Classifier -->|Direct File| Librarian --> S_Para
+    Classifier -->|Deep Research| Research --> S_Para
+    Engage <--> S_Tasks & S_Proj
+    Reviews --> S_Sys & S_Tasks
+    AutoHealer -.-> S_Tasks
 ```
 
 ---

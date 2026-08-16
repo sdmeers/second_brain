@@ -3,6 +3,46 @@ node_modules/
 .venv/
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+
+# Environment variables & secrets
+.env
+.env.*
+!.env.example
+*.env
+*.pem
+*.key
+*.token
+
+# Telegram / Bot offsets & tokens
+.telegram_offset
+.telegram_qa_offset
+backend/.telegram_offset
+backend/.telegram_qa_offset
+
+# Databases and cache files
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+*-journal
+*-shm
+*-wal
+*.sqlite
+*.sqlite3
+.cache_metadata.json
+backend/.cache_metadata.json
+.brain_cleaner_state.json
+backend/.brain_cleaner_state.json
+
+# Staging & Audio files
+staging/
+backend/staging/
+*.ogg
+*.wav
+*.mp3
+*.m4a
 
 # Firebase
 .firebase/
@@ -18,36 +58,17 @@ emulator_data/
 .antigravitycli/
 backend/antigravity-ide
 
-# Environment variables
-.env
-backend/.telegram_offset
-backend/.telegram_qa_offset
-
-# Local State & Personal Notes
-backend/.brain_cleaner_state.json
+# Local State & Personal Scratch Notes
 *refactor*.md
 *plan.md
 gemini.md
 OBSIDIAN_GEMINI.md
 reindex_all.py
+backend/reindex_all.py
 backend/rebuild_vault.py
 backend/resume_rebuild.py
-
-# Personal data
 sources_all.txt
+backend/sources_all.txt
 
 # Archive folder
 docs/archive/
-
-# Databases and cache files
-*.db
-*-journal
-*.db-journal
-*-shm
-*-wal
-*.db-shm
-*.db-wal
-.cache_metadata.json
-.telegram_offset
-.telegram_qa_offset
-.brain_cleaner_state.json

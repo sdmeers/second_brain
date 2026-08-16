@@ -1,10 +1,15 @@
-#!/usr/bin/env python3
-"""Create a single Epic with Stories for each phase of the Second Brain plan."""
+import os
 import json
 import subprocess
+from dotenv import load_dotenv
 
-JIRA_URL = "https://stevenmeers.atlassian.net/rest/api/3/issue"
-AUTH = "stevenmeers@gmail.com:ATATT3xFfGF0RFHDupbzd5TVgq0u-SWO3hXREtpwduCevaXWXRb3zXq8-XtJWEi5jtqEqHHjT5HMu_sVdxkPxgXBFqRLAvcEAEGRhb69rURoVHxm9mLzfdBVH2Phtxwi0sOZK_siMoWH9VSAo_SJ32olA8px_9HMs5dAn6yFm7y5kCpXBjUn-h0=06076D08"
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
+
+JIRA_BASE_URL = os.getenv("JIRA_URL", "https://your-domain.atlassian.net")
+JIRA_URL = f"{JIRA_BASE_URL.rstrip('/')}/rest/api/3/issue"
+JIRA_EMAIL = os.getenv("JIRA_USER_EMAIL", "")
+JIRA_TOKEN = os.getenv("JIRA_API_TOKEN", "")
+AUTH = f"{JIRA_EMAIL}:{JIRA_TOKEN}"
 
 def create_issue(payload):
     result = subprocess.run(

@@ -103,7 +103,7 @@ async def process_capture_core(
         brain_node_markdown = ""
         concepts_to_process = []
         
-        if is_research:
+        if is_research or deep_extraction:
             print("Backend [Stage 2]: Generating Brain Node (Deep Research Knowledge Graph)...")
             atlas_themes = get_atlas_themes()
             brain_node_result = await generate_brain_node(
@@ -169,7 +169,7 @@ async def process_capture_core(
         
         # 5. Save Source file via AI Librarian P.A.R.A destination check
         from backend.utils.librarian import determine_para_destination
-        if not is_research:
+        if not (is_research or deep_extraction):
             custom_sum_path, custom_src_path = await determine_para_destination(safe_title, content_text, is_pdf=is_pdf)
         else:
             from backend.config import SOURCES_PATH, SUMMARIES_PATH

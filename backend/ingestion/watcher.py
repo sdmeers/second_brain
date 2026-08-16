@@ -290,20 +290,6 @@ async def process_queue_worker():
         if file_path and not classification_input:
             classification_input = f"File: {os.path.basename(file_path)}"
             
-        # 1. Run LLM Router (Classifier)
-        classification = await classify_input(classification_input)
-        print(f"Backend [Queue Worker]: Router classified item as '{classification.category}' (confidence: {classification.confidence})")
-        
-        # 2. Process based on classification
-        success = False
-        result_title = "Ingested Capture"
-        
-        # Pull out URL if present
-        urls = re.findall(r'(https?://[^\s)\]\n]+)', classification_input)
-        url = urls[0] if urls else None
-        
-        source_label = f"{source_type.title()} Input"
-        
         # Check if Research Brain is explicitly requested
         research_requested = False
         triggers = [
@@ -317,6 +303,29 @@ async def process_queue_worker():
             if trigger in text_lower or trigger in subject_lower:
                 research_requested = True
                 break
+
+        # 1. Run LLM Router (Classifier) with deterministic override for /research
+        if research_requested:
+            from backend.ingestion.classifier import ClassificationResult
+            classification = ClassificationResult(
+                category="deep_research",
+                confidence=1.0,
+                reasoning="Explicit /research command trigger."
+            )
+            print(f"Backend [Queue Worker]: Router detected explicit /research trigger (Category: deep_research)")
+        else:
+            classification = await classify_input(classification_input)
+            print(f"Backend [Queue Worker]: Router classified item as '{classification.category}' (confidence: {classification.confidence})")
+        
+        # 2. Process based on classification
+        success = False
+        result_title = "Ingested Capture"
+        
+        # Pull out URL if present
+        urls = re.findall(r'(https?://[^\s)\]\n]+)', classification_input)
+        url = urls[0] if urls else None
+        
+        source_label = f"{source_type.title()} Input"
                 
         # Clean trigger tags from input text so they don't appear in the final note body
         clean_input = classification_input
@@ -354,7 +363,8 @@ async def process_queue_worker():
                 title=target_title,
                 markdown_text=notes,
                 file_path=file_path,
-                deep_extraction=True
+                deep_extraction=True,
+                is_research=True
             )
             result_title = result.get("title", target_title)
             saved_file_path = result.get("node_path")

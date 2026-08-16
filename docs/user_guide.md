@@ -1,86 +1,167 @@
 # 📘 Second Brain: User Guide & Workflows
 
-This guide outlines the day-to-day workflows for using your Second Brain orchestrator. It covers capture, task management, search, and system maintenance.
+This guide outlines your day-to-day workflow with the Second Brain, leveraging the integrated **Getting Things Done (GTD)** and **P.A.R.A** methodologies.
 
 ---
 
-## 🏃 Workflows & Scenarios
+## 🔄 The 5 GTD Stages in Practice
 
-### Scenario A: Mobile Voice Capture ("Walking the Dog")
-*   **The Problem:** You have an idea, a task, or a voice memo while away from your desk.
-*   **The Workflow:**
-    1.  Open your private Telegram channel with the **Second Brain (Ingest) Bot**.
-    2.  Record a voice note explaining your thought (e.g., *"Remind me to check the dmz proxy routes tomorrow, and I had an idea for Hermes: we should run it under Docker"*).
-    3.  **Local processing:** The bot intercepts the audio, transcribes it via the local GTX 1070 GPU using Whisper, and caches the text.
-    4.  **Auto-splitting:** Gemini detects that you mentioned two separate topics (a task and an idea). It splits them into two separate queue items.
-    5.  **Filing:** The task is appended to your master `Tasks.md`, and the idea is analyzed against your active projects list and saved inside the [[Hermes]] project folder.
-    6.  **Telegram Alert:** You receive a confirmation message from the Ingest Bot indicating where the item was filed (e.g., `Location: 02_Projects/Hermes/Notes`).
-
-### Scenario B: Laptop File Import (Samba Share)
-*   **The Problem:** You want to quickly copy files (PDFs, PowerPoints, notes) from your laptop to your Second Brain without using Telegram.
-*   **The Workflow:**
-    1.  Open your file manager on your laptop and go to the mounted Samba directory `~/SecondBrainInbox/`.
-    2.  Copy or drag-and-drop your file directly into the folder.
-    3.  **Filing:** Within 15 seconds, the server sweeps the folder, parses the internal text of the file (including slide text and speaker notes for PPTX files), determines the matched project/area, moves the raw file next to the generated note, and deletes it from the inbox to keep it clean.
-    4.  You receive a Telegram confirmation containing the filed location (e.g. `Location: 03_Areas/Work/Dstl`).
-
-### Scenario C: Reference Capture vs. Deep Research (Research Brain)
-*   **The Problem:** You find an article, user manual, or dense academic paper and want to file it.
-*   **The Default Workflow (Lightweight Reference):**
-    1. Paste the URL or drop a PDF into `01_Inbox/`.
-    2. The orchestrator automatically generates a lightweight summary and saves the files inside `04_Resources/Reference_Notes/` (and `04_Resources/Reference_Notes/Sources/`). No new concepts or maps-of-content are generated, leaving your high-level research graph clean.
-*   **The Research Brain Workflow (Deep Graph):**
-    1. Paste the URL or drop the PDF, but explicitly include a trigger tag like `/research` or the phrase `"add to research brain"` in your Telegram message, email, or note.
-    2. The system triggers the **Research Brain** pipeline: it copies the raw file to `04_Resources/Research_Brain/Sources/` and creates a deep summary page in `04_Resources/Research_Brain/Summaries/`.
-    3. It automatically identifies core topics and creates/updates concept pages inside `04_Resources/Research_Brain/Concepts/` (e.g., [[Large Language Models]]), linking them bidirectionally in your graph.
-
-### Scenario D: Conversational Q&A ("Ask Your Brain")
-*   **The Problem:** You want to recall details about a past note or query your vault's overall knowledge.
-*   **The Workflow:**
-    1.  Open your private Telegram channel with the dedicated **Second Brain (Q&A) Bot**.
-    2.  Send a message containing your question directly **without any prefix** (e.g., *What is the Syncthing ID of my laptop?*).
-    3.  **RAG pipeline:** The orchestrator embeds your question, runs a vector similarity search across all markdown files (including `05_Archive/`) via SQLite-VSS, gathers the top-5 matching paragraphs, and feeds them to Gemini. (The Q&A bot bypasses the ingestion queue entirely, delivering instant responses).
-    4.  **Response:** The bot replies with a synthesized answer and links to the source files (e.g., `[[Syncthing IDs for Second Brain]]`) so you can open them in Obsidian.
-    5.  **CLI alternative:** From your homeserver, run:
-        ```bash
-        PYTHONPATH=.. uv run python rag/chat.py --query "What is the Syncthing ID of my laptop?"
-        ```
+1. **Capture:** Get everything out of your head with zero friction.
+   - **Voice:** Send a voice note in Telegram while driving or walking. The local GPU transcribes and saves it to `01_Tasks/Captured.md`.
+   - **Text:** Type `/in <thought>` in Telegram or drop files into `00_System/Inbox/`.
+   - **Reference/Files:** Send `/file <URL/PDF>` to route straight to the AI Librarian (skipping GTD triage).
+2. **Clarify:** Process your capture backlog.
+   - Run `/clarify` in Telegram to triage items through an interactive 8-option GTD menu (`Next Action`, `Existing Project Roadmap`, `New Project`, `Waiting For`, `Someday/Maybe`, `Pass to AI Librarian`, `2-Min Rule`, `Trash`).
+   - Use the built-in **Telegram Visual Calendar Picker** for 1-tap date deferrals.
+3. **Organise:** Everything lands in its exact, structured home:
+   - `01_Tasks/Next_Actions.md` for immediate actions tagged with `@context` and `#project/<Name>`.
+   - `01_Tasks/Waiting_For.md` for delegated actions (`#waiting(Name)`).
+   - `01_Tasks/Someday_Maybe.md` for deferred ideas and uncommitted desires.
+   - `02_Projects/.../<Project>.md` for multi-step goals, future roadmaps (`## Project Steps`), and active actions.
+4. **Reflect:** Keep your system trustworthy and current.
+   - **Daily Review (`/daily`):** Action-oriented morning briefing listing upcoming deadlines (<= 14 days), surfaced ticklers, active Next Actions grouped by context, and pending follow-ups.
+   - **Weekly Review (`/reflect`):** Strategic Friday/Monday review covering orphaned projects, stale items, Someday/Maybe ideas, and AI concept synthesis.
+   - **Holiday Mode (`/holiday`):** Temporarily pause automated reviews while away.
+5. **Engage:** Execute with clarity and focus.
+   - Run `/next @errands` when out shopping or `/next @computer` at your desk.
+   - Check off tasks via **`/done <item>`** in Telegram or by ticking the **`- [x]` checkbox in Obsidian**.
+   - Completing a project task automatically prompts you to promote the next step from your roadmap.
 
 ---
 
-## 📋 Master Tasks Management
+## 🤖 Telegram Command Reference
 
-Your tasks are managed dynamically by the system loop in your main [Tasks.md](file:///home/sdmeers/vault/00_System/Tasks.md) file:
-*   **Extraction:** Tasks are extracted from voice notes, emails, and dropped documents.
-*   **Filing format:** The system writes tasks in standard Obsidian format:
-    ```markdown
-    - [ ] Task description 📅 2026-07-15 #work #coding (Captured from Telegram on 2026-07-11)
-    ```
-*   **Smart Dashboard sorting:** Every 15 seconds, the backend reads `Tasks.md`, parses deadline dates (resolving relative text like `📅 tomorrow` relative to creation time), and divides your tasks into `## 🚨 Overdue`, `## 📅 Due Today`, `## 🗓️ Upcoming`, and `## 🗃️ Backlog` sections.
-*   **Completed Tasks Archiving:** When you check off a task (`- [x]`), the sorter automatically cuts it from `Tasks.md` and appends it to `Completed_Tasks.md` in your vault, adding a completion date tag and striking it through (e.g. `~~checked task~~ [completed: 2026-07-12]`).
+The Unified Telegram Bot is your central command interface.
+
+| Command | Purpose & Description |
+| :--- | :--- |
+| *(text)* | **Q&A** — Natural language conversational Q&A against your vault (with 5-turn context memory). |
+| *(voice)* | **Capture** — Transcribes speech via local Faster-Whisper and logs to `01_Tasks/Captured.md`. |
+| `/in <text>` | **GTD Capture** — Append a raw thought directly to `01_Tasks/Captured.md`. |
+| `/file <URL/doc>` | **Direct Filing** — Passes URLs, PDFs, or text directly to the AI Librarian (skipping GTD clarify). |
+| `/research <URL>` | **Deep Research** — Ingests content into Research Brain with full knowledge graph & concept extraction. |
+| `/clarify` | **Interactive Triage** — Process captured items in 5-item batches with inline buttons & calendar picker. |
+| `/next [@context]` | **Context Filter** — Filter active tasks (`@home`, `@computer`, `@errands`, `@phone`, `@anywhere`, `@office`, `@WFH`). |
+| `/waiting` | **Delegated Tracking** — View pending items owed by others with capture age and follow-up dates. |
+| `/project <name>` | **Project Dashboard** — View Desired Outcome, Active Actions, Roadmap Steps, and Linked References. |
+| `/project <name> add <step>` | **Roadmap Backlog** — Append a new future step under `## Project Steps` in a project note. |
+| `/archive <name>` | **Archive Project** — Marks a project complete and moves it from `02_Projects/` to `05_Archive/`. |
+| `/done <item>` | **Complete Action** — Archives task to `01_Tasks/Completed.md` and triggers 1-tap step promotion. |
+| `/tickle <item>` | **Defer Task** — Opens interactive Telegram calendar picker to set a `🔔 YYYY-MM-DD` tickler date. |
+| `/daily` | **Daily Review** — On-demand action-oriented review (deadlines <=14d, surfaced ticklers, next actions by context). |
+| `/status` / `/sitrep` | **System Overview** — High-level counts across all GTD task lists and active projects. |
+| `/reflect` | **Weekly Review** — Guided weekly review of inbox zero, stale items, orphaned projects, and Someday/Maybe. |
+| `/holiday` | **Pause Reviews** — Set holiday mode by scope (`Personal`, `Professional`, `All`) via visual calendar picker. |
+| `/jira <summary>` | **Jira Export** — Creates a ticket directly in Jira backlog. |
+| `/undo` | **Safety Revert** — Reverts the last automated Git commit (`git revert HEAD`). |
+| `/help` | **Help Menu** — Full command reference and workflow guide. |
 
 ---
 
-## 🌅 Daily Briefing & Cognitive Synthesis
+## ⚡ Interactive Clarification Workflow (`/clarify`)
 
-Every night at **2:00 AM**, a background systemd timer runs the cognitive synthesis pipeline, writing today's briefing to `00_System/Daily_Digest.md` (and a rolling 14-day history in `00_System/Internal/Digests/`):
-1.  **Part 1: Tasks Summary:** Lists active/stagnant tasks (>14 days) and your recent backlog size.
-2.  **Part 2: Recent Activity (Last 7 Days):** Aggregates folder directories and files modified to give you a structural view of where you focused.
-3.  **Part 3: Recent Ideas:** Collects notes tagged `#type/idea` or added to `02_Projects/Ideas/` recently.
-4.  **Part 4: AI Synthesis & Suggestions:** Gemini acts as a co-creation peer to outline blind spots/refinements for your active ideas, and suggests cross-pollinations between different domains (e.g. merging coding simulator dashboards with server telemetry).
-5.  **Telegram Briefing:** A structured plain-text 4-part summary of these highlights is sent to your Telegram bot.
+When you run `/clarify`, unclarified items in `01_Tasks/Captured.md` are presented one by one in batches of 5:
+
+1. **AI Smart Defaults (One-Tap Fast Path):**
+   - High-confidence suggestions (e.g. `📥 "Buy paint at B&Q" -> [⚡ Add as @errands #project/Garage]`).
+2. **8-Option Classification Menu:**
+   - **`[⚡ Next Action]`**: Select context (`@home`, `@computer`, `@errands`, `@phone`, `@anywhere`, `@office`) and optionally link an active project.
+   - **`[📌 Existing Project Roadmap]`**: Select category (`Personal` vs `Professional`) and pick an active project from a 2-column list to append as a future step under `## Project Steps`.
+   - **`[📁 New Project]`**: Prompts for Name and Desired Outcome, auto-generating the project master note.
+   - **`[⏳ Waiting For]`**: Prompts for contact name and records `- [ ] <task> #waiting(Name)` in `Waiting_For.md`.
+   - **`[💡 Someday / Maybe]`**: Logs item to `Someday_Maybe.md` for future weekly review.
+   - **`[📚 Pass to AI Librarian]`**: Forwards reference material to PARA folders (`03_Areas/` or `04_Resources/`).
+   - **`[⚡ 2-Min Rule (Done)]`**: Immediately logs to `01_Tasks/Completed.md` with completion timestamp.
+   - **`[🗑️ Trash]`**: Archives and removes the item.
+3. **Interactive Calendar Picker:**
+   - When deferring an item, a visual keyboard calendar opens (`◀ August 2026 ▶`) allowing you to tap the exact date.
 
 ---
 
-## ⚙️ Syncthing Conflict Resolution
+## 🎯 Project Master Notes & Step Auto-Promotion
 
-Syncthing uses a conflict-free sync model. If you modify the same file (e.g. `Tasks.md`) on both your server and laptop simultaneously, Syncthing will save one version as a conflict file (e.g. `Tasks.sync-conflict-20260711-224000-device.md`).
+### Project Note Template (`02_Projects/`)
+Every project note uses a standard, structured layout:
+```markdown
+---
+title: "Garage"
+type: project
+category: Personal
+outcome: "Fully organised garage with shelving, workbench, and storage"
+due_date: "2026-08-23"
+date_created: "2026-08-08"
+status: active
+---
+# Garage
 
-1.  **Notification:** Your Telegram bot will send you a warning stating that a conflict was detected:
-    > ⚠️ **Syncthing Sync Conflicts Detected**
-    > - `Tasks.sync-conflict-20260711-224000-device.md`
-2.  **Resolution:**
-    *   Open Obsidian or your file browser.
-    *   Compare the conflict file with the original file.
-    *   Merge any missing lines (e.g. newly added tasks) into the original file.
-    *   Delete the `.sync-conflict-...` file. The warning will automatically clear on the next loop iteration.
+## Desired Outcome
+Fully organised garage with shelving, workbench, and storage.
+
+## Project Steps
+- [ ] Buy storage for the top box in the garage
+- [ ] Buy shelves and a workbench for the garage
+
+## Active Actions
+> View via Telegram: `/project Garage` or search `#project/Garage` in Obsidian.
+
+```dataview
+TASK
+FROM "01_Tasks"
+WHERE contains(tags, "#project/Garage") AND !completed
+```
+
+## Reference Material
+- [[02_Projects/Personal/Garage/Garage shelving dimensions.md]]
+```
+
+### 1-Tap Roadmap Step Promotion
+When you complete a project action (either via **Telegram `/done <item>`** or **ticking `- [x]` in Obsidian**):
+1. The completed task is archived to `01_Tasks/Completed.md`.
+2. The bot inspects `## Project Steps` in the project note for unpromoted steps.
+3. Telegram immediately pings you with an interactive prompt:
+   ```text
+   🎯 Project Roadmap: #Garage
+
+   Which step would you like to promote to Next Actions?
+   [1. Buy storage for the top box...]
+   [2. Buy shelves and a workbench...]
+   [⏭️ Skip / None for now]
+   ```
+4. Tapping a step prompts for the context (`[@home]`, `[@anywhere]`, etc.).
+5. The step is appended to `01_Tasks/Next_Actions.md` and **automatically deleted from `## Project Steps`**, keeping your roadmap clean!
+
+---
+
+## 📅 Review Routines & Holiday Mode
+
+### Daily Review (`/daily` or 07:30 Morning Briefing)
+Designed for immediate daily execution:
+- 🚨 **Upcoming & Overdue Deadlines:** Projects with `due_date` within 14 days.
+- 🔔 **Surfaced Deferrals:** Tasks deferred to today unlocking for action.
+- ⚡ **Next Actions by Context:** Actual actionable tasks grouped by `@home`, `@computer`, `@errands`, `@phone`, `@anywhere`, `@office`.
+- ⏳ **Waiting For:** Active delegated items to follow up on.
+*(Note: Someday/Maybe ideas are excluded from the daily review to eliminate noise).*
+
+### Weekly Review (`/reflect` or Friday Briefing)
+Designed for strategic reflection:
+- **Inbox Zero Audit:** Process remaining unclarified captures.
+- **Orphaned Project Check:** Identifies projects with 0 active next actions.
+- **Stale Waiting Items:** Flags delegated items waiting for > 5 days.
+- **Someday/Maybe Review:** Re-evaluates backlogged ideas for potential activation.
+- **AI Research Synthesis:** Synthesizes new concepts ingested into your Research Brain over the past 7 days.
+
+### Holiday Review Pause (`/holiday`)
+- Run `/holiday` to pause daily digests and review briefings while on annual leave.
+- Choose scope: `[🏠 Personal]`, `[💼 Professional]`, or `[🌴 All Reviews]`.
+- Pick your return date using the visual calendar picker.
+- Run `/holiday resume` or `/holiday end` to resume reviews early at any time.
+
+---
+
+## 🏃 Day-to-Day Execution Flow
+
+* 🌅 **Morning:** Run `/daily` or review your morning Telegram briefing. Check upcoming deadlines and high-priority contexts.
+* 💻 **At Desk:** Type `/next @computer` to focus exclusively on workstation tasks.
+* 🚗 **Out & About:** Send voice notes to capture ideas. Type `/next @errands` or `/next @anywhere` when running errands.
+* ✅ **Completing Tasks:** Run `/done <task>` or check the box in Obsidian; tap to promote the next roadmap step when prompted.
+* 📚 **Filing Reading Material:** Send `/file <URL>` for standard reading or `/research <URL>` for deep concept mapping.

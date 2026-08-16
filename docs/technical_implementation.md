@@ -1,170 +1,174 @@
 # 🛠️ Second Brain: Technical Implementation
 
-This document describes the technical architecture, data structures, and optimization choices for the Second Brain orchestrator.
+This document details the backend architecture, data models, state machines, and system integrations for the **GTD + P.A.R.A Second Brain**.
 
 ---
 
-## 1. Architectural System Overview
-
-The orchestrator operates as a Python FastAPI daemon running under systemd. It handles asynchronous event queues, file-system watching, external API integration, local machine learning models, and relational vector storage.
+## 1. System Architecture Overview
 
 ```mermaid
-graph TD
-    %% Inputs
-    Telegram[Telegram Ingest Bot] -->|Poll| Watcher
-    Gmail[Gmail Inbox] -->|IMAP| Watcher
-    Folder[01_Inbox/ Directory] -->|Filesystem Event| Watcher
-    Samba[Samba Share //homeserver/Inbox] -->|SMB Write| Folder
-    
-    %% Q&A Bot
-    TelegramQA[Telegram Q&A Bot] -->|Poll / Direct Query| RAGMod[RAG Chat Module]
+flowchart TD
+    subgraph Capture["📥 Ingestion Layer"]
+        TG_Voice["Telegram Voice (Faster-Whisper CUDA)"]
+        TG_Text["Telegram Commands (/in, /file, /research)"]
+        File_Drop["00_System/Inbox/ Drop Folder"]
+        Gmail["Gmail Poller (PDFs/Invoices)"]
+    end
 
-    %% Core
-    Watcher[Watcher Loop / FastAPI] -->|Enqueue| Queue[(SQLite Queue DB)]
-    Queue -->|Process Item| Worker[Queue Worker]
-    Worker -->|1. Parse Document| Parser[PDF/PPTX Text Parser]
-    Worker -->|2. Transcribe| Transcriber[Local Whisper GPU]
-    Worker -->|3. Route| Router[Gemini Router]
-    
-    %% Handlers
-    Router -->|Task| TaskHandler[Task Handler]
-    Router -->|Project or Area Note| PARAHandler[Unified PARA Router]
-    Router -->|Deep Research| ResearchHandler[Research Ingestion]
-    
-    %% Destinations
-    TaskHandler -->|Atomic Write| TasksFile[00_System/Tasks.md]
-    PARAHandler -->|Project Match| ProjFolder[02_Projects/]
-    PARAHandler -->|Area Match| AreaFolder[03_Areas/]
-    ResearchHandler -->|Explicit Tag: /research| Research[04_Resources/Research_Brain/]
-    ResearchHandler -->|Default / No Match| Reference[04_Resources/Reference_Notes/]
-    
-    %% Indexing
-    TasksFile & ProjFolder & AreaFolder & Research & Reference -->|Hash Change| Indexer[Incremental Vector Indexer]
-    Indexer -->|LLM Client Embedding| VectorDB[(SQLite-VSS Vector DB)]
-    
-    %% Query Flow
-    RAGMod -->|LLM Client Embedding| VectorDB
-    RAGMod -->|Synthesized Answer| TelegramQA
-    
-    %% Commits & Alerts
-    Worker -->|Git Commit| Git[Git Repository]
-    Worker -->|Alert| Telegram
+    subgraph Core["⚙️ Backend Orchestrator (FastAPI / systemd)"]
+        Queue["SQLite Ingestion Queue"]
+        Watcher["Ingestion Watcher & Auto-Healer"]
+        Classifier["LLM Intent Router & Classifier"]
+        Clarifier["GTD Clarify Engine (clarify.py)"]
+        CalendarEngine["Telegram Calendar Engine (telegram_calendar.py)"]
+        EngageEngine["Engage & Project Promotion (engage.py)"]
+        Librarian["AI Librarian (PARA Semantic Filer)"]
+        ResearchEngine["Research Brain & Concept Graph (capture.py)"]
+        Cleaner["Brain Cleaner & Daily/Weekly Reviews (brain_cleaner.py)"]
+        HolidayEngine["Holiday Pause Manager (holiday_manager.py)"]
+        VectorDB["sqlite-vss (768-dim Embeddings)"]
+    end
+
+    subgraph Storage["📂 Vault File System (Obsidian / Syncthing)"]
+        System_Dir["00_System/ (Inbox, Archive, Daily_Digest.md)"]
+        Tasks_Dir["01_Tasks/ (Next_Actions, Waiting_For, Someday_Maybe, Completed)"]
+        Projects_Dir["02_Projects/ (Project Master Notes & Roadmaps)"]
+        Areas_Dir["03_Areas/ (Ongoing Responsibilities)"]
+        Resources_Dir["04_Resources/ (Research Brain & Reference)"]
+        Archive_Dir["05_Archive/ (Completed Projects)"]
+    end
+
+    Capture --> Queue --> Watcher
+    Watcher --> Classifier
+    Classifier -->|GTD Capture| Clarifier --> Tasks_Dir & Projects_Dir
+    Classifier -->|Direct File| Librarian --> Areas_Dir & Resources_Dir
+    Classifier -->|Deep Research| ResearchEngine --> Resources_Dir & VectorDB
+    EngageEngine <--> Tasks_Dir & Projects_Dir
+    Cleaner --> System_Dir & Tasks_Dir
+    HolidayEngine -.-> Cleaner
 ```
 
 ---
 
-## 2. Document & PPTX Parsing Pipeline
-To allow highly accurate classification and filing, the queue worker parses text contents of documents **before** invoking the router:
-*   **PDF Extractor:** Uses `PyMuPDF` (`fitz`) to extract plain text layout.
-*   **PowerPoint (PPTX) Extractor:** Uses `python-pptx` to parse all slide shapes (paragraphs, text boxes, and table cells) and merges them with **Speaker Notes** to capture the complete presentation narrative.
-*   **Redundant Copy Prevention:** If the ingested raw file is an editable text file (`.md` or `.txt`), the system writes only the final processed markdown note. Original binaries (PDFs, PPTX, MP3s, images) are copied next to the note as a `_raw` file.
+## 2. Task Line Schema & Field Formats
+
+Tasks across `01_Tasks/` adhere to a standardized line format:
+```text
+- [ ] <description> @<context> #project/<name> #<category> 📅 YYYY-MM-DD 🔔 YYYY-MM-DD (Source: [[...]])
+```
+
+| Field | Format | Purpose & Behavior | Required? |
+| :--- | :--- | :--- | :--- |
+| **Status Checkbox** | `- [ ]` / `- [x]` | Completed items marked with `- [x] ~~text~~ (Completed on YYYY-MM-DD)`. | Yes |
+| **Description** | `<text>` | Clean, action-oriented task summary. | Yes |
+| **`@<context>`** | `@home`, `@computer`, `@errands`, `@phone`, `@anywhere`, `@office`, `@WFH` | Context execution filter used in `/next @context` and Daily Review. | Next Actions |
+| **`#project/<name>`** | `#project/Project_Name` | Links task to master project note in `02_Projects/`. | Optional |
+| **`#<category>`** | `#personal`, `#professional` | Scope tag used for holiday pausing and weekend filtering. | Optional |
+| **`#waiting(Name)`** | `#waiting(Steven)` | Owner tracking for delegated tasks in `Waiting_For.md`. | Waiting For |
+| **`📅 YYYY-MM-DD`** | `📅 2026-08-23` | Hard deadline / scheduled date (triggers <=14d alerts). | Optional |
+| **`🔔 YYYY-MM-DD`** | `🔔 2026-08-20` | Tickler date (item hidden until this date, surfaces on `/daily`). | Optional |
+| **`Source Link`** | `(Source: [[00_System/Inbox/Archive/file.md]])` | Traceability backlink to original capture. | Auto-generated |
 
 ---
 
-## 3. Ingestion Queue Database Schema
+## 3. Project Master Note Specification (`02_Projects/`)
 
-The persistent queue runs on SQLite (`backend/second_brain.db`) with `PRAGMA journal_mode=WAL` (Write-Ahead Logging) and a `timeout=30.0` configuration to ensure safe, concurrent daemon/CLI writes without database locks.
+All projects are documented using a standardized YAML and section structure:
 
-### Table: `ingestion_queue`
-```sql
-CREATE TABLE IF NOT EXISTS ingestion_queue (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    source_type TEXT NOT NULL,       -- 'telegram', 'file_drop', 'gmail'
-    status TEXT DEFAULT 'pending',   -- 'pending', 'processing', 'completed', 'failed'
-    raw_payload TEXT,                -- JSON dump of original metadata
-    content_text TEXT,               -- Raw or transcribed textual content
-    file_path TEXT,                  -- Reference to permanent file (e.g. PDFs)
-    attempts INTEGER DEFAULT 0,
-    error_msg TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
+```markdown
+---
+title: "Project Title"
+type: project
+category: Personal # Personal | Professional
+outcome: "Clear definition of done"
+due_date: "2026-08-23" # Optional YYYY-MM-DD or DD-MM-YYYY
+date_created: "2026-08-08"
+status: active # active | completed | on-hold
+---
+# Project Title
+
+## Desired Outcome
+Detailed statement of the desired end-state.
+
+## Project Steps
+- [ ] Future roadmap step 1
+- [ ] Future roadmap step 2
+
+## Active Actions
+> View via Telegram: `/project Project_Title` or search `#project/Project_Title` in Obsidian.
+
+```dataview
+TASK
+FROM "01_Tasks"
+WHERE contains(tags, "#project/Project_Title") AND !completed
+```
+
+## Reference Material
+- [[Linked Note 1]]
 ```
 
 ---
 
-## 4. Vector Database Schema (RAG)
+## 4. Backend Subsystems & Module Breakdown
 
-Vector chunks and indexing are stored in `backend/brain_vectors.db` using the `sqlite-vss` extension (running in WAL mode).
+### 4.1 Ingestion Watcher & Router (`watcher.py`)
+- Background polling loop monitoring the SQLite ingestion queue and `00_System/Inbox/`.
+- **Deterministic Slash Override:** Commands like `/research`, `#research`, or `/file` bypass generic classifier heuristics to route directly to their target pipelines.
+- **Auto-Healer:** Detects and resolves Syncthing sync conflicts (`*.sync-conflict-*.md` and device suffixes like `-OROPVGA.md`) by performing line-level merges and committing the result to Git.
 
-### Table: `brain_chunks` (Metadata)
-Stores the text chunks, file paths, and hashes for incremental updates.
-```sql
-CREATE TABLE brain_chunks (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    file_path TEXT,                  -- Vault-relative path
-    chunk_index INTEGER,             -- Order of chunk in file
-    text_content TEXT,               -- Plain text segment
-    file_hash TEXT,                  -- MD5 hash of file to check modifications
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
+### 4.2 Clarify State Machine (`clarify.py`)
+- Manages interactive multi-stage triage sessions over Telegram callback queries.
+- **8-Option GTD Triage:** Next Action, Project Roadmap, New Project, Waiting For, Someday/Maybe, AI Librarian, 2-Min Rule, Trash.
+- **Dynamic Project Picker:** Scans `02_Projects/Personal` and `02_Projects/Professional` to render 2-column inline buttons for rapid project association.
+- **Batch Processing:** Processes 5 items per run with inline `[▶️ Continue]` / `[⏸️ Pause]` controls.
+
+### 4.3 Telegram Inline Calendar Engine (`telegram_calendar.py`)
+- Generates dynamic visual keyboard calendars for natural date selection.
+- Features month navigation (`◀ August 2026 ▶`), day-of-week headers, and day buttons.
+- Standardizes output dates into ISO format (`YYYY-MM-DD`) across `/clarify` deferrals, `/tickle`, and `/holiday`.
+
+### 4.4 Engage & Step Auto-Promotion Engine (`engage.py` & `tasks_dashboard.py`)
+- Powers `/next`, `/waiting`, `/project`, `/done`, `/daily`, `/status`, and `/reflect`.
+- **Dual-Trigger Step Auto-Promotion:** When an action with `#project/<tag>` is completed via Telegram `/done` OR checked off `- [x]` in Obsidian:
+  1. Locates the project note in `02_Projects/`.
+  2. Extracts unchecked roadmap steps from `## Project Steps`.
+  3. Sends an interactive Telegram prompt with candidate step buttons.
+  4. Upon context selection, appends `- [ ] <step> @<context> #project/<tag>` to `Next_Actions.md` and deletes the line from `## Project Steps`.
+
+### 4.5 Holiday Pause Manager (`holiday_manager.py`)
+- Allows pausing automated review briefings while away.
+- Persists holiday state (`holiday_active`, `return_date`, `scope`) across restarts.
+- Scopes supported: `Personal`, `Professional`, `All`.
+- Automatically suppresses daily digests and weekly reviews during active holiday windows.
+
+### 4.6 Deep Research & Concept Knowledge Graph (`capture.py` & `brain_node.py`)
+- Triggered deterministically via `/research <URL>` or academic document ingestion.
+- Uses Gemini with **Context Caching** (`google-genai` SDK) to extract dense summaries and 5–15 atomic concepts.
+- **Concept Updater Loop:** Atomically updates or creates bidirectional concept notes in `04_Resources/Research_Brain/Concepts/` with rate-limiting throttling.
+
+### 4.7 Review & Maintenance Engine (`brain_cleaner.py`)
+- **Daily Review (`/daily` & 07:30 run):** Gathers upcoming project deadlines (<= 14 days), surfaced ticklers (`🔔 == today`), active Next Actions grouped by `@context`, and pending Waiting items.
+- **Weekly Review (`/reflect` & Friday 07:30 run):** Performs deep audit of Someday/Maybe ideas, orphaned projects (0 active next actions), stale waitings (>5 days), completed tasks, and AI research synthesis.
+
+---
+
+## 5. Systemd Service Management
+
+The system operates as a persistent user service:
+
+```ini
+# ~/.config/systemd/user/second-brain.service
+[Unit]
+Description=Second Brain Orchestrator Daemon (GTD + PARA)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/sdmeers/second_brain
+ExecStart=/home/sdmeers/second_brain/backend/.venv/bin/python3 -m backend.main
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
 ```
-
-### Table: `vss_brain_chunks` (Virtual Vector Table)
-A virtual table managed by the `vss0` module. It maps directly to `brain_chunks` via the `rowid`.
-```sql
-CREATE VIRTUAL TABLE vss_brain_chunks USING vss0(
-    vector(3072)                     -- Fits Gemini text-embedding-004 dimensions
-);
-```
-
----
-
-## 5. RAG Query Flow
-
-The retrieval augmented generation pipeline operates as follows (bypassing the ingestion queue entirely for instant responses):
-
-```mermaid
-sequenceDiagram
-    actor User
-    participant Bot as Telegram Q&A Bot / CLI
-    participant RAG as RAG Chat Module
-    participant DB as SQLite-VSS Database
-    participant API as Gemini API
-
-    User->>Bot: Ask: "What is my laptop Syncthing ID?" (No prefix needed)
-    Bot->>RAG: Pass query string
-    RAG->>API: Generate query embedding (text-embedding-004)
-    API-->>RAG: Return 3072-dimension vector
-    RAG->>DB: Perform vss_search() for top 5 chunks
-    DB-->>RAG: Return matching chunks (text, file path, distance)
-    RAG->>API: Send chunks + prompt + user query
-    API-->>RAG: Return synthesized sourced answer
-    RAG-->>User: Reply with answer + source file display location wikilinks
-```
-
----
-
-## 6. Pascal GPU Whisper Optimization
-
-To support the Pascal architecture of your **GTX 1070**, the `faster-whisper` loader implements a fallback chain to prevent driver/linker failures.
-
-Pascal GPUs do not support FP16 tensor core math and will throw a `ValueError` on initialization. The transcriber tries compute types in the following order:
-1.  **`cuda / float16`**: Fast on Turing/Ampere+ GPUs. Fails gracefully on Pascal.
-2.  **`cuda / float32`**: Loaded next. Fully supported by the GTX 1070 CUDA cores, ensuring hardware-accelerated transcription.
-3.  **`cuda / int8`**: Fallback in case of low memory.
-4.  **`cpu / int8`**: Run locally on CPU as a last resort.
-5.  **`Gemini API Transcription`**: Cloud fallback if local libraries fail.
-
----
-
-## 7. Atomic Write Safety
-
-To protect your vault markdown files from truncation or corruption if the homeserver restarts mid-write, all filesystem operations go through an atomic writing wrapper:
-
-1.  The content is written to a temporary file in the same directory (e.g. `note.md.tmp`).
-2.  The file handle is closed, guaranteeing that the write to disk is complete.
-3.  `os.replace()` is called to swap the `.tmp` file with the target file.
-4.  On Unix/Linux, `os.replace` is an atomic system call, meaning the note is either fully written or completely unchanged.
-
----
-
-## 8. Model Agnosticism (Multi-Provider Support)
-
-To prevent locking the Second Brain into Google's Gemini platform, the backend utilizes a decoupled adapter model managed in `backend/utils/llm_client.py`:
-*   **Decoupled Text & Vector Interfaces:** Standardized async functions (`generate_text`, `generate_structured_output`, `get_embedding`, `get_embeddings_batch`) wrap client instantiations.
-*   **Supported Providers:**
-    *   `gemini`: Native `google-genai` client, maintaining advanced features like display-named Context Caches.
-    *   `openai`: Async completions and embeddings using official OpenAI endpoints and API keys.
-    *   `ollama`: Routes completion/embeddings calls to local models (e.g. LLaMA3, Mistral) by mapping to a standard local `OpenAI` client pointing to your local Ollama port `/v1` endpoint.
-*   **Backwards Compatibility:** The legacy `call_gemini_with_retry` function acts as a wrapper that automatically translates prompt structures and matches JSON schemas using standard `response_format` schemas for non-Gemini providers, ensuring zero changes were needed in ingestion/routing files.

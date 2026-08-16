@@ -1,93 +1,63 @@
-# 🧠 Second Brain Orchestrator
+# 🧠 Second Brain Orchestrator (GTD + P.A.R.A Fusion)
 
-The **Second Brain Orchestrator** is an "Agent-as-Librarian" personal knowledge operating system running 24/7 on your home server. It bridges the gap between passive note-taking (Obsidian markdown files) and active automation (Gemini AI parsing, local Whisper audio transcription, SQLite-backed task queues, and vector Q&A).
+The **Second Brain Orchestrator** is an "Agent-as-Librarian" personal knowledge operating system running 24/7 on Fedora Linux. It bridges the gap between passive note-taking (Obsidian Markdown files) and active automation (Gemini AI parsing, local GPU Whisper audio transcription, SQLite-backed task queues, and vector Q&A).
 
-All elements are stored as plain text markdown files in a standard P.A.R.A. folder structure, synced bidirectionally to your laptop and mobile devices via Syncthing.
-
----
-
-## 🚀 Core Features
-
-1. **Unified PARA Ingestion Router:** Classifies incoming links, voice notes, tasks, emails, and documents via Gemini structured JSON outputs, automatically routing them to the correct Projects (`02_Projects/`), Areas (`03_Areas/`), Research Brain (`04_Resources/Research_Brain/`), or reference folders.
-2. **Local GPU Voice Note Transcription:** Uses `faster-whisper` (`large-v3` model) running directly on the homeserver's GTX 1070 GPU via CUDA for fast, zero-cost, private voice transcription.
-3. **Research Brain Ontology Pipeline:** Automatically extracts core concepts, summaries, wikilinks, and metadata from research papers, web articles, and books, building an interconnected knowledge graph.
-4. **Master Task Sorter & Archiver:** Running every 15 seconds, it automatically parses active tasks in `Tasks.md`, categorizes them into smart deadline sections (`🚨 Overdue`, `📅 Due Today`, `🗓️ Upcoming`, `🗃️ Backlog`), and archives completed items (`- [x]`) into `Completed_Tasks.md` with completion timestamps.
-5. **Fast RAG Vector Q&A:** Leverages `sqlite-vss` (vector search extension) to store chunked embeddings of your vault. Ask questions through a dedicated prefix-free Q&A Telegram bot or CLI to retrieve sourced citations. Operates in SQLite WAL (Write-Ahead Logging) mode to prevent concurrency locks.
-6. **Robust Daemon Architecture:** Operates as a systemd user service with crash recovery, atomic write safety, and automatic Git commits on every successful ingestion.
+With the unified **GTD + P.A.R.A** architecture, it integrates David Allen's Getting Things Done (GTD) actionable workflows with Tiago Forte's P.A.R.A method for clean knowledge organisation. All data is stored in standard Markdown and synced across devices using Syncthing.
 
 ---
 
-## 🛠️ Getting Started
+## 📂 Vault Folder Hierarchy
 
-### Managing the Background Service
-The orchestrator runs natively as a systemd user service. You do not need sudo to manage it:
-
-*   **Check Daemon Status:**
-    ```bash
-    systemctl --user status second-brain.service
-    ```
-*   **Restart the Service:**
-    ```bash
-    systemctl --user restart second-brain.service
-    ```
-*   **Stop the Service:**
-    ```bash
-    systemctl --user stop second-brain.service
-    ```
-*   **Enable/Disable Start on Boot:**
-    ```bash
-    systemctl --user enable second-brain.service
-    systemctl --user disable second-brain.service
-    ```
-*   **View Real-Time Logs:**
-    ```bash
-    journalctl --user -u second-brain.service -f
-    ```
-
----
-
-## 💻 Local Network Ingest (Samba)
-To facilitate rapid file copying from your laptop, the `/home/sdmeers/vault/01_Inbox` directory is exposed as a read/write Samba share on the homeserver. 
-
-You can mount it on your Fedora laptop using:
-```bash
-sudo mkdir -p /mnt/Inbox
-sudo mount -t cifs -o username=sdmeers,uid=1000,gid=1000 //192.168.50.101/Inbox /mnt/Inbox
-ln -s /mnt/Inbox/ ~/SecondBrainInbox
+```text
+vault/
+├── 00_System/
+│   ├── Inbox/                     <-- CAPTURE STAGING (raw items & drops)
+│   │   └── Archive/               <-- Clarified items kept for traceability
+│   ├── Internal/
+│   │   └── Digests/               <-- Rolling archive of daily digests (14-day)
+│   ├── Daily_Digest.md            <-- Latest daily review briefing
+│   ├── _INDEX.md                  <-- Auto-generated vault sitemap
+│   └── Librarian_Activity.md      <-- Ingestion and filing log
+├── 01_Tasks/                      <-- GTD ACTION HUB
+│   ├── Next_Actions.md            <-- ⚡ Context-tagged actions (@home, @computer, etc.)
+│   ├── Waiting_For.md             <-- ⏳ Delegated items (#waiting(Name))
+│   ├── Someday_Maybe.md           <-- 💡 Future ideas & uncommitted desires
+│   ├── Captured.md                <-- 📥 Raw captures awaiting /clarify
+│   └── Completed.md               <-- ✅ Archived completed items
+├── 02_Projects/                   <-- ACTIVE PROJECTS (Master Notes & Roadmaps)
+│   ├── Personal/                  <-- Personal deliverables
+│   └── Professional/              <-- Work & career deliverables
+├── 03_Areas/                      <-- ONGOING RESPONSIBILITIES (Family, Health, Coding)
+├── 04_Resources/                  <-- REFERENCE & RESEARCH BRAIN
+│   └── Research_Brain/
+│       ├── Concepts/              <-- Atomic, bidirectional knowledge graph pages
+│       ├── Sources/               <-- Raw ingested source transcripts & docs
+│       └── Summaries/             <-- Structured AI knowledge summaries
+└── 05_Archive/                    <-- COMPLETED DELIVERABLES & HISTORICAL RECORDS
 ```
-Files dropped directly into `~/SecondBrainInbox/` will be swallowed by the server's watcher, processed, filed, and cleared automatically within 15 seconds.
 
 ---
 
-## 📈 Monitoring & Health
+## ⚙️ Core System Architecture
 
-You can query the live orchestrator health using the custom endpoint:
+1. **Unified Telegram Bot:** Central conversational interface for Capture (voice/text), Q&A (prefix-free questions), Status (`/status` / `/sitrep`), GTD Commands (`/clarify`, `/next`, `/waiting`, `/project`, `/done`, `/tickle`), and on-demand reviews (`/daily`, `/reflect`, `/holiday`).
+2. **Interactive Clarify State Machine:** Triage captured thoughts into Next Actions, Roadmaps, Waiting items, or Reference materials with 1-tap buttons and a visual inline calendar picker.
+3. **Project Roadmap Auto-Promotion:** Automatically prompts to promote the next step from `## Project Steps` whenever a project action is marked done in Telegram or ticked in Obsidian.
+4. **Action-Oriented Daily Review:** Morning briefing and `/daily` command surfacing upcoming deadlines (<= 14 days), today's ticklers, and active tasks grouped by context.
+5. **Deep Research Engine:** Ingests articles and documents via `/research`, building interconnected concept nodes in `04_Resources/Research_Brain/Concepts/`.
+6. **Auto-Healer Daemon:** Transparently detects and resolves Syncthing sync conflicts on task files with automated Git commits.
+
+---
+
+## 🛠️ Service Management & Commands
+
 ```bash
-curl -s http://127.0.0.1:8085/health | jq .
+# Check service status
+systemctl --user status second-brain.service
+
+# Restart service after code changes
+systemctl --user restart second-brain.service
+
+# Inspect live application logs
+journalctl --user -u second-brain.service -f
 ```
-This returns the current system status:
-*   **`status`**: Current health status (`healthy`).
-*   **`disk`**: Live disk space usage in the Obsidian vault (Total, Used, Free, Percent Free).
-*   **`queue`**: Ingestion queue metrics (pending items, processing items, failed retries, and the timestamp of the last successful processing).
-
----
-
-## 📂 Configuration Options
-
-Environment variables are managed in the `backend/.env` file:
-*   **`OBSIDIAN_VAULT_PATH`**: Path to your Obsidian vault directory (e.g. `/home/sdmeers/vault`).
-*   **`GEMINI_API_KEY`**: Google AI Studio API key.
-*   **`TELEGRAM_BOT_TOKEN`**: Bot token generated via BotFather for the remote Ingest bot.
-*   **`TELEGRAM_QA_BOT_TOKEN`**: Bot token generated via BotFather for the prefix-free Q&A bot.
-*   **`PORT`**: HTTP Port for the API server (default: `8085`).
-*   **`ENABLE_OBSIDIAN_INBOX_POLLING`**: Scans the inbox folder for file drops (default: `True`).
-*   **`ENABLE_TELEGRAM_BOT`**: Actively polls Telegram for messages and voice notes (default: `True`).
-*   **`ENABLE_GMAIL_POLLING`**: Checks specified inbox for forwarded emails (default: `True`).
-
----
-
-## 📖 Documentation Index
-Explore the detailed guides located in this folder:
-*   [[product_description|Product Vision & Design Decisions]]
-*   [[user_guide|User Workflows & Guide]]
-*   [[technical_implementation|Technical Architecture & Implementation Details]]

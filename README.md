@@ -1,120 +1,71 @@
-# 🧠 Centaur Brain
+# 🧠 Centaur Brain (Second Brain Orchestrator)
 
-<img src="docs/centaur_brain_icon.jpg" width="140" align="right" style="margin-left: 20px; border-radius: 20px;" alt="Centaur Brain Logo">
+Centaur Brain is an agentic **Second Brain** personal productivity and knowledge system designed to bridge the gap between high-velocity information capture (voice notes, web articles, PDFs) and structured, actionable knowledge in **Obsidian**.
 
-Centaur Brain is an agentic "Second Brain" system designed to bridge the gap between high-velocity information consumption (web, YouTube, PDFs) and permanent, structured knowledge in **Obsidian**.
+It unifies David Allen's **Getting Things Done (GTD)** actionable workflows with Tiago Forte's **P.A.R.A** organizational system, running 24/7 on Fedora Linux.
 
-Similar to Andrej Karpathy's vision of agentic workflows, it moves beyond simple "web clipping" to provide a multi-layered ontology extraction using the **Gemini 3.1 Flash Lite** model.
+---
 
-## 🖼️ Visual Showcase
+## 🏗️ Architecture Overview
 
-### 🗺️ Knowledge Graph
-The system automatically builds a dense, interconnected graph of high-value concepts.
-![Graph Overview](docs/screenshots/centaur_brain_graph_example.png)
+1. **Unified Telegram Bot:** Single conversational interface for:
+   - **Capture:** Voice notes transcribed locally via CUDA Faster-Whisper; text capture via `/in`.
+   - **Triage:** `/clarify` with an interactive 8-option GTD decision tree and visual inline calendar date picker.
+   - **Execution:** `/next @context`, `/waiting`, `/project <name>`, `/done <item>`, `/tickle <item>`.
+   - **Review:** `/daily` action-oriented review, `/reflect` weekly review, and `/holiday` review pause.
+   - **Knowledge Q&A:** Prefix-free natural language queries with 5-turn conversational memory.
+2. **Project Roadmap Auto-Promotion:** When completing a task via Telegram `/done` or ticking `- [x]` in Obsidian, the system automatically suggests the next step from `## Project Steps` to promote to `Next_Actions.md`.
+3. **Deep Research Knowledge Graph:** `/research <URL>` extracts atomic concepts bidirectionally linked in `04_Resources/Research_Brain/Concepts/`.
+4. **Syncthing Auto-Healer:** Detects sync conflicts on task files across mobile/desktop, performs line-level merges, and commits changes to Git.
 
-### 🔍 Concept Synthesis
-Detailed, LLM-curated concept pages that synthesize insights from multiple sources while preserving nuance.
-![Concept Example](docs/screenshots/centaur_brain_concept_example.png)
+---
 
-### 📄 Source Summaries
-Richly formatted summaries with metadata, primary/related themes, and core takeaways.
-![Summary Example](docs/screenshots/centaur_brain_summary_example.png)
+## 📂 Vault Hierarchy (GTD + P.A.R.A)
 
-## 🏗️ Architecture
-
-The solution consists of three primary components:
-
-1.  **Chrome Extension:** A lightweight capture tool that extracts clean text from articles or triggers the backend to fetch transcripts from YouTube and process full PDFs.
-2.  **FastAPI Backend:** A Python service that orchestrates the heavy lifting:
-    *   Full-text extraction from multi-page PDFs.
-    *   Strategic summarization using LLMs.
-    *   **Proactive Deduplication:** Uses RAG (Retrieval-Augmented Generation) by injecting your existing concept dictionary into the prompt to prevent creating redundant synonyms during ingestion.
-    *   **Model Agnosticism:** Uses a generic LLM wrapper (`llm_client.py`) supporting Gemini, OpenAI, and Ollama out of the box.
-    *   API Throttling & Quota Management to respect free-tier limits.
-3.  **Obsidian Vault:** Organized according to the **P.A.R.A.** system:
-    *   `00_System/` — Task dashboards (`Tasks.md`, `Completed_Tasks.md`), daily briefs (`Daily_Digest.md`), unified activity logs (`Librarian_Activity.md`), and cache directories (`Internal/`).
-    *   `02_Projects/` — Active deliverables and project notes.
-    *   `03_Areas/` — Ongoing long-term responsibilities (Family, Cookery, Health, Coding).
-    *   `04_Resources/` — Reference materials and the structured Research Brain.
-    *   `05_Archive/` — Completed work and reference materials.
-
-## 🚀 Key Features
-
-*   **Model Agnosticism:** The backend is fully provider-independent. Switch between Google Gemini, OpenAI, or a local LLaMA instance running via Ollama simply by toggling `.env` settings.
-*   **Full PDF & Presentation Ingestion:** Backend extracts and processes every page of PDF documents and PPTX presentation slides (including speaker notes).
-*   **Local Audio Transcription:** Integrated local **Faster Whisper** pipeline running on CUDA GPU (with CPU fallbacks) for high-fidelity offline voice notes transcription.
-*   **Agentic Concept Mapping:** The system automatically extracts 5-15 highly specific concepts per source and links them bidirectionally in the Research Brain.
-*   **Daily Briefing & Synthesis:** A systemd-timer triggers a nightly synthesis run at **2:00 AM** to generate a structured 4-part **Daily Digest**, clean up raw voice notes older than 30 days, update directory indexes, and push a plain-text briefing to your Telegram Bot.
-*   **Mobile Ingestion Queue (Offline-Friendly):** Background watcher polls the `01_Inbox/Inbox.md` file. Add URLs or notes via Syncthing on mobile, and the server processes them asynchronously, filing them to the right project/area automatically.
-*   **Auto-Healing Brain Cleaner:** A maintenance script (`brain_cleaner.py`) running overnight to:
-    *   **Deduplicate & Merge:** Intelligently synthesizes overlapping concepts (e.g., "AI" vs "Artificial Intelligence") into single canonical pages while healing all links vault-wide.
-    *   **Link Healing:** Automatically updates wikilinks and detects "orphaned" mentions to generate new concept pages.
-    *   **Hash-based State Tracking:** Prevents redundant refactoring and "semantic smoothing" by only re-processing files that have actually changed since the last pass.
-*   **Background Automation:** Includes a systemd user service for Linux (Fedora) users to keep the intelligence layer running persistently.
-
-## 📱 Mobile Capture (Consolidated Import Queue)
-
-You can capture content on your mobile phone and sync it back to your vault using standard community plugins (e.g., **Remotely Save**).
-
-### How it Works:
-1. Append any URL you want to capture to the `00 System/Import/Inbox.md` file in your vault. You can write your own notes or comments directly on the lines under the URL as well.
-2. The backend scans the file every 15 seconds:
-   - **Success:** Extracts the URL and notes, scrapes and processes the content (including YouTube transcripts, PDFs, or standard pages), builds a structured summary in `02 Summaries/`, synthesizes concepts in `04 Concepts/`, removes the URL block from `Inbox.md`, and appends a confirmation with a wikilink (e.g., `- [[Emoji Title]] - URL`) to `Completed.md`.
-   - **Failure:** If ingestion fails (e.g., network error), the URL and your notes are removed from `Inbox.md` and safely appended to `Failed.md` with failure details so your inputs are never lost.
-
-## 🛠️ Installation
-
-### 1. Prerequisites
-*   [uv](https://github.com/astral-sh/uv) (The extremely fast Python package manager)
-*   A Google AI Studio API Key (Free tier supported)
-*   Obsidian installed locally
-
-### 2. Backend Setup
-```bash
-cd backend
-cp .env.example .env
-# Edit .env with your GEMINI_API_KEY and OBSIDIAN_VAULT_PATH
-uv run main.py
+```text
+vault/
+├── 00_System/
+│   ├── Inbox/                     <-- Raw captures and dropped files
+│   ├── Daily_Digest.md            <-- Latest review briefing
+│   └── Librarian_Activity.md      <-- Filing and ingestion log
+├── 01_Tasks/                      <-- GTD Task Lists
+│   ├── Next_Actions.md            <-- Context-tagged immediate actions (@home, @computer, etc.)
+│   ├── Waiting_For.md             <-- Delegated actions (#waiting(Name))
+│   ├── Someday_Maybe.md           <-- Future ideas and backlog
+│   ├── Captured.md                <-- Raw inbox captures awaiting /clarify
+│   └── Completed.md               <-- Archived completed actions
+├── 02_Projects/                   <-- Active Projects (Master notes with ## Project Steps)
+├── 03_Areas/                      <-- Ongoing Responsibilities (Family, Health, Coding)
+├── 04_Resources/                  <-- Research Brain & Reference Material
+│   └── Research_Brain/
+│       ├── Concepts/              <-- Atomic concept pages
+│       ├── Sources/               <-- Raw source files & transcripts
+│       └── Summaries/             <-- Structured AI summary nodes
+└── 05_Archive/                    <-- Completed Projects & Inactive Reference
 ```
 
-### 3. Extension Setup
-1.  Open Chrome and navigate to `chrome://extensions/`.
-2.  Enable **Developer mode**.
-3.  Click **Load unpacked** and select the `extension/` folder from this repository.
+---
 
-### 4. Background Service (Linux/Fedora)
-To run the backend automatically on login:
+## 🛠️ Service Management (systemd)
+
+The backend runs as a systemd user service:
+
 ```bash
-# 1. Edit docs/centaur-brain.service to match your absolute paths (CWD & uv)
-# 2. Copy it to your user systemd directory:
-mkdir -p ~/.config/systemd/user/
-cp docs/centaur-brain.service ~/.config/systemd/user/
-# 3. Enable and start the service
-systemctl --user daemon-reload
-systemctl --user enable centaur-brain.service
-systemctl --user start centaur-brain.service
+# Status
+systemctl --user status second-brain.service
+
+# Restart
+systemctl --user restart second-brain.service
+
+# Logs
+journalctl --user -u second-brain.service -f
 ```
 
-## 🧹 Maintenance & Utilities
+---
 
-### Brain Cleaner
-Keep your graph clean and your concepts synthesized:
-```bash
-cd backend
-# Runs deduplication, link healing, and refactoring with quota safety
-uv run brain_cleaner.py
-```
+## 📚 Complete Documentation
 
-### Other Utilities
-These scripts are available in the `backend/` directory for specific tasks:
-*   **`add_book.py`**: Interactively add book metadata and a summary to your vault.
-*   **`reindex_covers.py`**: Scans all source materials and attempts to fetch or update their cover images.
-
-## 🛡️ Privacy & Security
-
-*   The system operates **locally first**. Your raw document text is only sent to the Gemini API for analysis; it is never stored on a third-party server other than your local machine and your chosen LLM provider.
-*   `.env` files and local source lists (`sources_all.txt`) are ignored by Git to prevent credential leakage.
-
-## 📜 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+Detailed guides are located in `docs/` and within the vault at `02_Projects/Personal/Second Brain/docs/`:
+- **[User Guide & Workflows](docs/user_guide.md):** Complete manual for commands, triage, reviews, and contexts.
+- **[Technical Implementation](docs/technical_implementation.md):** Backend schemas, state machines, and module architecture.
+- **[Product Description](docs/product_description.md):** Vision, value proposition, and tech stack.

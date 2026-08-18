@@ -493,10 +493,25 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
 
     # 6. Waiting For Flow
     if action == "action_waiting":
+        session["awaiting_text_input"] = "waiting_person"
+        session["item_data"]["raw_line"] = item_line
+        
+        await http_client.post(
+            f"https://api.telegram.org/bot{token}/editMessageText",
+            json={
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": "⏳ <b>Who or what are you waiting for?</b>\n\nPlease reply with the person, company, or entity (e.g. <code>Rosie</code>, <code>Amazon</code>, <code>Accountant</code>):",
+                "parse_mode": "HTML"
+            }
+        )
+        return
+
+    if action == "waiting_standalone_cat":
         reply_markup = {
             "inline_keyboard": [
-                [{"text": "🏠 Personal", "callback_data": "clarify:save_waiting:Personal"},
-                 {"text": "💼 Professional", "callback_data": "clarify:save_waiting:Professional"}]
+                [{"text": "🏠 Personal", "callback_data": "clarify:save_waiting:Personal:none"},
+                 {"text": "💼 Professional", "callback_data": "clarify:save_waiting:Professional:none"}]
             ]
         }
         await http_client.post(
@@ -504,26 +519,64 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
             json={
                 "chat_id": chat_id,
                 "message_id": message_id,
-                "text": "🏷️ <b>Select Category for Waiting For Item:</b>",
+                "text": "🏷️ <b>Select Category for Waiting Item:</b>",
                 "parse_mode": "HTML",
                 "reply_markup": reply_markup
             }
         )
         return
 
-    if action.startswith("save_waiting"):
+    if action.startswith("waiting_tag_cat"):
         category = data.split(":")[2]
+        session["item_data"]["selected_category"] = category
+        keyboard = get_category_project_buttons(category, action_prefix="waiting_proj")
+        reply_markup = {"inline_keyboard": keyboard}
+        await http_client.post(
+            f"https://api.telegram.org/bot{token}/editMessageText",
+            json={
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": f"🏷️ <b>Select {category} Project for Waiting Item:</b>",
+                "parse_mode": "HTML",
+                "reply_markup": reply_markup
+            }
+        )
+        return
+
+    if action.startswith("waiting_proj") or action.startswith("save_waiting"):
+        parts = data.split(":")
+        if action.startswith("save_waiting"):
+            category = parts[2]
+            proj_tag = parts[3] if len(parts) > 3 else "none"
+        else:
+            proj_tag = parts[2]
+            category = session["item_data"].get("selected_category")
+            if not category:
+                from backend.utils.tasks_dashboard import get_project_category
+                category = get_project_category(proj_tag)
+
+        waiting_person = session["item_data"].get("waiting_person", "Someone")
         clean_text = sanitize_task_item_text(item_line)
         cat_tag = "#professional" if category == "Professional" else "#personal"
+        
+        wait_tag = f"#waiting({waiting_person})"
+        task_str = f"- [ ] {clean_text} {wait_tag} {cat_tag}"
+        tag_disp = f" {wait_tag} {cat_tag}"
+        
+        if proj_tag != "none":
+            proj_tag_clean = proj_tag.strip().replace(" ", "_")
+            task_str += f" #project/{proj_tag_clean}"
+            ensure_project_note_exists(proj_tag, category=category)
+            tag_disp += f" #project/{proj_tag_clean}"
+            
         waiting_md = os.path.join(TASKS_PATH, "Waiting_For.md")
-        
         from backend.utils.tasks_dashboard import append_gtd_item
-        append_gtd_item(waiting_md, f"- [ ] {clean_text} #waiting {cat_tag}")
-        
+        append_gtd_item(waiting_md, task_str)
+            
         await archive_and_remove_captured(item_line)
         await http_client.post(
             f"https://api.telegram.org/bot{token}/editMessageText",
-            json={"chat_id": chat_id, "message_id": message_id, "text": f"⏳ Added to Waiting For ({cat_tag}):\n{clean_text}"}
+            json={"chat_id": chat_id, "message_id": message_id, "text": f"⏳ Added to Waiting For ({tag_disp}):\n{clean_text}"}
         )
         session["current_index"] += 1
         await process_next_clarify_item(chat_id, token, http_client)
@@ -819,6 +872,29 @@ async def handle_clarify_text_input(chat_id: int, text: str, token: str, http_cl
     item_data = session.get("item_data", {})
     item_line = item_data.get("raw_line", session["items"][session["current_index"]])
     
+    if input_type == "waiting_person":
+        person_clean = text.strip()
+        session["item_data"]["waiting_person"] = person_clean
+        session["awaiting_text_input"] = None
+        
+        reply_markup = {
+            "inline_keyboard": [
+                [{"text": "🚫 No Project Tag (Standalone)", "callback_data": "clarify:waiting_standalone_cat"}],
+                [{"text": "🏠 Tag Personal Project", "callback_data": "clarify:waiting_tag_cat:Personal"},
+                 {"text": "💼 Tag Professional Project", "callback_data": "clarify:waiting_tag_cat:Professional"}]
+            ]
+        }
+        await http_client.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={
+                "chat_id": chat_id,
+                "text": f"⏳ Waiting on: <b>{person_clean}</b>\n\nOptionally link to an active project?",
+                "parse_mode": "HTML",
+                "reply_markup": reply_markup
+            }
+        )
+        return True
+
     if input_type == "new_project_name":
         session["item_data"]["new_project_name"] = text.strip().title()
         session["awaiting_text_input"] = "new_project_outcome"

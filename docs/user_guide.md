@@ -68,7 +68,7 @@ When you run `/clarify`, unclarified items in `01_Tasks/Captured.md` are present
    - **`[⚡ Next Action]`**: Select context (`@home`, `@computer`, `@errands`, `@phone`, `@anywhere`, `@office`) and optionally link an active project.
    - **`[📌 Existing Project Roadmap]`**: Select category (`Personal` vs `Professional`) and pick an active project from a 2-column list to append as a future step under `## Project Steps`.
    - **`[📁 New Project]`**: Prompts for Name and Desired Outcome, auto-generating the project master note.
-   - **`[⏳ Waiting For]`**: Prompts for contact name and records `- [ ] <task> #waiting(Name)` in `Waiting_For.md`.
+   - **`[⏳ Waiting For]`**: Prompts for who or what you are waiting on (`#waiting(Name)`), then optionally links an active project (`#project/Project_Name`) before recording to `Waiting_For.md`.
    - **`[💡 Someday / Maybe]`**: Logs item to `Someday_Maybe.md` for future weekly review.
    - **`[📚 Pass to AI Librarian]`**: Forwards reference material to PARA folders (`03_Areas/` or `04_Resources/`).
    - **`[⚡ 2-Min Rule (Done)]`**: Immediately logs to `01_Tasks/Completed.md` with completion timestamp.

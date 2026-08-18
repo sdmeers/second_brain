@@ -173,8 +173,8 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/sdmeers/second_brain
-ExecStart=/home/sdmeers/second_brain/backend/.venv/bin/python3 -m backend.main
+WorkingDirectory=/home/username/second_brain
+ExecStart=/home/username/second_brain/backend/.venv/bin/python3 -m backend.main
 Restart=always
 RestartSec=5
 

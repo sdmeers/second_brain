@@ -6,7 +6,6 @@ from datetime import datetime
 import httpx
 from backend.config import (
     TELEGRAM_BOT_TOKEN,
-    TELEGRAM_QA_BOT_TOKEN,
     TELEGRAM_ALLOWED_CHAT_IDS,
     COMPLETED_MD_FILE,
     FAILED_MD_FILE

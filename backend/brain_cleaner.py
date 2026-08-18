@@ -18,7 +18,6 @@ from google.genai import types
 
 from backend.vault.writer import atomic_write
 from backend.rag.vectorstore import index_vault
-from backend.config import TELEGRAM_QA_BOT_TOKEN
 
 
 dotenv_path = os.path.join(os.path.dirname(__file__), ".env")

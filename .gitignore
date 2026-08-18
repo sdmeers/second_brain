@@ -59,6 +59,8 @@ emulator_data/
 backend/antigravity-ide
 
 # Local State & Personal Scratch Notes
+scratch/
+backend/scratch/
 *refactor*.md
 *plan.md
 gemini.md

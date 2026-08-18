@@ -95,14 +95,13 @@ for filepath in [INBOX_MD_FILE, COMPLETED_MD_FILE, FAILED_MD_FILE]:
 
 # Telegram Configuration
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_QA_BOT_TOKEN = os.getenv("TELEGRAM_QA_BOT_TOKEN")
 TELEGRAM_ALLOWED_CHAT_IDS = []
 
 # Jira Configuration
-JIRA_URL = os.getenv("JIRA_URL", "https://stevenmeers.atlassian.net")
+JIRA_URL = os.getenv("JIRA_URL", "")
 JIRA_USER_EMAIL = os.getenv("JIRA_USER_EMAIL")
 JIRA_API_TOKEN = os.getenv("JIRA_API_TOKEN")
-JIRA_DEFAULT_PROJECT_KEY = os.getenv("JIRA_DEFAULT_PROJECT_KEY", "RAID")
+JIRA_DEFAULT_PROJECT_KEY = os.getenv("JIRA_DEFAULT_PROJECT_KEY", "")
 allowed_chat_ids_str = os.getenv("TELEGRAM_ALLOWED_CHAT_IDS")
 if allowed_chat_ids_str:
     TELEGRAM_ALLOWED_CHAT_IDS = [int(x.strip()) for x in allowed_chat_ids_str.split(",") if x.strip()]

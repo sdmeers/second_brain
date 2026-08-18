@@ -59,7 +59,7 @@ if epic_key == "FAILED":
 stories = [
     {
         "summary": "Phase 0: Interview & System Constitution ✅",
-        "description": "COMPLETE. Conducted AI interview. Produced _MASTER_PROMPT.md, _WORKFLOWS.md, _PREFERENCES.md, _INDEX.md, _CHANGELOG.md. Created vault P.A.R.A. folder structure in /home/sdmeers/vault. Git initialized."
+        "description": "COMPLETE. Conducted AI interview. Produced _MASTER_PROMPT.md, _WORKFLOWS.md, _PREFERENCES.md, _INDEX.md, _CHANGELOG.md. Created vault P.A.R.A. folder structure. Git initialized."
     },
     {
         "summary": "Phase 1: Vault Setup & Data Migration",
@@ -91,7 +91,7 @@ stories = [
     },
     {
         "summary": "Phase 8: External Integrations (Deferred)",
-        "description": "Jira bidirectional sync with stevenmeers.atlassian.net. Jira → Markdown, Markdown → Jira, agentic ticket creation. Deferred until core is stable."
+        "description": "Jira bidirectional sync with Jira API. Jira → Markdown, Markdown → Jira, agentic ticket creation. Deferred until core is stable."
     },
 ]
 

@@ -60,7 +60,7 @@ async def _ingest_email(subject: str, body: str, attachments: list):
         await notify_via_telegram(f"📧❌ Gmail Queueing Failed: '{subject}' ({e})")
 
 def _process_gmail_emails(gmail_email, gmail_app_password, loop):
-    email_user = gmail_email.split('@')[0] if '@' in gmail_email else "stevenmeers"
+    email_user = gmail_email.split('@')[0] if '@' in gmail_email else "user"
     BRAIN_TAG = f"{email_user}+brain"
     
     mail = imaplib.IMAP4_SSL("imap.gmail.com", timeout=15.0)

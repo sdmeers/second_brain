@@ -132,16 +132,13 @@ def ensure_project_note_exists(project_name: str, category: str = "Personal", ou
             if os.path.exists(target_md):
                 return target_md
                 
-    # If not found, create under specified category (Personal / Professional)
+    # If not found, create dedicated project folder under specified category (Personal / Professional)
     cat_dir = os.path.join(proj_dir, category)
     target_folder = os.path.join(cat_dir, proj_clean)
-    if os.path.exists(target_folder) and os.path.isdir(target_folder):
-        found_path = os.path.join(target_folder, f"{proj_clean}.md")
-    else:
-        found_path = os.path.join(cat_dir, f"{proj_clean}.md")
+    os.makedirs(target_folder, exist_ok=True)
+    found_path = os.path.join(target_folder, f"{proj_clean}.md")
         
     if not os.path.exists(found_path):
-        os.makedirs(os.path.dirname(found_path), exist_ok=True)
         today_str = datetime.now().strftime("%Y-%m-%d")
         outcome_str = outcome if outcome else f"{proj_clean} project goals and desired outcome"
         proj_tag = proj_clean.strip().replace(" ", "_")

@@ -35,6 +35,9 @@ backend/.telegram_qa_offset
 backend/.cache_metadata.json
 .brain_cleaner_state.json
 backend/.brain_cleaner_state.json
+.*_state.json
+*_state.json
+*.state.json
 
 # Staging & Audio files
 staging/

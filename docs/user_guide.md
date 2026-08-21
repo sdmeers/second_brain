@@ -88,7 +88,7 @@ title: "Garage"
 type: project
 category: Personal
 outcome: "Fully organised garage with shelving, workbench, and storage"
-due_date: "2026-08-23"
+due_date: ""
 date_created: "2026-08-08"
 status: active
 ---

@@ -506,6 +506,10 @@ async def handle_telegram_callback_query(callback_query: dict, token: str, http_
         from backend.ingestion.handlers.engage import handle_promote_callback
         await handle_promote_callback(callback_query, token, http_client)
 
+    elif data.startswith("reflect:"):
+        from backend.ingestion.handlers.engage import handle_reflect_callback
+        await handle_reflect_callback(callback_query, token, http_client)
+
 
 
 async def poll_telegram_unified():

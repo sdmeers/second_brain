@@ -90,7 +90,7 @@ title: "Project Title"
 type: project
 category: Personal # Personal | Professional
 outcome: "Clear definition of done"
-due_date: "2026-08-23" # Optional YYYY-MM-DD or DD-MM-YYYY
+due_date: "" # Optional YYYY-MM-DD or DD-MM-YYYY
 date_created: "2026-08-08"
 status: active # active | completed | on-hold
 ---
@@ -173,8 +173,8 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/username/second_brain
-ExecStart=/home/username/second_brain/backend/.venv/bin/python3 -m backend.main
+WorkingDirectory=/home/sdmeers/second_brain
+ExecStart=/home/sdmeers/second_brain/backend/.venv/bin/python3 -m backend.main
 Restart=always
 RestartSec=5
 

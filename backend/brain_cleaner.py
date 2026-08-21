@@ -701,23 +701,51 @@ async def generate_daily_digest(target_chat_id: int = None):
     orphaned_projects = []
     project_deadlines = []
     proj_dir = os.path.join(VAULT_PATH, "02_Projects")
-    for root, dirs, files in os.walk(proj_dir):
-        if is_weekend and "Professional" in root: continue
-        for f in files:
-            if not f.endswith(".md"): continue
-            proj_name = f.replace(".md", "")
-            if proj_name.replace(" ", "_") not in active_projects:
-                orphaned_projects.append(proj_name)
-
-            p_file = os.path.join(root, f)
+    
+    for category in ["Personal", "Professional"]:
+        if is_weekend and category == "Professional":
+            continue
+        cat_dir = os.path.join(proj_dir, category)
+        if not os.path.exists(cat_dir):
+            continue
+        for entry in sorted(os.listdir(cat_dir)):
+            if entry.startswith(".") or entry.startswith("_") or entry in ["archive", "docs", "Notes", "Meetings", "Outputs", "Sessions", "old", "Syncthing"]:
+                continue
+            entry_path = os.path.join(cat_dir, entry)
+            # Project master note is either <cat>/<Project>/<Project>.md or <cat>/<Project>.md
+            if os.path.isdir(entry_path):
+                proj_name = entry
+                p_file = os.path.join(entry_path, f"{entry}.md")
+            elif entry.endswith(".md"):
+                proj_name = entry[:-3]
+                p_file = entry_path
+            else:
+                continue
+                
+            if not os.path.exists(p_file):
+                continue
+                
+            p_tag_clean = proj_name.strip().replace(" ", "_").lower()
+            if p_tag_clean not in [p.lower() for p in active_projects] and proj_name.lower() not in [p.lower() for p in active_projects]:
+                orphaned_projects.append(f"{proj_name} ({category})")
+                
             try:
                 with open(p_file, "r", encoding="utf-8") as pf:
                     p_text = pf.read()
-                m_status = re.search(r'status:\s*"?([a-zA-Z0-9_\-]+)"?', p_text)
+                
+                # Only parse YAML frontmatter block
+                fm_match = re.search(r'^---\s*\n(.*?)\n---', p_text, re.DOTALL)
+                if not fm_match:
+                    continue
+                frontmatter = fm_match.group(1)
+                
+                # Check status
+                m_status = re.search(r'^status:\s*"?([a-zA-Z0-9_\-]+)"?', frontmatter, re.MULTILINE)
                 if m_status and m_status.group(1).lower() in ["completed", "archived"]:
                     continue
                 
-                m_due = re.search(r'due_date:\s*"?(\d{4}-\d{2}-\d{2}|\d{2}-\d{2}-\d{4})"?', p_text)
+                # Check due_date
+                m_due = re.search(r'^due_date:\s*"?(\d{4}-\d{2}-\d{2}|\d{2}-\d{2}-\d{4})"?', frontmatter, re.MULTILINE)
                 if m_due:
                     due_raw = m_due.group(1)
                     if "-" in due_raw and len(due_raw.split("-")[0]) == 4:

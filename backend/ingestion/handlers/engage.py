@@ -1072,6 +1072,453 @@ async def handle_holiday_callback(callback_query: dict, token: str, http_client:
         )
         return
 
+def get_reflect_summary_data() -> dict:
+    """Gathers structured review data across the GTD task lists and projects."""
+    today_dt = datetime.now()
+    today_str = today_dt.strftime("%Y-%m-%d")
+    seven_days_ago = today_dt - timedelta(days=7)
+    
+    # 1. Captured items
+    captured_items = []
+    cap_path = os.path.join(OBSIDIAN_VAULT_PATH, "01_Tasks", "Captured.md")
+    if os.path.exists(cap_path):
+        with open(cap_path, "r", encoding="utf-8") as f:
+            for line in f:
+                ls = line.strip()
+                if ls.startswith("- "):
+                    clean = re.sub(r'\(Source:.*?\)', '', ls)
+                    clean = re.sub(r'\(Captured on.*?\)', '', clean).replace("- ", "").strip()
+                    if clean:
+                        captured_items.append(clean)
+                        
+    # 2. Next actions
+    next_items = []
+    active_project_tags = set()
+    next_path = os.path.join(OBSIDIAN_VAULT_PATH, "01_Tasks", "Next_Actions.md")
+    if os.path.exists(next_path):
+        with open(next_path, "r", encoding="utf-8") as f:
+            for line in f:
+                ls = line.strip()
+                if ls.startswith("- [ ]"):
+                    m_tick = re.search(r'🔔 (\d{4}-\d{2}-\d{2})', ls)
+                    if m_tick and m_tick.group(1) > today_str:
+                        continue
+                    m_proj = re.search(r'#project/([a-zA-Z0-9_\-]+)', ls)
+                    if m_proj:
+                        active_project_tags.add(m_proj.group(1).lower())
+                    next_items.append(ls)
+
+    # 3. Waiting items
+    waiting_items = []
+    stale_waitings = []
+    wait_path = os.path.join(OBSIDIAN_VAULT_PATH, "01_Tasks", "Waiting_For.md")
+    if os.path.exists(wait_path):
+        with open(wait_path, "r", encoding="utf-8") as f:
+            for line in f:
+                ls = line.strip()
+                if ls.startswith("- [ ]"):
+                    waiting_items.append(ls)
+                    m_cap = re.search(r'\(Captured .*? on (\d{4}-\d{2}-\d{2})\)', ls)
+                    if m_cap:
+                        try:
+                            cap_date = datetime.strptime(m_cap.group(1), "%Y-%m-%d")
+                            if (today_dt - cap_date).days > 5:
+                                stale_waitings.append(ls)
+                        except Exception:
+                            pass
+
+    # 4. Someday items
+    someday_items = []
+    some_path = os.path.join(OBSIDIAN_VAULT_PATH, "01_Tasks", "Someday_Maybe.md")
+    if os.path.exists(some_path):
+        with open(some_path, "r", encoding="utf-8") as f:
+            for line in f:
+                ls = line.strip()
+                if ls.startswith("- [ ]") or ls.startswith("- "):
+                    clean = ls.replace("- [ ]", "").replace("- ", "").strip()
+                    if clean:
+                        someday_items.append(clean)
+
+    # 5. Completed last 7 days
+    completed_7d_count = 0
+    comp_path = os.path.join(OBSIDIAN_VAULT_PATH, "01_Tasks", "Completed.md")
+    if os.path.exists(comp_path):
+        with open(comp_path, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip().startswith("- [x]"):
+                    m_comp = re.search(r'\(Completed on (\d{4}-\d{2}-\d{2})\)', line)
+                    if m_comp:
+                        try:
+                            c_date = datetime.strptime(m_comp.group(1), "%Y-%m-%d")
+                            if c_date >= seven_days_ago:
+                                completed_7d_count += 1
+                        except Exception:
+                            pass
+
+    # 6. Projects & Orphaned Projects
+    proj_dir = os.path.join(OBSIDIAN_VAULT_PATH, "02_Projects")
+    all_projects = []
+    orphaned_projects = []
+    project_deadlines = []
+    project_roadmaps = {}
+
+    for category in ["Personal", "Professional"]:
+        cat_dir = os.path.join(proj_dir, category)
+        if not os.path.exists(cat_dir):
+            continue
+        for entry in sorted(os.listdir(cat_dir)):
+            if entry.startswith(".") or entry.startswith("_") or entry in ["archive", "docs", "Notes", "Meetings", "Outputs", "Sessions", "old", "Syncthing"]:
+                continue
+            entry_path = os.path.join(cat_dir, entry)
+            if os.path.isdir(entry_path):
+                p_name = entry
+                p_file = os.path.join(entry_path, f"{entry}.md")
+            elif entry.endswith(".md"):
+                p_name = entry[:-3]
+                p_file = entry_path
+            else:
+                continue
+
+            if not os.path.exists(p_file):
+                continue
+
+            all_projects.append((p_name, category, p_file))
+            p_tag_clean = p_name.strip().replace(" ", "_").lower()
+            if p_tag_clean not in active_project_tags and p_name.lower() not in active_project_tags:
+                orphaned_projects.append((p_name, category, p_file))
+
+            try:
+                with open(p_file, "r", encoding="utf-8") as pf:
+                    p_text = pf.read()
+                    
+                # Parse frontmatter
+                fm_match = re.search(r'^---\s*\n(.*?)\n---', p_text, re.DOTALL)
+                if fm_match:
+                    frontmatter = fm_match.group(1)
+                    m_status = re.search(r'^status:\s*"?([a-zA-Z0-9_\-]+)"?', frontmatter, re.MULTILINE)
+                    if m_status and m_status.group(1).lower() in ["completed", "archived"]:
+                        continue
+                    m_due = re.search(r'^due_date:\s*"?(\d{4}-\d{2}-\d{2}|\d{2}-\d{2}-\d{4})"?', frontmatter, re.MULTILINE)
+                    if m_due:
+                        due_raw = m_due.group(1)
+                        if "-" in due_raw and len(due_raw.split("-")[0]) == 4:
+                            due_dt = datetime.strptime(due_raw, "%Y-%m-%d").date()
+                        else:
+                            due_dt = datetime.strptime(due_raw, "%d-%m-%Y").date()
+                        days_left = (due_dt - today_dt.date()).days
+                        date_disp = due_dt.strftime("%d-%m-%Y")
+                        if days_left <= 14:
+                            project_deadlines.append((p_name, days_left, date_disp))
+                            
+                # Parse roadmap steps
+                m_steps = re.search(r'## Project Steps\n(.*?)(?=\n## |\Z)', p_text, re.DOTALL)
+                if m_steps:
+                    steps = [s.replace("- [ ]", "").strip() for s in m_steps.group(1).strip().splitlines() if s.strip() and s.strip().startswith("- [ ]")]
+                    if steps:
+                        project_roadmaps[p_name] = steps
+            except Exception:
+                pass
+
+    return {
+        "captured_items": captured_items,
+        "next_items": next_items,
+        "waiting_items": waiting_items,
+        "stale_waitings": stale_waitings,
+        "someday_items": someday_items,
+        "completed_7d_count": completed_7d_count,
+        "all_projects": all_projects,
+        "orphaned_projects": orphaned_projects,
+        "project_deadlines": project_deadlines,
+        "project_roadmaps": project_roadmaps
+    }
+
+async def handle_reflect_command(chat_id: int, token: str, http_client: httpx.AsyncClient):
+    """Sends the interactive GTD Reflection & Guided Review Hub."""
+    data = get_reflect_summary_data()
+    
+    num_cap = len(data["captured_items"])
+    num_wait = len(data["waiting_items"])
+    num_stale_wait = len(data["stale_waitings"])
+    num_orphans = len(data["orphaned_projects"])
+    num_someday = len(data["someday_items"])
+    num_deadlines = len(data["project_deadlines"])
+    
+    stale_text = f" ({num_stale_wait} stale &gt;5d)" if num_stale_wait > 0 else ""
+    
+    text = (
+        f"🧘 <b>GTD Reflection & Guided Review</b>\n\n"
+        f"Keep your Second Brain clear, current, and complete.\n\n"
+        f"1. 📥 <b>Get Clear:</b> {num_cap} captured items awaiting clarify\n"
+        f"2. ⏳ <b>Audit Delegations:</b> {num_wait} waiting items{stale_text}\n"
+        f"3. 🎯 <b>Project Health:</b> {len(data['all_projects'])} total, {num_orphans} orphaned (0 active actions)\n"
+        f"4. 💡 <b>Someday / Maybe:</b> {num_someday} ideas on hold\n"
+        f"5. 🚨 <b>Deadlines &amp; Ticklers:</b> {num_deadlines} upcoming deadline(s)\n\n"
+        f"Tap <b>Start Guided Review</b> to walk through in sequence, or pick a specific check:"
+    )
+    
+    reply_markup = {
+        "inline_keyboard": [
+            [{"text": "▶️ Start Guided Review", "callback_data": "reflect:step:1"}],
+            [{"text": f"1. 📥 Get Clear ({num_cap})", "callback_data": "reflect:step:1"},
+             {"text": f"2. ⏳ Waitings ({num_wait})", "callback_data": "reflect:step:2"}],
+            [{"text": f"3. 🎯 Orphaned ({num_orphans})", "callback_data": "reflect:step:3"},
+             {"text": f"4. 💡 Someday ({num_someday})", "callback_data": "reflect:step:4"}],
+            [{"text": f"5. 🚨 Deadlines ({num_deadlines})", "callback_data": "reflect:step:5"},
+             {"text": "📊 Full Sitrep", "callback_data": "reflect:sitrep"}]
+        ]
+    }
+    
+    await send_msg(chat_id, token, http_client, text, reply_markup=reply_markup)
+
+async def handle_reflect_callback(callback_query: dict, token: str, http_client: httpx.AsyncClient):
+    """Handles step navigation and 1-tap actions within the guided reflection process."""
+    data_str = callback_query.get("data", "")
+    message = callback_query.get("message", {})
+    chat_id = message.get("chat", {}).get("id")
+    message_id = message.get("message_id")
+    
+    if not chat_id:
+        return
+        
+    data = get_reflect_summary_data()
+
+    if data_str == "reflect:hub":
+        num_cap = len(data["captured_items"])
+        num_wait = len(data["waiting_items"])
+        num_stale_wait = len(data["stale_waitings"])
+        num_orphans = len(data["orphaned_projects"])
+        num_someday = len(data["someday_items"])
+        num_deadlines = len(data["project_deadlines"])
+        
+        stale_text = f" ({num_stale_wait} stale &gt;5d)" if num_stale_wait > 0 else ""
+        
+        text = (
+            f"🧘 <b>GTD Reflection & Guided Review</b>\n\n"
+            f"Keep your Second Brain clear, current, and complete.\n\n"
+            f"1. 📥 <b>Get Clear:</b> {num_cap} captured items awaiting clarify\n"
+            f"2. ⏳ <b>Audit Delegations:</b> {num_wait} waiting items{stale_text}\n"
+            f"3. 🎯 <b>Project Health:</b> {len(data['all_projects'])} total, {num_orphans} orphaned (0 active actions)\n"
+            f"4. 💡 <b>Someday / Maybe:</b> {num_someday} ideas on hold\n"
+            f"5. 🚨 <b>Deadlines &amp; Ticklers:</b> {num_deadlines} upcoming deadline(s)\n\n"
+            f"Tap <b>Start Guided Review</b> to walk through in sequence, or pick a specific check:"
+        )
+        reply_markup = {
+            "inline_keyboard": [
+                [{"text": "▶️ Start Guided Review", "callback_data": "reflect:step:1"}],
+                [{"text": f"1. 📥 Get Clear ({num_cap})", "callback_data": "reflect:step:1"},
+                 {"text": f"2. ⏳ Waitings ({num_wait})", "callback_data": "reflect:step:2"}],
+                [{"text": f"3. 🎯 Orphaned ({num_orphans})", "callback_data": "reflect:step:3"},
+                 {"text": f"4. 💡 Someday ({num_someday})", "callback_data": "reflect:step:4"}],
+                [{"text": f"5. 🚨 Deadlines ({num_deadlines})", "callback_data": "reflect:step:5"},
+                 {"text": "📊 Full Sitrep", "callback_data": "reflect:sitrep"}]
+            ]
+        }
+        await http_client.post(
+            f"https://api.telegram.org/bot{token}/editMessageText",
+            json={"chat_id": chat_id, "message_id": message_id, "text": text, "parse_mode": "HTML", "reply_markup": reply_markup}
+        )
+        return
+
+    # STEP 1: Get Clear (Inbox Zero)
+    if data_str == "reflect:step:1":
+        captured = data["captured_items"]
+        if captured:
+            items_preview = "\n".join(f"• <code>{i}</code>" for i in captured[:5])
+            text = (
+                f"📥 <b>Step 1 of 5: Get Clear (Inbox Zero)</b>\n\n"
+                f"You have <b>{len(captured)}</b> unclarified capture(s) in <code>01_Tasks/Captured.md</code>:\n\n"
+                f"{items_preview}\n\n"
+                f"Emptying your inbox ensures every thought is triaged into an actionable next action or project roadmap."
+            )
+            buttons = [
+                [{"text": "⚡ Launch /clarify", "callback_data": "reflect:launch_clarify"}],
+                [{"text": "⏭️ Step 2: Delegations ➡️", "callback_data": "reflect:step:2"}],
+                [{"text": "🏠 Reflection Hub", "callback_data": "reflect:hub"}]
+            ]
+        else:
+            text = (
+                f"📥 <b>Step 1 of 5: Get Clear (Inbox Zero)</b>\n\n"
+                f"🎉 <b>Inbox Zero Achieved!</b>\n\n"
+                f"All captured notes and voice memos have been clarified."
+            )
+            buttons = [
+                [{"text": "⏭️ Step 2: Delegations ➡️", "callback_data": "reflect:step:2"}],
+                [{"text": "🏠 Reflection Hub", "callback_data": "reflect:hub"}]
+            ]
+            
+        await http_client.post(
+            f"https://api.telegram.org/bot{token}/editMessageText",
+            json={"chat_id": chat_id, "message_id": message_id, "text": text, "parse_mode": "HTML", "reply_markup": {"inline_keyboard": buttons}}
+        )
+        return
+
+    # STEP 2: Audit Delegated Items (Waiting For)
+    if data_str == "reflect:step:2":
+        waitings = data["waiting_items"]
+        stale_waitings = data["stale_waitings"]
+        
+        if waitings:
+            wait_lines = []
+            for w in waitings[:8]:
+                clean_w = w.replace("- [ ]", "•").strip()
+                if w in stale_waitings:
+                    clean_w += " ⚠️ <b>STALE (&gt;5d)</b>"
+                wait_lines.append(clean_w)
+            wait_preview = "\n".join(wait_lines)
+            text = (
+                f"⏳ <b>Step 2 of 5: Audit Delegations (Waiting For)</b>\n\n"
+                f"You have <b>{len(waitings)}</b> pending delegated item(s):\n\n"
+                f"{wait_preview}\n\n"
+                f"<i>Review each item: Has the person replied? Do you need to send a follow-up nudge? Run <code>/done &lt;item&gt;</code> if completed.</i>"
+            )
+        else:
+            text = (
+                f"⏳ <b>Step 2 of 5: Audit Delegations (Waiting For)</b>\n\n"
+                f"✅ <b>No pending delegated items!</b>\n\n"
+                f"You are currently not waiting on anyone for any deliverables."
+            )
+            
+        buttons = [
+            [{"text": "⏮️ Step 1: Inbox", "callback_data": "reflect:step:1"},
+             {"text": "⏭️ Step 3: Projects ➡️", "callback_data": "reflect:step:3"}],
+            [{"text": "🏠 Reflection Hub", "callback_data": "reflect:hub"}]
+        ]
+        await http_client.post(
+            f"https://api.telegram.org/bot{token}/editMessageText",
+            json={"chat_id": chat_id, "message_id": message_id, "text": text, "parse_mode": "HTML", "reply_markup": {"inline_keyboard": buttons}}
+        )
+        return
+
+    # STEP 3: Project Health & Momentum (Orphaned Projects)
+    if data_str == "reflect:step:3":
+        orphans = data["orphaned_projects"]
+        roadmaps = data["project_roadmaps"]
+        
+        buttons = []
+        if orphans:
+            orphan_lines = []
+            for p_name, cat, p_path in orphans[:8]:
+                steps = roadmaps.get(p_name, [])
+                step_info = f" ({len(steps)} roadmap step(s) available)" if steps else " (0 roadmap steps)"
+                orphan_lines.append(f"• <b>{p_name}</b> ({cat}){step_info}")
+                if steps:
+                    p_short = p_name[:20]
+                    buttons.append([{"text": f"⚡ Promote Step: {p_short}", "callback_data": f"reflect:promote:{p_name}"}])
+                    
+            preview = "\n".join(orphan_lines)
+            text = (
+                f"🎯 <b>Step 3 of 5: Project Health &amp; Momentum</b>\n\n"
+                f"⚠️ <b>{len(orphans)} project(s) have NO active Next Actions:</b>\n\n"
+                f"{preview}\n\n"
+                f"<i>Every active project requires at least one Next Action to maintain momentum. Tap a button below to promote the next step immediately:</i>"
+            )
+        else:
+            text = (
+                f"🎯 <b>Step 3 of 5: Project Health &amp; Momentum</b>\n\n"
+                f"🎉 <b>All active projects have Next Actions!</b>\n\n"
+                f"Every single project in your system has active work underway."
+            )
+            
+        buttons.append([
+            {"text": "⏮️ Step 2: Waitings", "callback_data": "reflect:step:2"},
+            {"text": "⏭️ Step 4: Someday ➡️", "callback_data": "reflect:step:4"}
+        ])
+        buttons.append([{"text": "🏠 Reflection Hub", "callback_data": "reflect:hub"}])
+        
+        await http_client.post(
+            f"https://api.telegram.org/bot{token}/editMessageText",
+            json={"chat_id": chat_id, "message_id": message_id, "text": text, "parse_mode": "HTML", "reply_markup": {"inline_keyboard": buttons}}
+        )
+        return
+
+    # STEP 4: Someday / Maybe Activation
+    if data_str == "reflect:step:4":
+        someday = data["someday_items"]
+        if someday:
+            preview = "\n".join(f"• {s}" for s in someday[:8])
+            text = (
+                f"💡 <b>Step 4 of 5: Someday / Maybe Review</b>\n\n"
+                f"You have <b>{len(someday)}</b> idea(s) on hold in <code>01_Tasks/Someday_Maybe.md</code>:\n\n"
+                f"{preview}\n\n"
+                f"<i>Are any of these ideas ready to be activated into a project this week? Or should any be archived/deleted?</i>"
+            )
+        else:
+            text = (
+                f"💡 <b>Step 4 of 5: Someday / Maybe Review</b>\n\n"
+                f"💡 <b>Someday/Maybe list is clear.</b>"
+            )
+            
+        buttons = [
+            [{"text": "⏮️ Step 3: Projects", "callback_data": "reflect:step:3"},
+             {"text": "⏭️ Step 5: Deadlines ➡️", "callback_data": "reflect:step:5"}],
+            [{"text": "🏠 Reflection Hub", "callback_data": "reflect:hub"}]
+        ]
+        await http_client.post(
+            f"https://api.telegram.org/bot{token}/editMessageText",
+            json={"chat_id": chat_id, "message_id": message_id, "text": text, "parse_mode": "HTML", "reply_markup": {"inline_keyboard": buttons}}
+        )
+        return
+
+    # STEP 5: Deadlines, Accomplishments & Wrap-up
+    if data_str == "reflect:step:5":
+        deadlines = data["project_deadlines"]
+        comp_7d = data["completed_7d_count"]
+        
+        deadline_text = ""
+        if deadlines:
+            d_lines = []
+            for p_name, days_left, d_disp in deadlines:
+                if days_left < 0:
+                    d_lines.append(f"• ⚠️ <b>{p_name}</b> — OVERDUE by {abs(days_left)}d ({d_disp})")
+                elif days_left == 0:
+                    d_lines.append(f"• 🚨 <b>{p_name}</b> — DUE TODAY! ({d_disp})")
+                else:
+                    d_lines.append(f"• 🚨 <b>{p_name}</b> — Due in {days_left}d ({d_disp})")
+            deadline_text = "<b>Upcoming Project Deadlines (<=14d):</b>\n" + "\n".join(d_lines) + "\n\n"
+        else:
+            deadline_text = "<b>Project Deadlines:</b> None within the next 14 days.\n\n"
+            
+        text = (
+            f"🏁 <b>Step 5 of 5: Deadlines &amp; Accomplishments</b>\n\n"
+            f"{deadline_text}"
+            f"🏆 <b>Weekly Accomplishments:</b> {comp_7d} action(s) completed in the last 7 days!\n\n"
+            f"🎉 <b>Reflection Complete!</b>\n"
+            f"Your Second Brain is 100% current, organized, and ready for high-impact execution."
+        )
+        
+        buttons = [
+            [{"text": "⚡ View Next Actions (/next)", "callback_data": "reflect:next_actions"}],
+            [{"text": "⏮️ Step 4: Someday", "callback_data": "reflect:step:4"},
+             {"text": "🏠 Return to Hub", "callback_data": "reflect:hub"}]
+        ]
+        await http_client.post(
+            f"https://api.telegram.org/bot{token}/editMessageText",
+            json={"chat_id": chat_id, "message_id": message_id, "text": text, "parse_mode": "HTML", "reply_markup": {"inline_keyboard": buttons}}
+        )
+        return
+
+    # Launch Clarify from Reflection
+    if data_str == "reflect:launch_clarify":
+        from backend.ingestion.handlers.clarify import handle_clarify_command
+        await handle_clarify_command(chat_id, token, http_client)
+        return
+
+    # View Next Actions from Reflection
+    if data_str == "reflect:next_actions":
+        await handle_next_command(chat_id, "/next", token, http_client)
+        return
+
+    # Step promotion from Reflection
+    if data_str.startswith("reflect:promote:"):
+        proj_name = data_str.split(":", 2)[2]
+        await prompt_project_step_promotion(chat_id, proj_name, token, http_client)
+        return
+
+    # Sitrep
+    if data_str == "reflect:sitrep":
+        await handle_status_command(chat_id, token, http_client)
+        return
+
 async def handle_engage_commands(chat_id: int, text: str, token: str, http_client: httpx.AsyncClient) -> bool:
     cmd_part = text.split()[0].lower()
     

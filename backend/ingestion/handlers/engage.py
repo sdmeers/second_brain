@@ -822,8 +822,8 @@ async def handle_archive_project_command(chat_id: int, text: str, token: str, ht
         with open(note_to_update, "w", encoding="utf-8") as f:
             f.write(content)
 
-    # Move filesystem entry to 05_Archive/<Category>/
-    archive_dir = os.path.join(OBSIDIAN_VAULT_PATH, "05_Archive", category)
+    # Move filesystem entry to 05_Archive/02_Projects/<Category>/
+    archive_dir = os.path.join(OBSIDIAN_VAULT_PATH, "05_Archive", "02_Projects", category)
     os.makedirs(archive_dir, exist_ok=True)
     
     dest_path = os.path.join(archive_dir, os.path.basename(found_path))

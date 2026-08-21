@@ -49,8 +49,8 @@ The Unified Telegram Bot is your central command interface.
 | `/done <item>` | **Complete Action** — Archives task to `01_Tasks/Completed.md` and triggers 1-tap step promotion. |
 | `/tickle <item>` | **Defer Task** — Opens interactive Telegram calendar picker to set a `🔔 YYYY-MM-DD` tickler date. |
 | `/daily` | **Daily Review** — On-demand action-oriented review (deadlines <=14d, surfaced ticklers, next actions by context). |
-| `/status` / `/sitrep` | **System Overview** — High-level counts across all GTD task lists and active projects. |
-| `/reflect` | **Weekly Review** — Guided weekly review of inbox zero, stale items, orphaned projects, and Someday/Maybe. |
+| `/weekly` / `/status` | **System Sitrep** — High-level counts across all GTD task lists, active projects, and 7-day completed actions. |
+| `/reflect` | **Guided Review** — Step-by-step interactive weekly reflection (inbox zero, stale waitings, orphaned projects, Someday/Maybe). |
 | `/holiday` | **Pause Reviews** — Set holiday mode by scope (`Personal`, `Professional`, `All`) via visual calendar picker. |
 | `/jira <summary>` | **Jira Export** — Creates a ticket directly in Jira backlog. |
 | `/undo` | **Safety Revert** — Reverts the last automated Git commit (`git revert HEAD`). |

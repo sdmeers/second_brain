@@ -520,13 +520,21 @@ async def handle_promote_callback(callback_query: dict, token: str, http_client:
                 from backend.vault.writer import atomic_write
                 atomic_write(proj_path, "".join(new_proj_lines))
         
+        reply_markup = {
+            "inline_keyboard": [
+                [{"text": "🧘 Return to Step 3: Projects", "callback_data": "reflect:step:3"},
+                 {"text": "🏠 Reflection Hub", "callback_data": "reflect:hub"}],
+                [{"text": "⚡ View Next Actions (/next)", "callback_data": "reflect:next_actions"}]
+            ]
+        }
         await http_client.post(
             f"https://api.telegram.org/bot{token}/editMessageText",
             json={
                 "chat_id": chat_id,
                 "message_id": message_id,
                 "text": f"⚡ <b>Promoted to Next Actions:</b>\n• {clean_step} {chosen_ctx} #project/{project_tag}\n\n<i>Removed from project roadmap backlog.</i>",
-                "parse_mode": "HTML"
+                "parse_mode": "HTML",
+                "reply_markup": reply_markup
             }
         )
         if chat_id in PROMOTION_SESSIONS:
@@ -1522,7 +1530,7 @@ async def handle_reflect_callback(callback_query: dict, token: str, http_client:
 async def handle_engage_commands(chat_id: int, text: str, token: str, http_client: httpx.AsyncClient) -> bool:
     cmd_part = text.split()[0].lower()
     
-    if cmd_part in ["/status", "/sitrep"]:
+    if cmd_part in ["/status", "/sitrep", "/weekly"]:
         await handle_status_command(chat_id, token, http_client)
         return True
     if cmd_part == "/daily":

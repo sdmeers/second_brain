@@ -104,8 +104,8 @@ The **Second Brain** operates on the **"Agent-as-Librarian"** paradigm: an intel
 | `/done <item>` | **Complete Action** — Archives task to `01_Tasks/Completed.md` and triggers 1-tap step promotion. |
 | `/tickle <item>` | **Defer Task** — Opens visual calendar picker to set a `🔔 YYYY-MM-DD` tickler date. |
 | `/daily` | **Daily Review** — On-demand action review (deadlines <=14d, surfaced ticklers, next actions by context). |
-| `/status` / `/sitrep` | **System Overview** — System health and item counts across all task lists and active projects. |
-| `/reflect` | **Weekly Review** — Guided review covering inbox zero, stale items, orphaned projects, and Someday/Maybe. |
+| `/weekly` / `/status` | **System Sitrep** — High-level counts across all GTD task lists, active projects, and 7-day completed actions. |
+| `/reflect` | **Guided Review** — Step-by-step interactive weekly reflection (inbox zero, stale waitings, orphaned projects, Someday/Maybe). |
 | `/holiday` | **Pause Reviews** — Pause automated briefings by scope (`Personal`, `Professional`, `All`) with calendar picker. |
 | `/jira <summary>` | **Jira Export** — Create a ticket directly in Jira backlog. |
 | `/undo` | **Safety Revert** — Reverts the last automated Git commit (`git revert HEAD`). |

@@ -80,9 +80,13 @@ Tasks across `01_Tasks/` adhere to a standardized line format:
 
 ---
 
-## 3. Project Master Note Specification (`02_Projects/`)
+## 3. Project Directory & Master Note Specification (`02_Projects/`)
 
-All projects are documented using a standardized YAML and section structure:
+All projects are organized into dedicated subdirectories under `02_Projects/Personal/<Project_Name>/` or `02_Projects/Professional/<Project_Name>/`:
+- **Directory Layout:**
+  - `<Project_Name>.md` (Master summary note at the root of the folder)
+  - `Notes/`, `Meetings/`, `Outputs/` (Optional subfolders for meeting minutes, deliverables, and drafts)
+  - Attachments, images, and reference documents.
 
 ```markdown
 ---
@@ -128,8 +132,9 @@ WHERE contains(tags, "#project/Project_Title") AND !completed
 ### 4.2 Clarify State Machine (`clarify.py`)
 - Manages interactive multi-stage triage sessions over Telegram callback queries.
 - **8-Option GTD Triage:** Next Action, Project Roadmap, New Project, Waiting For, Someday/Maybe, AI Librarian, 2-Min Rule, Trash.
+- **Waiting For Flow:** Prompts for contact/entity name (`#waiting(Name)`) and optional project link before filing to `01_Tasks/Waiting_For.md`.
 - **Dynamic Project Picker:** Scans `02_Projects/Personal` and `02_Projects/Professional` to render 2-column inline buttons for rapid project association.
-- **Batch Processing:** Processes 5 items per run with inline `[▶️ Continue]` / `[⏸️ Pause]` controls.
+- **Batch Processing & Reflection Bridge:** Processes 5 items per run with inline `[▶️ Continue]` / `[⏸️ Pause]` controls and provides 1-tap return buttons to resume Guided Reflection.
 
 ### 4.3 Telegram Inline Calendar Engine (`telegram_calendar.py`)
 - Generates dynamic visual keyboard calendars for natural date selection.
@@ -137,27 +142,36 @@ WHERE contains(tags, "#project/Project_Title") AND !completed
 - Standardizes output dates into ISO format (`YYYY-MM-DD`) across `/clarify` deferrals, `/tickle`, and `/holiday`.
 
 ### 4.4 Engage & Step Auto-Promotion Engine (`engage.py` & `tasks_dashboard.py`)
-- Powers `/next`, `/waiting`, `/project`, `/done`, `/daily`, `/status`, and `/reflect`.
+- Powers `/next`, `/waiting`, `/project`, `/done`, `/daily`, `/weekly` / `/status`, and `/reflect`.
 - **Dual-Trigger Step Auto-Promotion:** When an action with `#project/<tag>` is completed via Telegram `/done` OR checked off `- [x]` in Obsidian:
   1. Locates the project note in `02_Projects/`.
   2. Extracts unchecked roadmap steps from `## Project Steps`.
   3. Sends an interactive Telegram prompt with candidate step buttons.
   4. Upon context selection, appends `- [ ] <step> @<context> #project/<tag>` to `Next_Actions.md` and deletes the line from `## Project Steps`.
+  5. Provides 1-tap navigation to return to Reflection Step 3 or view Next Actions.
 
-### 4.5 Holiday Pause Manager (`holiday_manager.py`)
+### 4.5 Guided Reflection Engine (`engage.py`)
+- Interactive, multi-step review state machine triggered via `/reflect`:
+  - **Step 1:** Get Clear (Inbox Zero audit with 1-tap `/clarify` launch).
+  - **Step 2:** Audit Delegations (all `Waiting_For.md` items with `⚠️ STALE >5d` detection).
+  - **Step 3:** Project Momentum (identifies orphaned projects with 0 active actions and displays candidate roadmap step promotion buttons).
+  - **Step 4:** Someday / Maybe activation review.
+  - **Step 5:** Project deadlines (`due_date <= 14d`) and 7-day accomplishment celebration.
+
+### 4.6 Holiday Pause Manager (`holiday_manager.py`)
 - Allows pausing automated review briefings while away.
 - Persists holiday state (`holiday_active`, `return_date`, `scope`) across restarts.
 - Scopes supported: `Personal`, `Professional`, `All`.
 - Automatically suppresses daily digests and weekly reviews during active holiday windows.
 
-### 4.6 Deep Research & Concept Knowledge Graph (`capture.py` & `brain_node.py`)
+### 4.7 Deep Research & Concept Knowledge Graph (`capture.py` & `brain_node.py`)
 - Triggered deterministically via `/research <URL>` or academic document ingestion.
 - Uses Gemini with **Context Caching** (`google-genai` SDK) to extract dense summaries and 5–15 atomic concepts.
 - **Concept Updater Loop:** Atomically updates or creates bidirectional concept notes in `04_Resources/Research_Brain/Concepts/` with rate-limiting throttling.
 
-### 4.7 Review & Maintenance Engine (`brain_cleaner.py`)
-- **Daily Review (`/daily` & 07:30 run):** Gathers upcoming project deadlines (<= 14 days), surfaced ticklers (`🔔 == today`), active Next Actions grouped by `@context`, and pending Waiting items.
-- **Weekly Review (`/reflect` & Friday 07:30 run):** Performs deep audit of Someday/Maybe ideas, orphaned projects (0 active next actions), stale waitings (>5 days), completed tasks, and AI research synthesis.
+### 4.8 Review & Maintenance Engine (`brain_cleaner.py`)
+- **Daily Review (`/daily` & 07:30 run):** Gathers upcoming project deadlines (<= 14 days, strictly parsed from top-level project YAML frontmatter), surfaced ticklers (`🔔 == today`), active Next Actions grouped by `@context`, and pending Waiting items.
+- **Weekly Review (Friday 07:30 run):** Performs deep audit of Someday/Maybe ideas, orphaned projects, stale waitings, completed tasks, and AI research synthesis.
 
 ---
 

@@ -80,8 +80,12 @@ When you run `/clarify`, unclarified items in `01_Tasks/Captured.md` are present
 
 ## 🎯 Project Master Notes & Step Auto-Promotion
 
-### Project Note Template (`02_Projects/`)
-Every project note uses a standard, structured layout:
+### Dedicated Project Folders (`02_Projects/`)
+Every project is housed in its own dedicated directory under `02_Projects/Personal/<Project_Name>/` or `02_Projects/Professional/<Project_Name>/`:
+- **Master Summary Note (`<Project_Name>.md`):** Contains the YAML metadata, Desired Outcome, future `## Project Steps` roadmap backlog, and dynamic Dataview task queries.
+- **Project Files & Subfolders:** You can freely store project-specific notes, meeting minutes (`Meetings/`), deliverables (`Outputs/`), and reference documents directly within the project's folder.
+
+### Project Note Template
 ```markdown
 ---
 title: "Garage"
@@ -142,13 +146,17 @@ Designed for immediate daily execution:
 - ⏳ **Waiting For:** Active delegated items to follow up on.
 *(Note: Someday/Maybe ideas are excluded from the daily review to eliminate noise).*
 
-### Weekly Review (`/reflect` or Friday Briefing)
-Designed for strategic reflection:
-- **Inbox Zero Audit:** Process remaining unclarified captures.
-- **Orphaned Project Check:** Identifies projects with 0 active next actions.
-- **Stale Waiting Items:** Flags delegated items waiting for > 5 days.
-- **Someday/Maybe Review:** Re-evaluates backlogged ideas for potential activation.
-- **AI Research Synthesis:** Synthesizes new concepts ingested into your Research Brain over the past 7 days.
+### Guided Weekly Reflection (`/reflect`)
+An interactive, 5-step review routine in Telegram:
+- **Step 1: 📥 Get Clear (Inbox Zero):** Audits unclarified items in `01_Tasks/Captured.md` with a 1-tap **`[⚡ Launch /clarify]`** button.
+- **Step 2: ⏳ Audit Delegations (Waiting For):** Lists all pending delegated items with owner names and age, highlighting any `⚠️ STALE (>5d)` items.
+- **Step 3: 🎯 Project Health & Momentum:** Scans for **Orphaned Projects** (0 active next actions) and offers 1-tap buttons to promote roadmap steps immediately.
+- **Step 4: 💡 Someday / Maybe Review:** Re-evaluates backlogged ideas for activation or cleanup.
+- **Step 5: 🚨 Deadlines & Accomplishments:** Reviews upcoming project deadlines (`due_date <= 14d`) and celebrates weekly completed tasks.
+*(Seamless navigation allows you to return to the reflection menu after clarifying or promoting steps at any point).*
+
+### System Status & Sitrep (`/weekly` or `/status`)
+- Run `/weekly` or `/status` at any time for a high-level system sitrep (item counts across all lists and full active project directory).
 
 ### Holiday Review Pause (`/holiday`)
 - Run `/holiday` to pause daily digests and review briefings while on annual leave.

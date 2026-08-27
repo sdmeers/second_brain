@@ -14,9 +14,9 @@ from dotenv import load_dotenv
 # Existing relative imports
 from backend.logger import log_action
 from google import genai
-from google.genai import types
 
 from backend.vault.writer import atomic_write
+from backend.vault.tasks import strip_task_metadata
 from backend.rag.vectorstore import index_vault
 
 
@@ -25,10 +25,7 @@ load_dotenv(dotenv_path=dotenv_path)
 VAULT_PATH = os.getenv("OBSIDIAN_VAULT_PATH")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 from backend.config import (
-    LLM_PROVIDER, LLM_MODEL,
-    EMBEDDING_PROVIDER, EMBEDDING_MODEL,
-    OPENAI_API_KEY, OLLAMA_BASE_URL,
-    GEMINI_MODEL
+    LLM_PROVIDER, GEMINI_MODEL
 )
 
 if not VAULT_PATH:
@@ -51,7 +48,6 @@ class SyncMockResponse:
 
 def call_gemini_with_retry(model, contents, config=None, max_retries=5):
     """Synchronous wrapper to call LLM API with exponential backoff, supporting multiple providers."""
-    from backend.config import LLM_PROVIDER
     if LLM_PROVIDER != "gemini":
         import openai
         from backend.config import OPENAI_API_KEY, OLLAMA_BASE_URL
@@ -147,7 +143,7 @@ MAP = {
 
 def load_state():
     if os.path.exists(STATE_FILE):
-        with open(STATE_FILE, "r", encoding="utf-8") as f:
+        with open(STATE_FILE, encoding="utf-8") as f:
             return json.load(f)
     return {"processed_groups": [], "refactored_hashes": {}}
 
@@ -180,7 +176,7 @@ def normalize_title(title: str) -> str:
     return t
 
 def clean_file(file_path):
-    with open(file_path, 'r', encoding='utf-8') as f:
+    with open(file_path, encoding='utf-8') as f:
         content = f.read()
 
     match = re.search(r'---(.*?)---', content, re.DOTALL)
@@ -233,7 +229,7 @@ def extract_snippets(content: str, link: str, snippet_length: int = 150) -> list
     return snippets
 
 def run_brain_cleaner():
-    print(f"🧹 Brain cleaner starting...")
+    print("🧹 Brain cleaner starting...")
     api_calls = 0
     state = load_state()
     
@@ -266,7 +262,7 @@ def run_brain_cleaner():
             combined_content = ""
             for f in files:
                 print(f"    - {f.name}")
-                with open(f, 'r', encoding='utf-8') as file_obj:
+                with open(f, encoding='utf-8') as file_obj:
                     combined_content += f"\n\n--- Content from {f.name} ---\n\n"
                     combined_content += file_obj.read()
                     
@@ -314,7 +310,7 @@ Here are the concept pages to merge:
                                      list(Path(ATLAS_DIR).glob("*.md")) + \
                                      list(Path(CONCEPTS_DIR).glob("*.md"))
                 for md_file in all_markdown_files:
-                    with open(md_file, 'r', encoding='utf-8') as read_f:
+                    with open(md_file, encoding='utf-8') as read_f:
                         text = read_f.read()
                     new_text = text
                     for old_stem in discarded_stems:
@@ -360,7 +356,7 @@ Here are the concept pages to merge:
     links_data = {} # link -> {'count': int, 'snippets': list[str]}
     
     for f in all_markdown_files:
-        with open(f, 'r', encoding='utf-8') as file:
+        with open(f, encoding='utf-8') as file:
             content = file.read()
             links = re.findall(r'\[\[(.*?)\]\]', content)
             for raw_link in links:
@@ -439,7 +435,7 @@ Please return the content formatted as Markdown. Include a definition, and synth
             print("⏳ Reached API limit. Stopping early.")
             break
             
-        with open(f, 'r', encoding='utf-8') as file:
+        with open(f, encoding='utf-8') as file:
             content = file.read()
             
         current_hash = calculate_hash(content)
@@ -486,7 +482,7 @@ Here is the concept page content:
     active_links = set()
 
     for f in all_summaries_and_atlas:
-        with open(f, 'r', encoding='utf-8') as file:
+        with open(f, encoding='utf-8') as file:
             content = file.read()
             links = re.findall(r'\[\[(.*?)\]\]', content)
             for raw_link in links:
@@ -585,7 +581,7 @@ SORT file.mtime DESC
     if not os.path.exists(index_file):
         return
         
-    with open(index_file, "r", encoding="utf-8") as f:
+    with open(index_file, encoding="utf-8") as f:
         content = f.read()
         
     proj_text = "## 02_Projects/\n" + "\n".join(f"- `{p}`" for p in sorted(projects)) + "\n"
@@ -633,7 +629,7 @@ async def generate_daily_digest(target_chat_id: int = None):
     
     unclarified_count = 0
     if os.path.exists(captured_file):
-        with open(captured_file, "r", encoding="utf-8") as f:
+        with open(captured_file, encoding="utf-8") as f:
             unclarified_count = sum(1 for line in f if line.strip().startswith("- "))
             
     active_next_actions = []
@@ -642,7 +638,7 @@ async def generate_daily_digest(target_chat_id: int = None):
     active_projects = set()
     
     if os.path.exists(next_file):
-        with open(next_file, "r", encoding="utf-8") as f:
+        with open(next_file, encoding="utf-8") as f:
             for line in f:
                 if not line.strip().startswith("- [ ]"): continue
                 
@@ -650,8 +646,7 @@ async def generate_daily_digest(target_chat_id: int = None):
                 if prof_paused and "#professional" in line.lower(): continue
                 if pers_paused and "#personal" in line.lower(): continue
                 
-                clean_line = re.sub(r'\(Captured .*?\)', '', line)
-                clean_line = re.sub(r'\(Source:.*?\)', '', clean_line).strip("- [ ]\n").strip()
+                clean_line = strip_task_metadata(line)
 
                 m_tick = re.search(r'🔔 (\d{4}-\d{2}-\d{2})', line)
                 if m_tick:
@@ -674,7 +669,7 @@ async def generate_daily_digest(target_chat_id: int = None):
     waiting_items = []
     stale_waitings = []
     if os.path.exists(waiting_file):
-        with open(waiting_file, "r", encoding="utf-8") as f:
+        with open(waiting_file, encoding="utf-8") as f:
             for line in f:
                 if not line.strip().startswith("- [ ]"): continue
                 
@@ -685,8 +680,7 @@ async def generate_daily_digest(target_chat_id: int = None):
                 m_tick = re.search(r'🔔 (\d{4}-\d{2}-\d{2})', line)
                 if m_tick and m_tick.group(1) > today_str: continue
                 
-                clean_line = re.sub(r'\(Captured .*?\)', '', line)
-                clean_line = re.sub(r'\(Source:.*?\)', '', clean_line).strip("- [ ]\n").strip()
+                clean_line = strip_task_metadata(line)
                 waiting_items.append(clean_line)
                 
                 m_cap = re.search(r'\(Captured .*? on (\d{4}-\d{2}-\d{2})\)', line)
@@ -730,7 +724,7 @@ async def generate_daily_digest(target_chat_id: int = None):
                 orphaned_projects.append(f"{proj_name} ({category})")
                 
             try:
-                with open(p_file, "r", encoding="utf-8") as pf:
+                with open(p_file, encoding="utf-8") as pf:
                     p_text = pf.read()
                 
                 # Only parse YAML frontmatter block
@@ -877,7 +871,7 @@ async def generate_sitrep_summary() -> str:
     """Generates or retrieves the latest sitrep / daily digest summary string."""
     digest_path = os.path.join(VAULT_PATH, "00_System", "Daily_Digest.md")
     if os.path.exists(digest_path):
-        with open(digest_path, "r", encoding="utf-8") as f:
+        with open(digest_path, encoding="utf-8") as f:
             return f.read()
     else:
         return await generate_daily_digest()
@@ -898,7 +892,7 @@ async def generate_weekly_review():
     def get_clean_lines(filepath: str, is_checkbox: bool = True) -> list:
         if not os.path.exists(filepath): return []
         items = []
-        with open(filepath, "r", encoding="utf-8") as f:
+        with open(filepath, encoding="utf-8") as f:
             for line in f:
                 line_s = line.strip()
                 match_condition = (line_s.startswith("- [ ]") or line_s.startswith("- [x]")) if is_checkbox else line_s.startswith("- ")
@@ -919,7 +913,7 @@ async def generate_weekly_review():
     active_project_tags = set()
     next_file = os.path.join(VAULT_PATH, "01_Tasks", "Next_Actions.md")
     if os.path.exists(next_file):
-        with open(next_file, "r", encoding="utf-8") as f:
+        with open(next_file, encoding="utf-8") as f:
             for line in f:
                 if line.strip().startswith("- [ ]"):
                     m_proj = re.search(r'#project/([a-zA-Z0-9_\-]+)', line)
@@ -950,7 +944,7 @@ async def generate_weekly_review():
         # Extract roadmap steps from master note
         note_md = p_path if p_path.endswith(".md") else os.path.join(p_path, f"{p_name}.md")
         if os.path.exists(note_md):
-            with open(note_md, "r", encoding="utf-8") as f:
+            with open(note_md, encoding="utf-8") as f:
                 c = f.read()
             m_steps = re.search(r'## Project Steps\n(.*?)(?=\n## |\Z)', c, re.DOTALL)
             if m_steps:
@@ -962,7 +956,7 @@ async def generate_weekly_review():
     stale_waitings = []
     waiting_file = os.path.join(VAULT_PATH, "01_Tasks", "Waiting_For.md")
     if os.path.exists(waiting_file):
-        with open(waiting_file, "r", encoding="utf-8") as f:
+        with open(waiting_file, encoding="utf-8") as f:
             for line in f:
                 if line.strip().startswith("- [ ]"):
                     m_cap = re.search(r'\(Captured .*? on (\d{4}-\d{2}-\d{2})\)', line)
@@ -1038,7 +1032,7 @@ async def generate_weekly_review():
 
     review_md += "## Part 3: Review Alerts & Action Items\n\n"
     if stale_waitings:
-        review_md += f"### ⚠️ Stale Delegations (>5 Days)\n" + "\n".join(f"- {w}" for w in stale_waitings) + "\n\n"
+        review_md += "### ⚠️ Stale Delegations (>5 Days)\n" + "\n".join(f"- {w}" for w in stale_waitings) + "\n\n"
     else:
         review_md += "### ⏳ Stale Delegations: *None*\n\n"
 
@@ -1081,7 +1075,7 @@ async def generate_weekly_review():
             msg1 += f"💡 <b>Someday / Maybe ({len(someday_items)}):</b>\n"
             msg1 += ("\n".join(f"• {i}" for i in someday_items) if someday_items else "• <i>None</i>") + "\n\n"
 
-            msg1 += f"📌 <b>Project Roadmaps:</b>\n"
+            msg1 += "📌 <b>Project Roadmaps:</b>\n"
             if project_roadmaps:
                 for p_name, r_steps in project_roadmaps.items():
                     msg1 += f"<b>{p_name}:</b>\n" + "\n".join(f"  • {s}" for s in r_steps) + "\n"
@@ -1112,7 +1106,7 @@ async def generate_weekly_review():
             msg2 += f"• <b>Orphaned Projects:</b> {len(orphaned_projects)}\n\n"
 
             msg2 += "📄 <b>Full Report Pointer:</b>\n"
-            msg2 += f"Full report saved to: <code>00_System/Weekly_Review.md</code>\n\n"
+            msg2 += "Full report saved to: <code>00_System/Weekly_Review.md</code>\n\n"
             msg2 += "<i>Run /reflect in Telegram to start your interactive guided review!</i>"
 
             try:

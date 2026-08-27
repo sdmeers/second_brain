@@ -172,7 +172,7 @@ def iter_task_lines(path: str, include_checked: bool = True) -> Iterator[Task]:
     """Yield every parsed task in a GTD file. Missing files yield nothing."""
     if not os.path.exists(path):
         return
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         for line in f:
             task = parse_task_line(line)
             if task and (include_checked or not task.checked):
@@ -201,7 +201,7 @@ def archive_completed_lines(lines: list[str], when: date = None) -> int:
     existing: list[str] = []
     if os.path.exists(COMPLETED_TASKS_MD_FILE):
         try:
-            with open(COMPLETED_TASKS_MD_FILE, "r", encoding="utf-8") as f:
+            with open(COMPLETED_TASKS_MD_FILE, encoding="utf-8") as f:
                 for line in f:
                     if line.strip().lower().startswith("- [x]"):
                         existing.append(line.strip())
@@ -351,7 +351,7 @@ def read_project(path: str) -> Optional[Project]:
     if not path or not os.path.exists(path):
         return None
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             text = f.read()
     except OSError as e:
         print(f"Vault [Tasks]: Could not read project note {path}: {e}")
@@ -391,11 +391,100 @@ def iter_projects(categories: tuple = ("Personal", "Professional")) -> Iterator[
                 yield project
 
 
+def build_project_note(name: str, category: str = "Personal", outcome: str = None,
+                       due_date: str = "") -> str:
+    """Render a new project master note.
+
+    Frontmatter goes through yaml.safe_dump, so a project name containing a quote or
+    colon can no longer produce a note Obsidian and yaml.safe_load both reject.
+    """
+    proj_clean = name.strip()
+    proj_tag = proj_clean.replace(" ", "_")
+    outcome_str = outcome or f"{proj_clean} project goals and desired outcome"
+
+    frontmatter = dump_frontmatter({
+        "title": proj_clean,
+        "type": "project",
+        "category": category,
+        "outcome": outcome_str,
+        "date_created": datetime.now().strftime("%Y-%m-%d"),
+        "due_date": due_date,
+        "status": "active",
+    })
+
+    return f"""{frontmatter}# {proj_clean}
+
+## Desired Outcome
+{outcome_str}
+
+## Project Steps
+
+## Active Actions
+> View via Telegram: `/project {proj_clean}` or search `#project/{proj_tag}` in Obsidian.
+
+```dataview
+TASK
+FROM "01_Tasks"
+WHERE contains(tags, "#project/{proj_tag}") AND !completed
+```
+
+## Reference Material
+> Notes and resources tagged with `#project/{proj_tag}` across the vault.
+"""
+
+
+def ensure_project_note(name: str, category: str = "Personal", outcome: str = None) -> str:
+    """Return the path to a project's master note, creating it from the template if absent.
+
+    Consolidates the near-identical creation logic that lived in both
+    clarify.ensure_project_note_exists and engage.handle_project_command.
+    """
+    existing = find_project_note(name)
+    if existing:
+        if outcome:
+            try:
+                with open(existing, encoding="utf-8") as f:
+                    text = f.read()
+                fm = parse_frontmatter(text)
+                if fm:
+                    fm["outcome"] = outcome
+                    body = FRONTMATTER_RE.sub("", text, count=1).lstrip("\n")
+                    atomic_write(existing, dump_frontmatter(fm) + body)
+            except OSError as e:
+                print(f"Vault [Tasks]: Could not update outcome on {existing}: {e}")
+        return existing
+
+    proj_clean = name.strip().title()
+    target_folder = os.path.join(projects_root(), category, proj_clean)
+    os.makedirs(target_folder, exist_ok=True)
+    note_path = os.path.join(target_folder, f"{proj_clean}.md")
+    if not os.path.exists(note_path):
+        atomic_write(note_path, build_project_note(proj_clean, category, outcome))
+        print(f"Vault [Tasks]: Created project master note {note_path}")
+    return note_path
+
+
+def append_project_step(project_name: str, step_text: str) -> str:
+    """Append a roadmap step under ``## Project Steps``. Returns the note path."""
+    note_path = ensure_project_note(project_name)
+    with open(note_path, encoding="utf-8") as f:
+        content = f.read()
+
+    clean_step = strip_task_metadata(step_text)
+    if "## Project Steps" in content:
+        content = content.replace("## Project Steps", f"## Project Steps\n- [ ] {clean_step}", 1)
+    else:
+        content += f"\n\n## Project Steps\n- [ ] {clean_step}\n"
+
+    atomic_write(note_path, content)
+    return note_path
+
+
 def remove_step_from_project(project_path: str, step_text: str) -> bool:
     """Remove one roadmap step from a project note. Returns True if a line was removed."""
     if not project_path or not os.path.exists(project_path):
         return False
-    with open(project_path, "r", encoding="utf-8") as f:
+    with open(project_path, encoding="utf-8") as f:
         lines = f.readlines()
 
     target = strip_task_metadata(step_text).lower()

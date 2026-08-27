@@ -3,7 +3,6 @@ import sqlite3
 import hashlib
 import json
 import sqlite_vss
-from datetime import datetime
 from backend.config import OBSIDIAN_VAULT_PATH
 from backend.rag.embeddings import get_embeddings_batch
 
@@ -37,6 +36,14 @@ def init_vector_db():
     # Create indexes for fast lookup
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_file_path ON brain_chunks(file_path)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_file_hash ON brain_chunks(file_hash)")
+
+    # Migration: cache stat() metadata so the incremental pass can skip unchanged files
+    # without reading and hashing every byte in the vault on every run.
+    existing_cols = {row[1] for row in cursor.execute("PRAGMA table_info(brain_chunks)")}
+    if "file_mtime" not in existing_cols:
+        cursor.execute("ALTER TABLE brain_chunks ADD COLUMN file_mtime REAL")
+    if "file_size" not in existing_cols:
+        cursor.execute("ALTER TABLE brain_chunks ADD COLUMN file_size INTEGER")
     
     # 2. Virtual VSS table for vector search (using vss0 module)
     cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='vss_brain_chunks'")
@@ -104,21 +111,22 @@ async def delete_file_index(file_path: str, conn: sqlite3.Connection):
         cursor.execute("DELETE FROM brain_chunks WHERE file_path = ?", (file_path,))
         conn.commit()
 
-async def index_file(vault_relative_path: str, full_file_path: str, file_hash: str, conn: sqlite3.Connection):
+async def index_file(vault_relative_path: str, full_file_path: str, file_hash: str, conn: sqlite3.Connection,
+                     mtime: float = None, size: int = None):
     """Chunks, embeds, and indexes a single file (Markdown, PDF, DOCX, or PPTX) in the database."""
     print(f"RAG [VectorStore]: Indexing file: {vault_relative_path}...")
     try:
         if full_file_path.endswith(".pdf"):
             from backend.processing.extractor import extract_pdf_text
-            content, _ = extract_pdf_text(full_file_path)
+            content, _ = await extract_pdf_text(full_file_path)
         elif full_file_path.endswith(".docx"):
             from backend.processing.extractor import extract_docx_text
-            content, _ = extract_docx_text(full_file_path)
+            content, _ = await extract_docx_text(full_file_path)
         elif full_file_path.endswith(".pptx"):
             from backend.processing.extractor import extract_pptx_text
             content = extract_pptx_text(full_file_path)
         else:
-            with open(full_file_path, "r", encoding="utf-8") as f:
+            with open(full_file_path, encoding="utf-8") as f:
                 content = f.read()
             
         # Parse and strip frontmatter so it doesn't skew similarity search
@@ -145,9 +153,9 @@ async def index_file(vault_relative_path: str, full_file_path: str, file_hash: s
         for idx, (chunk_text_val, vector) in enumerate(zip(chunks, embeddings)):
             # 1. Insert into SQLite table
             cursor.execute("""
-                INSERT INTO brain_chunks (file_path, chunk_index, text_content, file_hash)
-                VALUES (?, ?, ?, ?)
-            """, (vault_relative_path, idx, chunk_text_val, file_hash))
+                INSERT INTO brain_chunks (file_path, chunk_index, text_content, file_hash, file_mtime, file_size)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (vault_relative_path, idx, chunk_text_val, file_hash, mtime, size))
             
             row_id = cursor.lastrowid
             
@@ -199,19 +207,39 @@ async def index_vault(force_reindex: bool = False):
                             continue
                     
                     try:
-                        file_hash = calculate_file_hash(full_path)
                         indexed_files.add(rel_path)
-                        
-                        # Check if already indexed
-                        cursor.execute("SELECT file_hash FROM brain_chunks WHERE file_path = ? LIMIT 1", (rel_path,))
+                        stat = os.stat(full_path)
+
+                        cursor.execute(
+                            "SELECT file_hash, file_mtime, file_size FROM brain_chunks "
+                            "WHERE file_path = ? LIMIT 1",
+                            (rel_path,)
+                        )
                         row = cursor.fetchone()
-                        
+
+                        # Fast path: mtime and size both unchanged means the content is
+                        # unchanged, so skip without reading the file at all. This is what
+                        # keeps the 2-minute sweep cheap as the vault grows.
+                        if not force_reindex and row and row[1] is not None:
+                            if row[1] == stat.st_mtime and row[2] == stat.st_size:
+                                continue
+
+                        # Slow path: stat changed (or we have no cached stat), so hash to
+                        # confirm the content really differs before re-embedding.
+                        file_hash = calculate_file_hash(full_path)
                         if not force_reindex and row and row[0] == file_hash:
-                            # File is unchanged, skip!
+                            # Content identical despite a touched mtime - refresh the
+                            # cached stat so the next pass takes the fast path.
+                            cursor.execute(
+                                "UPDATE brain_chunks SET file_mtime = ?, file_size = ? WHERE file_path = ?",
+                                (stat.st_mtime, stat.st_size, rel_path)
+                            )
+                            conn.commit()
                             continue
-                            
+
                         # File is new, modified, or forced to reindex
-                        await index_file(rel_path, full_path, file_hash, conn)
+                        await index_file(rel_path, full_path, file_hash, conn,
+                                         mtime=stat.st_mtime, size=stat.st_size)
                     except Exception as e:
                         print(f"RAG [VectorStore]: Skipping {rel_path} due to error: {e}")
                         

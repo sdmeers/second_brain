@@ -3,11 +3,14 @@ import re
 from datetime import datetime, timedelta
 import shutil
 import httpx
-from backend.config import OBSIDIAN_VAULT_PATH, GEMINI_MODEL, TASKS_PATH, INBOX_PATH
-from backend.utils.gemini import call_gemini_with_retry
+from backend.config import OBSIDIAN_VAULT_PATH, TASKS_PATH
 from backend.vault.writer import atomic_write
-from google.genai import types
-from pydantic import BaseModel, Field
+from backend.vault.tasks import (
+    append_project_step,
+    archive_completed_lines,
+    ensure_project_note,
+    strip_task_metadata,
+)
 
 # In-memory session state for clarify flow
 CLARIFY_SESSIONS = {}
@@ -22,7 +25,7 @@ async def handle_clarify_command(chat_id: int, token: str, http_client: httpx.As
         )
         return
 
-    with open(captured_md, "r", encoding="utf-8") as f:
+    with open(captured_md, encoding="utf-8") as f:
         lines = f.readlines()
         
     items = [line for line in lines if line.strip().startswith("- ")]
@@ -108,96 +111,20 @@ async def process_next_clarify_item(chat_id: int, token: str, http_client: httpx
     )
 
 def ensure_project_note_exists(project_name: str, category: str = "Personal", outcome: str = None) -> str:
-    """Ensures project note exists, creating it with v5 template if missing."""
-    proj_clean = project_name.strip().title()
-    proj_dir = os.path.join(OBSIDIAN_VAULT_PATH, "02_Projects")
-    
-    # 1. First pass: exact filename match (e.g. Garage.md)
-    for root, dirs, files in os.walk(proj_dir):
-        for f in files:
-            if f.lower() == f"{proj_clean.lower()}.md":
-                note_path = os.path.join(root, f)
-                if outcome:
-                    # Update outcome if provided
-                    with open(note_path, "r", encoding="utf-8") as file:
-                        c = file.read()
-                    c = re.sub(r'outcome:\s*".*?"', f'outcome: "{outcome}"', c)
-                    with open(note_path, "w", encoding="utf-8") as file:
-                        file.write(c)
-                return note_path
-                
-    # 2. Second pass: exact directory name match (e.g. folder named Garage)
-    for root, dirs, files in os.walk(proj_dir):
-        if os.path.basename(root).lower() == proj_clean.lower():
-            target_md = os.path.join(root, f"{proj_clean}.md")
-            if os.path.exists(target_md):
-                return target_md
-                
-    # If not found, create dedicated project folder under specified category (Personal / Professional)
-    cat_dir = os.path.join(proj_dir, category)
-    target_folder = os.path.join(cat_dir, proj_clean)
-    os.makedirs(target_folder, exist_ok=True)
-    found_path = os.path.join(target_folder, f"{proj_clean}.md")
-        
-    if not os.path.exists(found_path):
-        today_str = datetime.now().strftime("%Y-%m-%d")
-        outcome_str = outcome if outcome else f"{proj_clean} project goals and desired outcome"
-        proj_tag = proj_clean.strip().replace(" ", "_")
-        template = f"""---
-title: "{proj_clean}"
-type: project
-category: {category}
-outcome: "{outcome_str}"
-date_created: "{today_str}"
-due_date: ""
-status: active
----
-# {proj_clean}
-
-## Desired Outcome
-{outcome_str}
-
-## Project Steps
-
-## Active Actions
-> View via Telegram: `/project {proj_clean}` or search `#project/{proj_tag}` in Obsidian.
-
-```dataview
-TASK
-FROM "01_Tasks"
-WHERE contains(tags, "#project/{proj_tag}") AND !completed
-```
-
-## Reference Material
-> Notes and resources tagged with `#project/{proj_tag}` across the vault.
-"""
-        with open(found_path, "w", encoding="utf-8") as f:
-            f.write(template)
-            
-    return found_path
+    """Ensures project note exists, creating it from the shared template if missing."""
+    return ensure_project_note(project_name, category=category, outcome=outcome)
 
 def sanitize_task_item_text(item_line: str) -> str:
-    """Strips metadata tags, source links, and leading markdown checkboxes/bullets from item line."""
-    clean = re.sub(r'\(Captured on.*?\)', '', item_line)
-    clean = re.sub(r'\(Source:.*?\)', '', clean)
-    clean = re.sub(r'^-\s*\[[ xX]\]\s*', '', clean)
-    clean = re.sub(r'^-\s*', '', clean)
-    return clean.strip()
+    """Strips metadata tags, source links, and leading markdown checkboxes/bullets.
+
+    Kept as a named alias so existing call sites read clearly; the implementation
+    lives in backend.vault.tasks so every module strips identically.
+    """
+    return strip_task_metadata(item_line)
 
 def append_to_project_roadmap(project_name: str, step_text: str):
     """Appends a step to project note under ## Project Steps."""
-    note_path = ensure_project_note_exists(project_name)
-    with open(note_path, "r", encoding="utf-8") as f:
-        content = f.read()
-        
-    clean_step = sanitize_task_item_text(step_text)
-    if "## Project Steps" in content:
-        content = content.replace("## Project Steps", f"## Project Steps\n- [ ] {clean_step}")
-    else:
-        content += f"\n\n## Project Steps\n- [ ] {clean_step}\n"
-        
-    with open(note_path, "w", encoding="utf-8") as f:
-        f.write(content)
+    append_project_step(project_name, step_text)
 
 def get_category_project_buttons(category: str, action_prefix: str = "roadmap_proj") -> list:
     """Gets top-level project buttons for a given category (Personal or Professional)."""
@@ -242,7 +169,7 @@ async def archive_and_remove_captured(item_line: str) -> str:
 
     captured_md = os.path.join(TASKS_PATH, "Captured.md")
     if os.path.exists(captured_md):
-        with open(captured_md, "r", encoding="utf-8") as f:
+        with open(captured_md, encoding="utf-8") as f:
             content = f.read()
         content = content.replace(item_line, "")
         atomic_write(captured_md, content)
@@ -390,12 +317,7 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
     # 3. 2-Minute Rule
     if action == "action_2min":
         clean_text = sanitize_task_item_text(item_line)
-        today_str = datetime.now().strftime("%Y-%m-%d")
-        
-        comp_md = os.path.join(TASKS_PATH, "z_Completed.md")
-        with open(comp_md, "a", encoding="utf-8") as f:
-            f.write(f"- [x] ~~ {clean_text} ~~ (Completed on {today_str})\n")
-            
+        archive_completed_lines([item_line])
         await archive_and_remove_captured(item_line)
         await http_client.post(
             f"https://api.telegram.org/bot{token}/editMessageText",
@@ -915,7 +837,7 @@ async def handle_clarify_text_input(chat_id: int, text: str, token: str, http_cl
         outcome = text.strip()
         
         # 1. Create project note with outcome
-        note_path = ensure_project_note_exists(proj_name, category=category, outcome=outcome)
+        ensure_project_note_exists(proj_name, category=category, outcome=outcome)
         
         # 2. Append step to project roadmap
         append_to_project_roadmap(proj_name, item_line)

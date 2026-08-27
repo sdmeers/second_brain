@@ -4,10 +4,8 @@ import argparse
 import re
 import asyncio
 from datetime import datetime
-from dotenv import load_dotenv
 from google import genai
 from google.genai import types
-from pydantic import BaseModel, Field
 
 # Ensure root directory is in sys.path so 'backend' package imports work cleanly
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -187,7 +185,6 @@ tags: [brain, book]
         
         # If the response isn't pure JSON (e.g. from attempt 1), try to extract it manually or mock the Pydantic object
         if "summary_markdown" not in clean_data:
-            import json
             
             # If the model ignored the schema instruction entirely (e.g. due to search tools), we construct the object manually
             if not clean_data.startswith("{"):
@@ -266,7 +263,7 @@ async def add_book(title: str, author: str):
         for concept in brain_node_result.concepts:
             await update_concept_page(concept, markdown_content, safe_title)
     else:
-        print(f"\n[Stage 2]: WARNING - 0 concepts were extracted by Gemini.")
+        print("\n[Stage 2]: WARNING - 0 concepts were extracted by Gemini.")
         
     # Log the ingestion
     themes = []

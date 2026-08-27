@@ -1,8 +1,9 @@
 import os
 import re
 from datetime import datetime, timedelta
-from backend.config import TASKS_MD_FILE, COMPLETED_TASKS_MD_FILE
+from backend.config import TASKS_MD_FILE
 from backend.vault.writer import atomic_write
+from backend.vault.tasks import archive_completed_lines
 
 def parse_deadline(line: str) -> datetime:
     # 1. Look for explicit YYYY-MM-DD after calendar emoji
@@ -112,7 +113,7 @@ def append_gtd_item(filepath: str, item_line: str):
 
     existing_items = []
     if os.path.exists(filepath):
-        with open(filepath, "r", encoding="utf-8") as f:
+        with open(filepath, encoding="utf-8") as f:
             for l in f:
                 s = l.strip()
                 if "🎉" in s or "Inbox Zero" in s or "All clear" in s or "List clear" in s or "*None*" in s:
@@ -136,11 +137,9 @@ async def maintain_tasks_dashboard():
     """Scans all task files (Next_Actions.md, Waiting_For.md, Someday_Maybe.md, Captured.md),
     moves completed tasks to z_Completed.md (in reverse chronological order),
     writes List Clear messages for empty lists, and categorizes Next_Actions.md."""
-    from backend.config import TASKS_PATH, COMPLETED_TASKS_MD_FILE, TASKS_MD_FILE, WAITING_FOR_MD_FILE, SOMEDAY_MAYBE_MD_FILE, CAPTURED_MD_FILE
+    from backend.config import WAITING_FOR_MD_FILE, SOMEDAY_MAYBE_MD_FILE, CAPTURED_MD_FILE
     
     try:
-        completed_file = COMPLETED_TASKS_MD_FILE
-        today_str = datetime.now().strftime("%Y-%m-%d")
         newly_completed = []
         active_next_actions = []
 
@@ -155,7 +154,7 @@ async def maintain_tasks_dashboard():
             if not os.path.exists(fpath):
                 continue
                 
-            with open(fpath, "r", encoding="utf-8") as f:
+            with open(fpath, encoding="utf-8") as f:
                 lines = f.readlines()
                 
             file_newly_completed = []
@@ -196,41 +195,14 @@ async def maintain_tasks_dashboard():
                     clear_msg = "🎉 *Inbox Zero! No captured items awaiting clarification.*\n"
                 
                 content = header + ("\n".join(file_active) + "\n" if file_active else clear_msg)
-                with open(fpath, "r", encoding="utf-8") as rf:
+                with open(fpath, encoding="utf-8") as rf:
                     curr_raw = rf.read()
                 if curr_raw.strip() != content.strip():
                     atomic_write(fpath, content)
 
         # Move all newly completed tasks to z_Completed.md (reverse chronological)
         if newly_completed:
-            header_lines = [
-                "# ✅ Completed Tasks Archive\n\n",
-                "> Archive of completed actions and quick 2-minute tasks. View in Telegram using `/done`.\n\n",
-                "---\n\n",
-                "## ✅ Completed Tasks\n"
-            ]
-            
-            existing_tasks = []
-            if os.path.exists(completed_file):
-                try:
-                    with open(completed_file, "r", encoding="utf-8") as f:
-                        for line in f:
-                            if line.strip().startswith("- [x]") or line.strip().startswith("- [X]"):
-                                existing_tasks.append(line.strip())
-                except Exception:
-                    pass
-            
-            formatted_new = []
-            for task in newly_completed:
-                if "Completed on" not in task:
-                    task_clean = task.replace("- [x]", "- [x] ~~").replace("- [X]", "- [x] ~~") + f"~~ (Completed on {today_str})"
-                else:
-                    task_clean = task
-                formatted_new.append(task_clean)
-                
-            all_completed = formatted_new + existing_tasks
-            out_content = "".join(header_lines) + "\n".join(all_completed) + "\n"
-            atomic_write(completed_file, out_content)
+            archive_completed_lines(newly_completed)
             print(f"Tasks Dashboard: Moved {len(newly_completed)} completed tasks to z_Completed.md")
             
             # Check newly completed tasks for #project/<tag> and prompt Telegram promotion
@@ -317,7 +289,7 @@ async def maintain_tasks_dashboard():
             
         # Write back to file if changed
         if os.path.exists(TASKS_MD_FILE):
-            with open(TASKS_MD_FILE, "r", encoding="utf-8") as f:
+            with open(TASKS_MD_FILE, encoding="utf-8") as f:
                 current_raw = f.read()
                 
             if current_raw.strip() != new_content.strip():

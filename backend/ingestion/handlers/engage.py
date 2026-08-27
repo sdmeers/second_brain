@@ -4,6 +4,25 @@ import shutil
 from datetime import datetime, timedelta
 import httpx
 from backend.config import OBSIDIAN_VAULT_PATH
+from backend.vault.tasks import (
+    append_project_step,
+    archive_completed_lines,
+    ensure_project_note,
+    find_project_note,
+    iter_projects,
+    iter_task_lines,
+    parse_flexible_date,
+    read_project,
+    remove_step_from_project,
+    strip_task_metadata,
+)
+
+# Placeholder lines the dashboard writes into empty GTD lists; never real items.
+PLACEHOLDER_MARKERS = ("🎉", "Inbox Zero", "All clear", "List clear", "*None*")
+
+
+def _is_placeholder(line: str) -> bool:
+    return any(marker in line for marker in PLACEHOLDER_MARKERS)
 
 def get_today_str():
     return datetime.now().strftime("%Y-%m-%d")
@@ -37,7 +56,7 @@ async def send_next_actions(chat_id: int, token: str, http_client: httpx.AsyncCl
         await _send_or_edit(chat_id, token, http_client, "No Next_Actions.md found.", edit_message_id)
         return
 
-    with open(tasks_file, "r", encoding="utf-8") as f:
+    with open(tasks_file, encoding="utf-8") as f:
         lines = f.readlines()
 
     today = get_today_str()
@@ -103,10 +122,9 @@ async def handle_waiting_command(chat_id: int, token: str, http_client: httpx.As
         await send_msg(chat_id, token, http_client, "No Waiting_For.md found.")
         return
         
-    with open(file_path, "r", encoding="utf-8") as f:
+    with open(file_path, encoding="utf-8") as f:
         lines = f.readlines()
         
-    today = datetime.now()
     today_str = get_today_str()
     results = []
     
@@ -133,7 +151,7 @@ async def handle_waiting_command(chat_id: int, token: str, http_client: httpx.As
         await send_msg(chat_id, token, http_client, "No delegated items found.")
         return
         
-    msg = f"⏳ <b>Waiting For</b>\n\n" + "\n".join(results)
+    msg = "⏳ <b>Waiting For</b>\n\n" + "\n".join(results)
     await send_msg(chat_id, token, http_client, msg)
 
 async def handle_project_command(chat_id: int, text: str, token: str, http_client: httpx.AsyncClient):
@@ -153,101 +171,25 @@ async def handle_project_command(chat_id: int, text: str, token: str, http_clien
         step_to_add = m_add.group(2).strip()
         is_add = True
         
-    # Find project note
-    found_path = None
-    proj_dir = os.path.join(OBSIDIAN_VAULT_PATH, "02_Projects")
-    # 1. Exact match pass
-    for root, dirs, files in os.walk(proj_dir):
-        for f in files:
-            if f.lower() == f"{proj_query.lower()}.md":
-                found_path = os.path.join(root, f)
-                break
-        if found_path: break
-        
-    # 2. Substring match fallback
-    if not found_path:
-        for root, dirs, files in os.walk(proj_dir):
-            for f in files:
-                if proj_query.lower() in f.lower() and f.endswith(".md"):
-                    found_path = os.path.join(root, f)
-                    break
-            if found_path: break
-        
-    if not found_path:
-        # Check if project folder exists or auto-create project note in Personal
-        proj_clean = proj_query.strip().title()
-        personal_dir = os.path.join(OBSIDIAN_VAULT_PATH, "02_Projects", "Personal")
-        target_folder = os.path.join(personal_dir, proj_clean)
-        
-        if os.path.exists(target_folder) and os.path.isdir(target_folder):
-            found_path = os.path.join(target_folder, f"{proj_clean}.md")
-        else:
-            found_path = os.path.join(personal_dir, f"{proj_clean}.md")
-            
-        if not os.path.exists(found_path):
-            os.makedirs(os.path.dirname(found_path), exist_ok=True)
-            today_str = datetime.now().strftime("%Y-%m-%d")
-            proj_tag = proj_clean.strip().replace(" ", "_")
-            template = f"""---
-title: "{proj_clean}"
-type: project
-category: Personal
-outcome: "{proj_clean} project goals and desired outcome"
-date_created: "{today_str}"
-status: active
----
-# {proj_clean}
+    # Find (or create) the project master note via the shared resolver
+    found_path = ensure_project_note(proj_query, category="Personal")
 
-## Desired Outcome
-{proj_clean} project goals and desired outcome.
-
-## Project Steps
-
-## Active Actions
-> View via Telegram: `/project {proj_clean}` or search `#project/{proj_tag}` in Obsidian.
-
-```dataview
-TASK
-FROM "01_Tasks"
-WHERE contains(tags, "#project/{proj_tag}") AND !completed
-```
-
-## Reference Material
-> Notes and resources tagged with `#project/{proj_tag}` across the vault.
-"""
-            with open(found_path, "w", encoding="utf-8") as f:
-                f.write(template)
-            print(f"Auto-created project master note: {found_path}")
-        
     if is_add:
-        with open(found_path, "r", encoding="utf-8") as f:
-            content = f.read()
-        
-        if "## Project Steps" in content:
-            content = content.replace("## Project Steps", f"## Project Steps\n- [ ] {step_to_add}")
-        else:
-            content += f"\n\n## Project Steps\n- [ ] {step_to_add}\n"
-            
-        with open(found_path, "w", encoding="utf-8") as f:
-            f.write(content)
-            
+        append_project_step(proj_query, step_to_add)
         await send_msg(chat_id, token, http_client, f"✅ Added step to roadmap:\n`{step_to_add}`")
         return
-        
-    # Show project view
-    with open(found_path, "r", encoding="utf-8") as f:
-        content = f.read()
-        
-    title = os.path.basename(found_path).replace(".md", "")
-    outcome = "No outcome defined"
-    m_out = re.search(r'outcome:\s*"(.*?)"', content)
-    if m_out: outcome = m_out.group(1)
-    
-    steps = []
-    m_steps = re.search(r'## Project Steps\n(.*?)(?=\n## |\Z)', content, re.DOTALL)
-    if m_steps:
-        steps = [s.strip() for s in m_steps.group(1).strip().splitlines() if s.strip()]
-        
+
+    # Show project view (frontmatter parsed as YAML, not by regex, so it survives
+    # titles containing quotes or colons)
+    project = read_project(found_path)
+    if not project:
+        await send_msg(chat_id, token, http_client, f"❌ Could not read project note at `{found_path}`.")
+        return
+
+    title = project.name
+    outcome = project.outcome
+    steps = project.steps
+
     msg = f"📁 <b>{title}</b>\n🎯 Outcome: <i>{outcome}</i>\n\n"
     
     # 1. Active Actions search across task files
@@ -258,7 +200,7 @@ WHERE contains(tags, "#project/{proj_tag}") AND !completed
     for task_file in ["Next_Actions.md", "Waiting_For.md"]:
         tf_path = os.path.join(OBSIDIAN_VAULT_PATH, "01_Tasks", task_file)
         if os.path.exists(tf_path):
-            with open(tf_path, "r", encoding="utf-8") as f:
+            with open(tf_path, encoding="utf-8") as f:
                 for line in f:
                     line_lower = line.lower()
                     if line_lower.strip().startswith("- [ ]") and (proj_tag_space in line_lower or proj_tag_underscore in line_lower):
@@ -273,7 +215,7 @@ WHERE contains(tags, "#project/{proj_tag}") AND !completed
 
     # 2. Roadmap Steps from Project Note
     if steps:
-        msg += "📌 <b>Roadmap Steps:</b>\n" + "\n".join(f"• {s.lstrip('- [ ]')}" for s in steps[:10])
+        msg += "📌 <b>Roadmap Steps:</b>\n" + "\n".join(f"• {s}" for s in steps[:10])
         if len(steps) > 10: msg += f"\n...and {len(steps)-10} more."
     else:
         msg += "📌 <b>Roadmap Steps:</b> <i>No roadmap steps defined.</i>"
@@ -304,7 +246,7 @@ async def handle_done_command(chat_id: int, text: str, token: str, http_client: 
     
     for fp in files_to_check:
         if not os.path.exists(fp): continue
-        with open(fp, "r", encoding="utf-8") as f:
+        with open(fp, encoding="utf-8") as f:
             lines = f.readlines()
             
         new_lines = []
@@ -335,27 +277,9 @@ async def handle_done_command(chat_id: int, text: str, token: str, http_client: 
         await send_msg(chat_id, token, http_client, f"❌ Task matching '`{task_query}`' not found in active task lists.")
         return
         
-    from backend.config import COMPLETED_TASKS_MD_FILE
-    from backend.vault.writer import atomic_write
-    completed_file = COMPLETED_TASKS_MD_FILE
-    
-    header_str = "# ✅ Completed Tasks Archive\n\n> Archive of completed actions and quick 2-minute tasks. View in Telegram using `/done`.\n\n---\n\n## ✅ Completed Tasks\n"
-    existing_tasks = []
-    if os.path.exists(completed_file):
-        with open(completed_file, "r", encoding="utf-8") as f:
-            for line in f:
-                if line.strip().startswith("- [x]") or line.strip().startswith("- [X]"):
-                    existing_tasks.append(line.strip())
+    clean_task_name = strip_task_metadata(task_line)
+    archive_completed_lines([task_line])
 
-    clean_task_name = re.sub(r'\(Captured .*?\)', '', task_line)
-    clean_task_name = re.sub(r'\(Source:.*?\)', '', clean_task_name).strip("- [ ]\n").strip()
-
-    new_task = f"- [x] ~~{clean_task_name}~~ (Completed on {get_today_str()})"
-    
-    all_completed = [new_task] + existing_tasks
-    out_content = header_str + "\n".join(all_completed) + "\n"
-    atomic_write(completed_file, out_content)
-        
     await send_msg(chat_id, token, http_client, f"✅ <b>Task Completed:</b>\n<s>{clean_task_name}</s>")
     
     # Project auto-promotion flow with interactive Telegram buttons
@@ -368,57 +292,20 @@ async def prompt_project_step_promotion(chat_id: int, project_tag: str, token: s
     if not tok or not chat_id:
         return
         
-    proj_dir = os.path.join(OBSIDIAN_VAULT_PATH, "02_Projects")
-    proj_found_path = None
-    proj_clean = project_tag.strip().replace("_", " ").title()
-    
-    # 1. Search for project master note
-    for root, dirs, files in os.walk(proj_dir):
-        for f in files:
-            if f.lower() in [f"{proj_clean.lower()}.md", f"{project_tag.lower()}.md", f"{project_tag.replace(' ', '_').lower()}.md"]:
-                proj_found_path = os.path.join(root, f)
-                break
-        if proj_found_path: break
-        
-    if not proj_found_path:
-        for root, dirs, files in os.walk(proj_dir):
-            for f in files:
-                if project_tag.lower() in f.lower() and f.endswith(".md"):
-                    proj_found_path = os.path.join(root, f)
-                    break
-            if proj_found_path: break
-
-    if not proj_found_path or not os.path.exists(proj_found_path):
+    proj_found_path = find_project_note(project_tag)
+    project = read_project(proj_found_path)
+    if not project:
         return
 
-    with open(proj_found_path, "r", encoding="utf-8") as pf:
-        proj_content = pf.read()
-
-    # Determine category
-    category = "Personal"
-    m_cat = re.search(r'category:\s*"?([a-zA-Z0-9_\-]+)"?', proj_content)
-    if m_cat:
-        category = m_cat.group(1)
-    elif "Professional" in proj_found_path:
-        category = "Professional"
-
-    # Parse steps under ## Project Steps
-    steps_match = re.search(r'## Project Steps\s*([\s\S]*?)(?=\n## |\Z)', proj_content)
-    candidate_steps = []
-    if steps_match:
-        for line in steps_match.group(1).splitlines():
-            if line.strip().startswith("- [ ]"):
-                clean_step = re.sub(r'\(Captured .*?\)', '', line)
-                clean_step = re.sub(r'\(Source:.*?\)', '', clean_step).strip("- [ ]\n").strip()
-                if clean_step:
-                    candidate_steps.append(clean_step)
+    proj_clean = project.name
+    category = project.category
+    candidate_steps = project.steps
 
     # Check currently active tasks in Next_Actions.md to avoid duplicate promotion
-    next_actions_fp = os.path.join(OBSIDIAN_VAULT_PATH, "01_Tasks", "Next_Actions.md")
-    active_next_texts = []
-    if os.path.exists(next_actions_fp):
-        with open(next_actions_fp, "r", encoding="utf-8") as nf:
-            active_next_texts = [nl.strip().lower() for nl in nf if nl.strip().startswith("- [ ]")]
+    from backend.config import TASKS_MD_FILE
+    active_next_texts = [
+        t.raw.lower() for t in iter_task_lines(TASKS_MD_FILE, include_checked=False)
+    ]
 
     unpromoted_steps = [s for s in candidate_steps if not any(s.lower() in ant for ant in active_next_texts)]
 
@@ -525,8 +412,7 @@ async def handle_promote_callback(callback_query: dict, token: str, http_client:
         category = session.get("category", "Personal")
         proj_path = session.get("project_path")
         
-        clean_step = re.sub(r'\(Captured .*?\)', '', selected_step)
-        clean_step = re.sub(r'\(Source:.*?\)', '', clean_step).strip("- [ ]\n").strip()
+        clean_step = strip_task_metadata(selected_step)
         
         # 1. Add to Next_Actions.md
         task_str = f"- [ ] {clean_step} {chosen_ctx} #project/{project_tag} #{category.lower()}"
@@ -537,36 +423,11 @@ async def handle_promote_callback(callback_query: dict, token: str, http_client:
 
         # 2. Delete the promoted step from ## Project Steps in the project master note
         if not proj_path or not os.path.exists(proj_path):
-            proj_dir = os.path.join(OBSIDIAN_VAULT_PATH, "02_Projects")
-            proj_clean = project_tag.strip().replace("_", " ").title()
-            for root, dirs, files in os.walk(proj_dir):
-                for f in files:
-                    if f.lower() in [f"{proj_clean.lower()}.md", f"{project_tag.lower()}.md", f"{project_tag.replace(' ', '_').lower()}.md"]:
-                        proj_path = os.path.join(root, f)
-                        break
-                if proj_path: break
+            proj_path = find_project_note(project_tag)
 
-        if proj_path and os.path.exists(proj_path):
-            with open(proj_path, "r", encoding="utf-8") as pf:
-                proj_lines = pf.readlines()
+        remove_step_from_project(proj_path, clean_step)
 
-            new_proj_lines = []
-            removed = False
-            clean_target = clean_step.lower()
 
-            for pl in proj_lines:
-                if not removed and pl.strip().startswith("- [ ]"):
-                    pl_clean = re.sub(r'\(Captured .*?\)', '', pl)
-                    pl_clean = re.sub(r'\(Source:.*?\)', '', pl_clean).strip("- [ ]\n").strip().lower()
-                    if clean_target == pl_clean or clean_target in pl_clean or pl_clean in clean_target:
-                        removed = True
-                        continue  # Skip to delete from project roadmap
-                new_proj_lines.append(pl)
-
-            if removed:
-                from backend.vault.writer import atomic_write
-                atomic_write(proj_path, "".join(new_proj_lines))
-        
         await http_client.post(
             f"https://api.telegram.org/bot{token}/editMessageText",
             json={
@@ -608,8 +469,7 @@ async def handle_tickle_callback(callback_query: dict, token: str, http_client: 
     chat_id = callback_query["message"]["chat"]["id"]
     message_id = callback_query["message"]["message_id"]
     data = callback_query.get("data", "")
-    
-    today = datetime.now().date()
+
     parts = data.split(":")
     cal_action = parts[1]
     
@@ -654,7 +514,7 @@ async def handle_tickle_callback(callback_query: dict, token: str, http_client: 
             fp = os.path.join(tasks_dir, fname)
             if not os.path.exists(fp):
                 continue
-            with open(fp, "r", encoding="utf-8") as f:
+            with open(fp, encoding="utf-8") as f:
                 lines = f.readlines()
 
             new_lines = []
@@ -674,8 +534,7 @@ async def handle_tickle_callback(callback_query: dict, token: str, http_client: 
                 break
 
         if matched_line:
-            clean_task = re.sub(r'\(Captured on.*?\)', '', matched_line).strip("- [ ]\n")
-            clean_task = re.sub(r'🔔\s*\d{4}-\d{2}-\d{2}', '', clean_task).strip()
+            clean_task = re.sub(r'🔔\s*\d{4}-\d{2}-\d{2}', '', strip_task_metadata(matched_line)).strip()
             await http_client.post(
                 f"https://api.telegram.org/bot{token}/editMessageText",
                 json={
@@ -708,7 +567,7 @@ async def handle_status_command(chat_id: int, token: str, http_client: httpx.Asy
         fp = os.path.join(tasks_dir, filename)
         items = []
         if os.path.exists(fp):
-            with open(fp, "r", encoding="utf-8") as f:
+            with open(fp, encoding="utf-8") as f:
                 for line in f:
                     line_s = line.strip()
                     if line_s.startswith("- [ ]") or line_s.startswith("- "):
@@ -730,7 +589,7 @@ async def handle_status_command(chat_id: int, token: str, http_client: httpx.Asy
     
     comp_fp = os.path.join(tasks_dir, "z_Completed.md")
     if os.path.exists(comp_fp):
-        with open(comp_fp, "r", encoding="utf-8") as f:
+        with open(comp_fp, encoding="utf-8") as f:
             for line in f:
                 line_s = line.strip()
                 if line_s.startswith("- [x]") or line_s.startswith("- [X]"):
@@ -847,7 +706,7 @@ async def handle_archive_project_command(chat_id: int, text: str, token: str, ht
     # Update status in markdown note if single file or if folder has <ProjectName>.md
     note_to_update = found_path if os.path.isfile(found_path) else os.path.join(found_path, f"{proj_name}.md")
     if os.path.exists(note_to_update):
-        with open(note_to_update, "r", encoding="utf-8") as f:
+        with open(note_to_update, encoding="utf-8") as f:
             content = f.read()
         
         if "status:" in content:
@@ -892,7 +751,7 @@ async def handle_archive_project_command(chat_id: int, text: str, token: str, ht
     await send_msg(chat_id, token, http_client, msg)
 
 async def handle_holiday_command(chat_id: int, text: str, token: str, http_client: httpx.AsyncClient):
-    from backend.utils.holiday_manager import set_holiday_pause, clear_holiday_pause, get_holiday_state, is_scope_paused
+    from backend.utils.holiday_manager import set_holiday_pause, clear_holiday_pause, is_scope_paused
     from backend.ingestion.handlers.clarify import parse_natural_date_str
 
     cmd_parts = text.split()
@@ -1120,151 +979,96 @@ async def handle_holiday_callback(callback_query: dict, token: str, http_client:
         return
 
 def get_reflect_summary_data() -> dict:
-    """Gathers structured review data across the GTD task lists and projects."""
+    """Gathers structured review data across the GTD task lists and projects.
+
+    All parsing goes through backend.vault.tasks so this view can never drift from
+    what /status, /done and the dashboard sweeper see.
+    """
+    from backend.config import (
+        CAPTURED_MD_FILE,
+        COMPLETED_TASKS_MD_FILE,
+        SOMEDAY_MAYBE_MD_FILE,
+        TASKS_MD_FILE,
+        WAITING_FOR_MD_FILE,
+    )
+
     today_dt = datetime.now()
-    today_str = today_dt.strftime("%Y-%m-%d")
-    seven_days_ago = today_dt - timedelta(days=7)
-    
-    # 1. Captured items
+    today = today_dt.date()
+    seven_days_ago = today - timedelta(days=7)
+
+    # 1. Captured items (plain bullets, not checkboxes)
     captured_items = []
-    cap_path = os.path.join(OBSIDIAN_VAULT_PATH, "01_Tasks", "Captured.md")
-    if os.path.exists(cap_path):
-        with open(cap_path, "r", encoding="utf-8") as f:
+    if os.path.exists(CAPTURED_MD_FILE):
+        with open(CAPTURED_MD_FILE, encoding="utf-8") as f:
             for line in f:
                 ls = line.strip()
-                if ls.startswith("- "):
-                    clean = re.sub(r'\(Source:.*?\)', '', ls)
-                    clean = re.sub(r'\(Captured on.*?\)', '', clean).replace("- ", "").strip()
+                if ls.startswith("- ") and not _is_placeholder(ls):
+                    clean = strip_task_metadata(ls)
                     if clean:
                         captured_items.append(clean)
-                        
-    # 2. Next actions
+
+    # 2. Next actions (excluding items deferred by a future tickler date)
     next_items = []
     active_project_tags = set()
-    next_path = os.path.join(OBSIDIAN_VAULT_PATH, "01_Tasks", "Next_Actions.md")
-    if os.path.exists(next_path):
-        with open(next_path, "r", encoding="utf-8") as f:
-            for line in f:
-                ls = line.strip()
-                if ls.startswith("- [ ]"):
-                    m_tick = re.search(r'🔔 (\d{4}-\d{2}-\d{2})', ls)
-                    if m_tick and m_tick.group(1) > today_str:
-                        continue
-                    m_proj = re.search(r'#project/([a-zA-Z0-9_\-]+)', ls)
-                    if m_proj:
-                        active_project_tags.add(m_proj.group(1).lower())
-                    next_items.append(ls)
+    for task in iter_task_lines(TASKS_MD_FILE, include_checked=False):
+        if task.is_deferred:
+            continue
+        if task.project:
+            active_project_tags.add(task.project.lower())
+        next_items.append(task.raw)
 
-    # 3. Waiting items
+    # 3. Waiting items, flagging anything captured more than 5 days ago
     waiting_items = []
     stale_waitings = []
-    wait_path = os.path.join(OBSIDIAN_VAULT_PATH, "01_Tasks", "Waiting_For.md")
-    if os.path.exists(wait_path):
-        with open(wait_path, "r", encoding="utf-8") as f:
-            for line in f:
-                ls = line.strip()
-                if ls.startswith("- [ ]"):
-                    waiting_items.append(ls)
-                    m_cap = re.search(r'\(Captured .*? on (\d{4}-\d{2}-\d{2})\)', ls)
-                    if m_cap:
-                        try:
-                            cap_date = datetime.strptime(m_cap.group(1), "%Y-%m-%d")
-                            if (today_dt - cap_date).days > 5:
-                                stale_waitings.append(ls)
-                        except Exception:
-                            pass
+    for task in iter_task_lines(WAITING_FOR_MD_FILE, include_checked=False):
+        waiting_items.append(task.raw)
+        m_cap = re.search(r'\(Captured .*? on (\d{4}-\d{2}-\d{2})\)', task.raw)
+        if m_cap:
+            cap_date = parse_flexible_date(m_cap.group(1))
+            if cap_date and (today - cap_date).days > 5:
+                stale_waitings.append(task.raw)
 
     # 4. Someday items
     someday_items = []
-    some_path = os.path.join(OBSIDIAN_VAULT_PATH, "01_Tasks", "Someday_Maybe.md")
-    if os.path.exists(some_path):
-        with open(some_path, "r", encoding="utf-8") as f:
+    if os.path.exists(SOMEDAY_MAYBE_MD_FILE):
+        with open(SOMEDAY_MAYBE_MD_FILE, encoding="utf-8") as f:
             for line in f:
                 ls = line.strip()
-                if ls.startswith("- [ ]") or ls.startswith("- "):
-                    clean = ls.replace("- [ ]", "").replace("- ", "").strip()
+                if ls.startswith("- ") and not _is_placeholder(ls):
+                    clean = strip_task_metadata(ls)
                     if clean:
                         someday_items.append(clean)
 
-    # 5. Completed last 7 days
+    # 5. Completed in the last 7 days
     completed_7d_count = 0
-    comp_path = os.path.join(OBSIDIAN_VAULT_PATH, "01_Tasks", "z_Completed.md")
-    if os.path.exists(comp_path):
-        with open(comp_path, "r", encoding="utf-8") as f:
-            for line in f:
-                if line.strip().lower().startswith("- [x]"):
-                    m_comp = re.search(r'\(Completed on (\d{4}-\d{2}-\d{2})\)', line)
-                    if m_comp:
-                        try:
-                            c_date = datetime.strptime(m_comp.group(1), "%Y-%m-%d")
-                            if c_date >= seven_days_ago:
-                                completed_7d_count += 1
-                        except Exception:
-                            pass
+    for task in iter_task_lines(COMPLETED_TASKS_MD_FILE):
+        if task.checked and task.completed_on and task.completed_on >= seven_days_ago:
+            completed_7d_count += 1
 
-    # 6. Projects & Orphaned Projects
-    proj_dir = os.path.join(OBSIDIAN_VAULT_PATH, "02_Projects")
+    # 6. Projects, orphans (no active next action), deadlines and roadmaps
     all_projects = []
     orphaned_projects = []
     project_deadlines = []
     project_roadmaps = {}
 
-    for category in ["Personal", "Professional"]:
-        cat_dir = os.path.join(proj_dir, category)
-        if not os.path.exists(cat_dir):
+    for project in iter_projects():
+        if project.status in ("completed", "archived"):
             continue
-        for entry in sorted(os.listdir(cat_dir)):
-            if entry.startswith(".") or entry.startswith("_") or entry in ["archive", "docs", "Notes", "Meetings", "Outputs", "Sessions", "old", "Syncthing"]:
-                continue
-            entry_path = os.path.join(cat_dir, entry)
-            if os.path.isdir(entry_path):
-                p_name = entry
-                p_file = os.path.join(entry_path, f"{entry}.md")
-            elif entry.endswith(".md"):
-                p_name = entry[:-3]
-                p_file = entry_path
-            else:
-                continue
 
-            if not os.path.exists(p_file):
-                continue
+        all_projects.append((project.name, project.category, project.path))
 
-            all_projects.append((p_name, category, p_file))
-            p_tag_clean = p_name.strip().replace(" ", "_").lower()
-            if p_tag_clean not in active_project_tags and p_name.lower() not in active_project_tags:
-                orphaned_projects.append((p_name, category, p_file))
+        tag_variants = {project.tag.lower(), project.name.lower()}
+        if not (tag_variants & active_project_tags):
+            orphaned_projects.append((project.name, project.category, project.path))
 
-            try:
-                with open(p_file, "r", encoding="utf-8") as pf:
-                    p_text = pf.read()
-                    
-                # Parse frontmatter
-                fm_match = re.search(r'^---\s*\n(.*?)\n---', p_text, re.DOTALL)
-                if fm_match:
-                    frontmatter = fm_match.group(1)
-                    m_status = re.search(r'^status:\s*"?([a-zA-Z0-9_\-]+)"?', frontmatter, re.MULTILINE)
-                    if m_status and m_status.group(1).lower() in ["completed", "archived"]:
-                        continue
-                    m_due = re.search(r'^due_date:\s*"?(\d{4}-\d{2}-\d{2}|\d{2}-\d{2}-\d{4})"?', frontmatter, re.MULTILINE)
-                    if m_due:
-                        due_raw = m_due.group(1)
-                        if "-" in due_raw and len(due_raw.split("-")[0]) == 4:
-                            due_dt = datetime.strptime(due_raw, "%Y-%m-%d").date()
-                        else:
-                            due_dt = datetime.strptime(due_raw, "%d-%m-%Y").date()
-                        days_left = (due_dt - today_dt.date()).days
-                        date_disp = due_dt.strftime("%d-%m-%Y")
-                        if days_left <= 14:
-                            project_deadlines.append((p_name, days_left, date_disp))
-                            
-                # Parse roadmap steps
-                m_steps = re.search(r'## Project Steps\n(.*?)(?=\n## |\Z)', p_text, re.DOTALL)
-                if m_steps:
-                    steps = [s.replace("- [ ]", "").strip() for s in m_steps.group(1).strip().splitlines() if s.strip() and s.strip().startswith("- [ ]")]
-                    if steps:
-                        project_roadmaps[p_name] = steps
-            except Exception:
-                pass
+        due = project.due_date
+        if due:
+            days_left = (due - today).days
+            if days_left <= 14:
+                project_deadlines.append((project.name, days_left, due.strftime("%d-%m-%Y")))
+
+        if project.steps:
+            project_roadmaps[project.name] = project.steps
 
     return {
         "captured_items": captured_items,
@@ -1384,9 +1188,9 @@ async def handle_reflect_callback(callback_query: dict, token: str, http_client:
             ]
         else:
             text = (
-                f"📥 <b>Step 1 of 5: Get Clear (Inbox Zero)</b>\n\n"
-                f"🎉 <b>Inbox Zero Achieved!</b>\n\n"
-                f"All captured notes and voice memos have been clarified."
+                "📥 <b>Step 1 of 5: Get Clear (Inbox Zero)</b>\n\n"
+                "🎉 <b>Inbox Zero Achieved!</b>\n\n"
+                "All captured notes and voice memos have been clarified."
             )
             buttons = [
                 [{"text": "⏭️ Step 2: Delegations ➡️", "callback_data": "reflect:step:2"}],
@@ -1420,9 +1224,9 @@ async def handle_reflect_callback(callback_query: dict, token: str, http_client:
             )
         else:
             text = (
-                f"⏳ <b>Step 2 of 5: Audit Delegations (Waiting For)</b>\n\n"
-                f"✅ <b>No pending delegated items!</b>\n\n"
-                f"You are currently not waiting on anyone for any deliverables."
+                "⏳ <b>Step 2 of 5: Audit Delegations (Waiting For)</b>\n\n"
+                "✅ <b>No pending delegated items!</b>\n\n"
+                "You are currently not waiting on anyone for any deliverables."
             )
             
         buttons = [
@@ -1461,9 +1265,9 @@ async def handle_reflect_callback(callback_query: dict, token: str, http_client:
             )
         else:
             text = (
-                f"🎯 <b>Step 3 of 5: Project Health &amp; Momentum</b>\n\n"
-                f"🎉 <b>All active projects have Next Actions!</b>\n\n"
-                f"Every single project in your system has active work underway."
+                "🎯 <b>Step 3 of 5: Project Health &amp; Momentum</b>\n\n"
+                "🎉 <b>All active projects have Next Actions!</b>\n\n"
+                "Every single project in your system has active work underway."
             )
             
         buttons.append([
@@ -1491,8 +1295,8 @@ async def handle_reflect_callback(callback_query: dict, token: str, http_client:
             )
         else:
             text = (
-                f"💡 <b>Step 4 of 5: Someday / Maybe Review</b>\n\n"
-                f"💡 <b>Someday/Maybe list is clear.</b>"
+                "💡 <b>Step 4 of 5: Someday / Maybe Review</b>\n\n"
+                "💡 <b>Someday/Maybe list is clear.</b>"
             )
             
         buttons = [

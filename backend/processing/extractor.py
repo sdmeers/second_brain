@@ -12,17 +12,27 @@ from backend.utils.gemini import call_gemini_with_retry
 
 import os
 
-def extract_pdf_text(url_or_path: str) -> tuple[str, bytes]:
-    """Downloads PDF from URL or reads local path, and extracts text."""
+
+def _read_bytes(path: str) -> bytes:
+    with open(path, "rb") as f:
+        return f.read()
+
+
+async def extract_pdf_text(url_or_path: str) -> tuple[str, bytes]:
+    """Downloads PDF from URL or reads local path, and extracts text.
+
+    Async because a synchronous httpx.get here (30s timeout) froze the whole event
+    loop -- including the Telegram bot -- for the duration of every slow download.
+    """
     if os.path.exists(url_or_path) or url_or_path.startswith("/"):
-        with open(url_or_path, "rb") as f:
-            pdf_bytes = f.read()
+        pdf_bytes = await asyncio.to_thread(_read_bytes, url_or_path)
     else:
         headers = {"User-Agent": "Mozilla/5.0"}
-        response = httpx.get(url_or_path, follow_redirects=True, timeout=30.0, headers=headers)
-        response.raise_for_status()
-        pdf_bytes = response.content
-    
+        async with httpx.AsyncClient(follow_redirects=True, timeout=30.0, headers=headers) as client:
+            response = await client.get(url_or_path)
+            response.raise_for_status()
+            pdf_bytes = response.content
+
     pdf_stream = io.BytesIO(pdf_bytes)
     doc = fitz.open(stream=pdf_stream, filetype="pdf")
     
@@ -91,7 +101,7 @@ async def extract_youtube_transcript(url: str) -> str:
             print("Backend [Transcript]: No English JSON3 transcript URL found.")
             raise ValueError("No English transcript found for this video.")
         
-        print(f"Backend [Transcript]: Fetching transcript content from YouTube API...")
+        print("Backend [Transcript]: Fetching transcript content from YouTube API...")
         async with httpx.AsyncClient() as client:
             res = await client.get(target_url, timeout=30.0)
             res.raise_for_status()
@@ -151,12 +161,16 @@ def is_cookie_or_consent_wall(text: str) -> bool:
             
     return False
 
-def extract_web_text(url: str) -> str:
-    """Fetches a URL and extracts readable text using BeautifulSoup."""
+async def extract_web_text(url: str) -> str:
+    """Fetches a URL and extracts readable text using BeautifulSoup.
+
+    Async so a slow site cannot stall the Telegram bot for up to 30s mid-capture.
+    """
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
-    response = httpx.get(url, follow_redirects=True, timeout=30.0, headers=headers)
-    response.raise_for_status()
-    
+    async with httpx.AsyncClient(follow_redirects=True, timeout=30.0, headers=headers) as client:
+        response = await client.get(url)
+        response.raise_for_status()
+
     soup = BeautifulSoup(response.text, "html.parser")
     
     for script in soup(["script", "style"]):
@@ -181,7 +195,7 @@ def extract_web_text(url: str) -> str:
             
     return cleaned_text
 
-def fetch_cover(url: str, is_youtube: bool) -> str:
+async def fetch_cover(url: str, is_youtube: bool) -> str:
     """Attempts to find a suitable cover image URL."""
     if is_youtube:
         video_id = None
@@ -194,8 +208,8 @@ def fetch_cover(url: str, is_youtube: bool) -> str:
     
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
-        with httpx.Client(follow_redirects=True, timeout=10.0, headers=headers) as c:
-            r = c.get(url)
+        async with httpx.AsyncClient(follow_redirects=True, timeout=10.0, headers=headers) as c:
+            r = await c.get(url)
             if r.status_code == 200:
                 match = re.search(r'<meta [^>]*property=["\']og:image["\'][^>]*content=["\'](.*?)["\']', r.text)
                 if not match:
@@ -285,16 +299,16 @@ def extract_docx_text_from_bytes(docx_bytes: bytes) -> str:
         print(f"DOCX Bytes Text Extraction Error: {e}")
         return f"Error extracting text from Word document: {e}"
 
-def extract_docx_text(url_or_path: str) -> tuple[str, bytes]:
+async def extract_docx_text(url_or_path: str) -> tuple[str, bytes]:
     """Downloads Word document (.docx) or reads local path, and extracts text."""
     if os.path.exists(url_or_path) or url_or_path.startswith("/"):
-        with open(url_or_path, "rb") as f:
-            docx_bytes = f.read()
+        docx_bytes = await asyncio.to_thread(_read_bytes, url_or_path)
     else:
         headers = {"User-Agent": "Mozilla/5.0"}
-        response = httpx.get(url_or_path, follow_redirects=True, timeout=30.0, headers=headers)
-        response.raise_for_status()
-        docx_bytes = response.content
+        async with httpx.AsyncClient(follow_redirects=True, timeout=30.0, headers=headers) as client:
+            response = await client.get(url_or_path)
+            response.raise_for_status()
+            docx_bytes = response.content
     extracted_text = extract_docx_text_from_bytes(docx_bytes)
     return extracted_text, docx_bytes
 

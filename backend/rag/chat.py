@@ -73,7 +73,7 @@ async def query_brain(user_query: str, chat_history: list = None, top_k: int = 5
                     if not any(c["file_path"] == rel_path for c in chunks):
                         file_full = os.path.join(folder_path, file)
                         try:
-                            with open(file_full, "r", encoding="utf-8") as f:
+                            with open(file_full, encoding="utf-8") as f:
                                 txt = f.read()[:1200]
                             chunks.append({
                                 "file_path": rel_path,

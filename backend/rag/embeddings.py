@@ -1,5 +1,4 @@
 import asyncio
-from google.genai import types
 from backend.utils.gemini import client
 
 async def get_embedding(text: str) -> list[float]:

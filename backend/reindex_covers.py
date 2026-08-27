@@ -48,7 +48,7 @@ def reindex():
     files = list(Path(SUMMARIES_PATH).glob("*.md"))
     
     for file_path in files:
-        with open(file_path, "r", encoding="utf-8") as f:
+        with open(file_path, encoding="utf-8") as f:
             content = f.read()
             
         if not content.startswith("---"):
@@ -92,7 +92,7 @@ def reindex():
                 modified = True
                 print(f"  [SUCCESS] {new_cover[:50]}...")
             else:
-                print(f"  [SKIPPED] No cover found.")
+                print("  [SKIPPED] No cover found.")
         
         if modified:
             new_yaml = yaml.dump(data, sort_keys=False, allow_unicode=True).strip()

@@ -4,7 +4,7 @@ import asyncio
 import httpx
 from typing import Optional
 
-from backend.config import OBSIDIAN_VAULT_PATH, SUMMARIES_PATH, SOURCES_PATH, REFERENCE_NOTES_PATH, REFERENCE_SOURCES_PATH
+from backend.config import OBSIDIAN_VAULT_PATH
 from backend.vault.paths import is_url_already_ingested, get_atlas_themes
 from backend.vault.writer import save_source_material, save_brain_node
 from backend.processing.extractor import (
@@ -70,7 +70,7 @@ async def process_capture_core(
             if file_bytes:
                 content_text = extract_pdf_text_from_bytes(file_bytes)
             else:
-                content_text, file_bytes = extract_pdf_text(url)
+                content_text, file_bytes = await extract_pdf_text(url)
         elif is_pptx:
             print("Backend [Stage 1]: Processing as PPTX...")
             from backend.processing.extractor import extract_pptx_text_from_bytes
@@ -89,13 +89,13 @@ async def process_capture_core(
             if file_bytes:
                 content_text = extract_docx_text_from_bytes(file_bytes)
             else:
-                content_text, file_bytes = extract_docx_text(url)
+                content_text, file_bytes = await extract_docx_text(url)
         elif is_youtube and not content_text:
             print("Backend [Stage 1]: Processing as YouTube (via backend fallback)...")
             content_text = await extract_youtube_transcript(url)
         elif not content_text:
             print(f"Backend [Stage 1]: Scraping Web Content from {url}...")
-            content_text = extract_web_text(url)
+            content_text = await extract_web_text(url)
         else:
             print(f"Backend [Stage 1]: Processing as Text ({len(content_text) if content_text else 0} chars)...")
                  
@@ -138,7 +138,7 @@ async def process_capture_core(
         # 5. Fetch Cover Image
         print("Backend [Stage 3]: Fetching Cover Image...")
 
-        cover_url = fetch_cover(url, is_youtube)
+        cover_url = await fetch_cover(url, is_youtube)
         if cover_url:
             print(f"Backend [Stage 3]: Found cover: {cover_url}")
             # Inject cover into YAML frontmatter if gemini hasn't provided a better one
@@ -195,7 +195,7 @@ async def process_capture_core(
                 await update_concept_page(concept, brain_node_markdown, safe_title)
                 await asyncio.sleep(4)  # Stay under 15 RPM limit
         else:
-            print(f"Backend [Stage 5]: Skipping concept page creation (Lightweight / 0 concepts).")
+            print("Backend [Stage 5]: Skipping concept page creation (Lightweight / 0 concepts).")
             
         # Log the ingestion to Librarian Activity Log and system log
         themes = []

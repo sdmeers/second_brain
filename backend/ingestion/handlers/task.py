@@ -1,5 +1,3 @@
-import os
-import re
 from datetime import datetime
 from backend.config import TASKS_MD_FILE
 from backend.utils.gemini import call_gemini_with_retry
@@ -70,17 +68,7 @@ For each task, provide:
         new_entries.append(entry)
         
     try:
-        from backend.vault.writer import atomic_write
         # Read existing Next_Actions.md if it exists, otherwise initialize it
-        if os.path.exists(tasks_file):
-            try:
-                with open(tasks_file, "r", encoding="utf-8") as f:
-                    existing_content = f.read()
-            except Exception:
-                existing_content = "# Next Actions\n\n## ⚡ Next Actions\n\n"
-        else:
-            existing_content = "# Next Actions\n\n## ⚡ Next Actions\n\n"
-            
         from backend.utils.tasks_dashboard import append_gtd_item
         for entry in new_entries:
             append_gtd_item(tasks_file, entry)

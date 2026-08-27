@@ -7,7 +7,7 @@ from typing import Optional
 from datetime import datetime
 from google import genai
 from google.genai import types
-from backend.config import GEMINI_API_KEY, GEMINI_MODEL
+from backend.config import GEMINI_API_KEY
 
 client = genai.Client(api_key=GEMINI_API_KEY)
 
@@ -16,7 +16,7 @@ CACHE_METADATA_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "
 def load_cache_metadata():
     if os.path.exists(CACHE_METADATA_FILE):
         try:
-            with open(CACHE_METADATA_FILE, "r") as f:
+            with open(CACHE_METADATA_FILE) as f:
                 return json.load(f)
         except Exception:
             pass

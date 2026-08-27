@@ -1,22 +1,15 @@
 import os
 import re
-import hashlib
 import asyncio
 from datetime import datetime
 import httpx
 from backend.config import (
     TELEGRAM_BOT_TOKEN,
     TELEGRAM_ALLOWED_CHAT_IDS,
-    COMPLETED_MD_FILE,
-    FAILED_MD_FILE
+    COMPLETED_MD_FILE
 )
-from backend.processing.capture import process_capture_core, DuplicateURLError
-from backend.processing.transcriber import transcribe_audio_via_gemini
-from backend.processing.extractor import analyze_image_via_gemini
-from google.genai import types
 from backend.config import GEMINI_MODEL
 from backend.utils.gemini import call_gemini_with_retry
-from backend.utils.sanitize import sanitize_filename
 
 QA_CONTEXTS = {}
 
@@ -139,7 +132,6 @@ async def notify_via_telegram(message: str, reply_markup: dict = None):
     except Exception as e:
         print(f"Backend [Notify]: Failed to send Telegram notification: {e}")
 
-from backend.ingestion.queue import add_to_queue
 
 
 async def process_telegram_message(message: dict, token: str, http_client):
@@ -517,76 +509,6 @@ async def handle_telegram_callback_query(callback_query: dict, token: str, http_
 
 
 
-async def poll_telegram_unified():
-    token = TELEGRAM_BOT_TOKEN
-    if not token:
-        return
-
-    allowed_chat_ids = TELEGRAM_ALLOWED_CHAT_IDS
-    offset_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".telegram_offset")
-    offset = 0
-    if os.path.exists(offset_file):
-        try:
-            with open(offset_file, "r") as f:
-                offset = int(f.read().strip())
-        except Exception:
-            pass
-
-    async with httpx.AsyncClient() as client:
-        url = f"https://api.telegram.org/bot{token}/getUpdates"
-        params = {"timeout": 5}
-        if offset > 0:
-            params["offset"] = offset
-
-        try:
-            response = await client.get(url, params=params, timeout=10.0)
-            if response.status_code != 200:
-                print(f"Backend [Telegram Watcher]: Error getting updates: {response.status_code}")
-                return
-
-            data = response.json()
-            if not data.get("ok"):
-                print(f"Backend [Telegram Watcher]: API returned error: {data}")
-                return
-
-            updates = data.get("result", [])
-            if updates:
-                print(f"Backend [Telegram Watcher]: Fetched {len(updates)} update(s) from Telegram.")
-            for update in updates:
-                new_offset = update["update_id"] + 1
-                if new_offset > offset:
-                    offset = new_offset
-                    with open(offset_file, "w") as f:
-                        f.write(str(offset))
-
-                # Check for callback query first (inline button clicks)
-                callback_query = update.get("callback_query")
-                if callback_query:
-                    chat_id = callback_query["message"]["chat"]["id"]
-                    if allowed_chat_ids and chat_id not in allowed_chat_ids:
-                        print(f"Backend [Telegram Watcher]: Ignored callback query from unauthorized chat: {chat_id}")
-                        continue
-                    await handle_telegram_callback_query(callback_query, token, client)
-                    continue
-
-                message = update.get("message") or update.get("channel_post")
-                if not message:
-                    continue
-
-                chat_id = message["chat"]["id"]
-                if allowed_chat_ids and chat_id not in allowed_chat_ids:
-                    print(f"Backend [Telegram Watcher]: Ignored message from unauthorized chat: {chat_id}")
-                    await client.post(
-                        f"https://api.telegram.org/bot{token}/sendMessage",
-                        json={"chat_id": chat_id, "text": f"Unauthorized chat ID ({chat_id}). Please add it to TELEGRAM_ALLOWED_CHAT_IDS in .env."}
-                    )
-                    continue
-
-                await process_telegram_message(message, token, client)
-
-        except Exception as e:
-            print(f"Backend [Telegram Watcher]: Error polling Telegram: {type(e).__name__} - {e}")
-
 async def run_telegram_bot_loop():
     """Runs a dedicated, continuous long-polling loop for Telegram updates with zero sleep delay."""
     token = TELEGRAM_BOT_TOKEN
@@ -599,7 +521,7 @@ async def run_telegram_bot_loop():
     offset = 0
     if os.path.exists(offset_file):
         try:
-            with open(offset_file, "r") as f:
+            with open(offset_file) as f:
                 offset = int(f.read().strip())
         except Exception:
             pass

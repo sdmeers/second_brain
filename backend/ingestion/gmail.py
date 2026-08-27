@@ -1,14 +1,12 @@
 import os
-import re
 import imaplib
 import email
 from email.header import decode_header
 import asyncio
 from datetime import datetime
-from backend.config import GMAIL_EMAIL, GMAIL_APP_PASSWORD, COMPLETED_MD_FILE, FAILED_MD_FILE
+from backend.config import GMAIL_EMAIL, GMAIL_APP_PASSWORD
 from backend.utils.sanitize import sanitize_filename
-from backend.processing.capture import process_capture_core, DuplicateURLError
-from backend.ingestion.telegram import notify_via_telegram, generate_title_from_text
+from backend.ingestion.telegram import notify_via_telegram
 
 from backend.ingestion.queue import add_to_queue
 

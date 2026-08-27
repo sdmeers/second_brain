@@ -47,7 +47,7 @@ def is_url_already_ingested(url: str) -> Optional[str]:
                 continue
             file_path = os.path.join(SUMMARIES_PATH, filename)
             try:
-                with open(file_path, "r", encoding="utf-8") as f:
+                with open(file_path, encoding="utf-8") as f:
                     frontmatter_lines = []
                     for _ in range(30):
                         line = f.readline()

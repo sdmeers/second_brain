@@ -7,15 +7,11 @@ from datetime import datetime
 from backend.config import (
     INBOX_MD_FILE,
     INBOX_PATH,
-    INBOX_FAILED_PATH,
     COMPLETED_MD_FILE,
     FAILED_MD_FILE,
     ENABLE_OBSIDIAN_INBOX_POLLING,
     ENABLE_TELEGRAM_BOT,
     ENABLE_GMAIL_POLLING,
-    TELEGRAM_BOT_TOKEN,
-    GMAIL_EMAIL,
-    GMAIL_APP_PASSWORD,
     SOURCES_PATH,
     OBSIDIAN_VAULT_PATH,
     TASKS_MD_FILE
@@ -28,7 +24,7 @@ from backend.ingestion.queue import (
 )
 from backend.ingestion.classifier import classify_input
 from backend.processing.capture import process_capture_core, DuplicateURLError
-from backend.ingestion.telegram import poll_telegram_unified, run_telegram_bot_loop, notify_via_telegram
+from backend.ingestion.telegram import run_telegram_bot_loop, notify_via_telegram
 from backend.ingestion.gmail import poll_gmail
 
 # Specific Ingestion Handlers
@@ -44,7 +40,7 @@ async def scan_and_process_import():
         return
 
     try:
-        with open(INBOX_MD_FILE, "r", encoding="utf-8") as f:
+        with open(INBOX_MD_FILE, encoding="utf-8") as f:
             content = f.read()
     except Exception as e:
         print(f"Backend [Watcher]: Error reading {INBOX_MD_FILE}: {e}")
@@ -123,7 +119,7 @@ async def scan_and_process_inbox():
         try:
             if filename.lower().endswith(".md"):
                 # For markdown notes: read text, queue, delete
-                with open(file_path, "r", encoding="utf-8") as f:
+                with open(file_path, encoding="utf-8") as f:
                     text_content = f.read()
                 
                 payload = {
@@ -314,7 +310,7 @@ async def process_queue_worker():
                 confidence=1.0,
                 reasoning="Explicit /research command trigger."
             )
-            print(f"Backend [Queue Worker]: Router detected explicit /research trigger (Category: deep_research)")
+            print("Backend [Queue Worker]: Router detected explicit /research trigger (Category: deep_research)")
         else:
             classification = await classify_input(classification_input)
             print(f"Backend [Queue Worker]: Router classified item as '{classification.category}' (confidence: {classification.confidence})")
@@ -636,7 +632,7 @@ tags: [future_project, idea]
                 from backend.vault.writer import atomic_write
                 if os.path.exists(COMPLETED_MD_FILE):
                     try:
-                        with open(COMPLETED_MD_FILE, "r", encoding="utf-8") as f:
+                        with open(COMPLETED_MD_FILE, encoding="utf-8") as f:
                             old_content = f.read()
                     except Exception:
                         old_content = ""
@@ -776,12 +772,12 @@ async def auto_heal_syncthing_conflict(rel_path: str, full_path: str) -> bool:
         if target_name.lower() == "next_actions.md":
             print(f"Backend [Auto-Healer]: Auto-resolving task conflict file {rel_path}...")
             
-            with open(full_path, "r", encoding="utf-8") as f:
+            with open(full_path, encoding="utf-8") as f:
                 conflict_text = f.read()
                 
             master_text = ""
             if os.path.exists(target_path):
-                with open(target_path, "r", encoding="utf-8") as f:
+                with open(target_path, encoding="utf-8") as f:
                     master_text = f.read()
                     
             # Extract all checked off tasks from conflict file and master file
@@ -795,7 +791,7 @@ async def auto_heal_syncthing_conflict(rel_path: str, full_path: str) -> bool:
                 today_str = datetime.now().strftime("%Y-%m-%d")
                 existing_archive = ""
                 if os.path.exists(completed_file):
-                    with open(completed_file, "r", encoding="utf-8") as f:
+                    with open(completed_file, encoding="utf-8") as f:
                         existing_archive = f.read()
                         
                 new_archives = []
@@ -835,9 +831,9 @@ async def auto_heal_syncthing_conflict(rel_path: str, full_path: str) -> bool:
             
         # Case C: Both files exist and are identical
         else:
-            with open(full_path, "r", encoding="utf-8") as f:
+            with open(full_path, encoding="utf-8") as f:
                 c_content = f.read()
-            with open(target_path, "r", encoding="utf-8") as f:
+            with open(target_path, encoding="utf-8") as f:
                 t_content = f.read()
             if c_content.strip() == t_content.strip():
                 print(f"Backend [Auto-Healer]: Conflict file {rel_path} is identical to target. Removing conflict file.")

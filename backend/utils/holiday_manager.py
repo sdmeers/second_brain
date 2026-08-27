@@ -1,7 +1,6 @@
 import os
 import json
-import re
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional, Tuple
 from backend.config import OBSIDIAN_VAULT_PATH
 from backend.vault.writer import atomic_write
@@ -12,7 +11,7 @@ def get_holiday_state() -> dict:
     """Reads current holiday pause state."""
     if os.path.exists(HOLIDAY_STATE_PATH):
         try:
-            with open(HOLIDAY_STATE_PATH, "r", encoding="utf-8") as f:
+            with open(HOLIDAY_STATE_PATH, encoding="utf-8") as f:
                 return json.load(f)
         except Exception:
             pass

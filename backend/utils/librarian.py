@@ -136,7 +136,7 @@ async def enrich_note_metadata(saved_file_path: str, note_text: str, classificat
         type_tag = "#type/concept"
         
     try:
-        with open(saved_file_path, "r", encoding="utf-8") as f:
+        with open(saved_file_path, encoding="utf-8") as f:
             content = f.read()
             
         parts = content.split("---")
@@ -215,7 +215,7 @@ async def determine_para_destination(title: str, text: str, is_pdf: bool = False
     from backend.config import (
         OBSIDIAN_VAULT_PATH, ARTICLES_AND_NEWS_PATH, ARTICLES_SOURCES_PATH,
         MANUALS_AND_EQUIPMENT_PATH, MANUALS_SOURCES_PATH, BOOKS_AND_MEDIA_PATH,
-        CHEATSHEETS_PATH, RESEARCH_BRAIN_PATH
+        CHEATSHEETS_PATH
     )
     
     # Fast path for known types

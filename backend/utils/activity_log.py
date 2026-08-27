@@ -20,7 +20,7 @@ def log_librarian_activity(title: str, location: str, source_type: str, extra: s
     existing = ''
     if os.path.exists(log_path):
         try:
-            with open(log_path, 'r', encoding='utf-8') as f:
+            with open(log_path, encoding='utf-8') as f:
                 existing = f.read()
         except Exception:
             existing = ''

@@ -1,6 +1,3 @@
-import os
-import json
-from datetime import datetime
 from backend.config import GEMINI_MODEL
 from backend.utils.gemini import call_gemini_with_retry
 from google.genai import types

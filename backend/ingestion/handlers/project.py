@@ -1,5 +1,4 @@
 import os
-import re
 from datetime import datetime
 from backend.config import OBSIDIAN_VAULT_PATH
 from backend.utils.gemini import call_gemini_with_retry

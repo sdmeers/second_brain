@@ -26,7 +26,7 @@ async def update_concept_page(concept_name: str, new_summary: str, source_title:
     
     if os.path.exists(target_path):
         print(f"Backend [Concept]: Updating existing {'atlas' if is_atlas else 'concept'} [[{clean_concept}]]")
-        with open(target_path, "r", encoding="utf-8") as f:
+        with open(target_path, encoding="utf-8") as f:
             existing_content = f.read()
             
         preserve_msg = "\n\nCRITICAL: This is an Atlas Map of Content. DO NOT modify the '# Map of Content' section or any Dataview queries. Only update the definition and discussion sections above it." if is_atlas else ""

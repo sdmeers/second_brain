@@ -3,7 +3,7 @@ import re
 import shutil
 import difflib
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import Optional, List
 from pydantic import BaseModel, Field
 from google.genai import types
 
@@ -190,7 +190,7 @@ async def handle_task_action(action: VaultAction) -> str:
     if not os.path.exists(TASKS_FILE):
         return f"⚠️ Tasks file not found at {TASKS_FILE}"
         
-    with open(TASKS_FILE, "r", encoding="utf-8") as f:
+    with open(TASKS_FILE, encoding="utf-8") as f:
         lines = f.readlines()
         
     action_type = action.action_type
@@ -365,7 +365,7 @@ WHERE contains(tags, "#project/{proj_tag}") AND !completed
     if not matching_notes:
         # Cross-Fallback: Check if target exists as a task line in Next_Actions.md!
         if os.path.exists(TASKS_FILE):
-            with open(TASKS_FILE, "r", encoding="utf-8") as f:
+            with open(TASKS_FILE, encoding="utf-8") as f:
                 lines = f.readlines()
             matching_tasks = find_matching_tasks(query, lines)
             if matching_tasks:
@@ -441,7 +441,7 @@ async def handle_note_content_action(action: VaultAction) -> str:
     rel_path = matching_notes[0]
     full_path = os.path.join(OBSIDIAN_VAULT_PATH, rel_path)
     
-    with open(full_path, "r", encoding="utf-8") as f:
+    with open(full_path, encoding="utf-8") as f:
         content = f.read()
         
     action_type = action.action_type
@@ -475,7 +475,7 @@ async def handle_system_action(action: VaultAction) -> str:
             else:
                 subprocess.run(["git", "-C", OBSIDIAN_VAULT_PATH, "checkout", "HEAD~1", "--", "."], check=True)
                 log_action("Instruction Executed", "Reverted vault files to HEAD~1")
-                return f"✓ Reverted vault files to state before last action."
+                return "✓ Reverted vault files to state before last action."
         except Exception as err:
             print(f"Backend [Undo]: Error reverting vault action: {err}")
             return f"⚠️ Failed to undo last action: {err}"

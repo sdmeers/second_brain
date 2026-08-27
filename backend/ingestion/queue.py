@@ -2,7 +2,6 @@ import sqlite3
 import os
 import json
 from datetime import datetime
-from backend.config import OBSIDIAN_VAULT_PATH
 
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "second_brain.db")
 

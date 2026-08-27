@@ -66,7 +66,7 @@ def log_action(action_type: str, details: str, concepts: list[str] = None):
             return
             
         # Read existing content
-        with open(log_file_path, "r", encoding="utf-8") as f:
+        with open(log_file_path, encoding="utf-8") as f:
             content = f.read()
             
         # If today's header is already in the file, insert directly under it

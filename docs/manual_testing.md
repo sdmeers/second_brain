@@ -17,12 +17,33 @@ journalctl --user -u second-brain.service -f
 
 These four features were dead. They are the most important to verify.
 
+> **`/tickle` and `/done` defer or complete a task that already exists.** They search
+> `Next_Actions.md`, `Waiting_For.md` and `Someday_Maybe.md` for a **substring** of the
+> line, and report `❌ Task matching '...' not found in active task lists.` if nothing
+> matches. That message is correct behaviour, not a failure — check the task exists and
+> that you are matching text actually in it. (Captured items are not yet tasks; process
+> them with `/clarify` first.)
+
+**A1 — `/tickle` (was completely dead).** Self-contained, so it does not depend on what is
+already in your lists:
+
+1. `/in Test tickle target` → confirms "📥 Captured"
+2. `/clarify` → choose **⚡ Next Action** → pick any context
+3. `/tickle Test tickle target`
+
+Expected: the calendar picker appears, and tapping a date **edits that same message** into
+`🔔 Deferred until DD-MM-YYYY`. The line in `Next_Actions.md` gains `🔔 YYYY-MM-DD`, and the
+task disappears from `/next` until that date.
+
+*Was:* `❌ Error queueing your request: name 'TICKLE_SESSIONS' is not defined` — the
+calendar never appeared at all. **If you get as far as the calendar, this bug is fixed**,
+even if the search then reports no match.
+
 | # | Command | Expected | Was |
 |---|---|---|---|
-| A1 | `/tickle Buy birthday card` | Calendar picker appears; pick a date; confirms "Deferred until DD-MM-YYYY"; the task in `Next_Actions.md` gains `🔔 YYYY-MM-DD` | Silent `NameError`, nothing happened |
 | A2 | `/holiday personal 23rd Aug` | "Holiday Mode Activated", scope `#personal`, correct date | `NameError` on any non-ISO date |
 | A3 | `/holiday` → 🏠 Personal → 📅 Open Calendar Picker → pick a date | Same confirmation via the button path | Button path worked, typed dates did not |
-| A4 | `/reflect` → **5. 🚨 Deadlines** | "Weekly Accomplishments: **N** action(s) completed" where N > 0 | Always reported 0 |
+| A4 | `/reflect` → **5. 🚨 Deadlines** | "Weekly Accomplishments: **N** action(s) completed" — should be non-zero (your vault currently has 13 in the last 7 days) | Always reported 0 |
 
 **A5 — Instruction agent (was writing to a phantom file).** Send as plain text, not a command:
 > `add a task to test the instruction handler`
@@ -46,7 +67,7 @@ Confirm **no** `00_System/Tasks.md` file has been created — that was the phant
 | B3 | Choose **⚡ Next Action**, pick a context | Lands in `Next_Actions.md` with `@context` and a category tag |
 | B4 | `/next` | Personal / Professional / Both picker; each filters correctly |
 | B5 | `/next @home` | Filters by context directly, no picker |
-| B6 | `/done Test capture from review branch` | Marked complete, moved to `z_Completed.md` |
+| B6 | `/done Test capture from review branch` | Marked complete, moved to `z_Completed.md` (must match text in a task created by B1–B3) |
 | B7 | `/status` | Counts match what is in the files |
 | B8 | `/waiting` | Lists delegated items |
 | B9 | `/reflect` → walk all 5 steps → **🏠 Reflection Hub** | Hub screen identical whether reached via `/reflect` or the Hub button (these were duplicated code paths; now one) |

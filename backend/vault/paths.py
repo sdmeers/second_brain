@@ -1,6 +1,5 @@
 import os
 import re
-from typing import Optional
 from backend.config import SUMMARIES_PATH, ATLAS_PATH, CONCEPTS_PATH
 
 def get_atlas_themes() -> list[str]:
@@ -25,7 +24,7 @@ def get_existing_concepts() -> list[str]:
         print(f"Error reading Existing Concepts: {e}")
         return []
 
-def is_url_already_ingested(url: str) -> Optional[str]:
+def is_url_already_ingested(url: str) -> str | None:
     """
     Checks if the URL is already present in any of the existing summaries.
     Returns the title of the existing summary if found, else None.

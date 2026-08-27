@@ -2,7 +2,6 @@ import os
 import re
 import asyncio
 import httpx
-from typing import Optional
 
 from backend.config import OBSIDIAN_VAULT_PATH
 from backend.vault.paths import is_url_already_ingested, get_atlas_themes
@@ -30,7 +29,7 @@ async def process_capture_core(
     title: str = "Untitled Capture",
     author_hint: str = "",
     markdown_text: str = "",
-    file_path: Optional[str] = None,
+    file_path: str | None = None,
     deep_extraction: bool = True,
     is_research: bool = False
 ) -> dict:

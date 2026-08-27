@@ -42,6 +42,9 @@ select = ["F", "E4", "E7", "E9", "B", "UP"]
 ignore = [
     "B008",  # FastAPI dependency-injection defaults
     "UP007", # Optional[X] is fine on 3.11
+    "E701",  # `if x: return` one-liners are used consistently throughout this codebase
+    "B904",  # raise-from inside except: noisy here, the handlers log context already
+    "B007",  # unused loop control vars (mostly `for root, dirs, files in os.walk`)
 ]
 
 [tool.pytest.ini_options]

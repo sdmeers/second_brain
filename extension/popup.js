@@ -12,11 +12,10 @@ async function getApiBase() {
     } catch (e) {}
   }
   
-  const candidates = [
-    "http://100.86.195.104:8085",
-    "http://192.168.50.101:8085",
-    "http://localhost:8085"
-  ];
+  // Addresses come from config.js (gitignored; see config.example.js)
+  const candidates = (typeof SECOND_BRAIN_API_CANDIDATES !== 'undefined')
+    ? SECOND_BRAIN_API_CANDIDATES
+    : ["http://localhost:8080"];
   
   for (const candidate of candidates) {
     try {
@@ -30,7 +29,7 @@ async function getApiBase() {
       }
     } catch (e) {}
   }
-  return "http://100.86.195.104:8085";
+  return candidates[0];
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -232,9 +231,14 @@ document.addEventListener('DOMContentLoaded', async () => {
       // Send to Backend
       statusMessage.textContent = "Generating Brain Node...";
       const targetApiBase = await getApiBase();
+      const headers = { 'Content-Type': 'application/json' };
+      // Sent only when API_AUTH_TOKEN is configured on both sides (see config.js)
+      if (typeof SECOND_BRAIN_API_TOKEN !== 'undefined' && SECOND_BRAIN_API_TOKEN) {
+        headers['Authorization'] = `Bearer ${SECOND_BRAIN_API_TOKEN}`;
+      }
       const response = await fetch(`${targetApiBase}/process`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: headers,
         body: JSON.stringify({ 
           source: "extension", 
           url: url, 

@@ -114,8 +114,8 @@ def append_gtd_item(filepath: str, item_line: str):
     existing_items = []
     if os.path.exists(filepath):
         with open(filepath, encoding="utf-8") as f:
-            for l in f:
-                s = l.strip()
+            for raw_line in f:
+                s = raw_line.strip()
                 if "🎉" in s or "Inbox Zero" in s or "All clear" in s or "List clear" in s or "*None*" in s:
                     continue
                 if fname == "Captured.md":

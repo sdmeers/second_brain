@@ -4,6 +4,7 @@ import shutil
 import asyncio
 import httpx
 from datetime import datetime
+from pydantic import BaseModel, Field
 from backend.config import (
     INBOX_MD_FILE,
     INBOX_PATH,
@@ -148,26 +149,502 @@ async def scan_and_process_inbox():
         except Exception as e:
             print(f"Backend [Watcher]: Error queueing dropped file {filename}: {e}")
 
-async def process_queue_worker():
-    """Background worker that pulls items from the SQLite queue,
-    runs the LLM classifier, routes, and processes them."""
-    item = get_next_pending_item()
-    if not item:
+AUDIO_EXTS = ('.ogg', '.mp3', '.wav', '.m4a', '.3gp', '.opus')
+DOC_EXTS = ('.pdf', '.pptx')
+IMAGE_EXTS = ('.png', '.jpg', '.jpeg', '.webp', '.tiff', '.bmp')
+
+IMAGE_MIME_TYPES = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
+
+# Phrases that deterministically force the Deep Research pipeline, bypassing the classifier.
+RESEARCH_TRIGGERS = (
+    "/research_brain", "/research", "#research", "add to research brain", "add to research",
+    "/centaur", "add to centaur brain", "#centaur", "centaur brain",
+)
+
+PARA_NOTE_CATEGORIES = ("quick_note", "idea", "reference", "meeting_transcript", "project_note")
+
+
+def cache_content_text(item_id: int, text: str):
+    """Persist extracted/transcribed text back onto the queue row so a retry of this
+    item does not re-run transcription or OCR."""
+    from backend.ingestion.queue import get_db_connection
+    conn = get_db_connection()
+    try:
+        conn.execute(
+            "UPDATE ingestion_queue SET content_text = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (text, item_id)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+async def _extract_image_text(file_path: str, caption: str) -> str:
+    """OCR / describe an image via the multimodal model."""
+    _, ext = os.path.splitext(file_path.lower())
+    mime_type = IMAGE_MIME_TYPES.get(ext, "image/png")
+
+    img_bytes = await asyncio.to_thread(_read_file_bytes, file_path)
+
+    from google.genai import types
+
+    from backend.config import GEMINI_MODEL
+    from backend.utils.gemini import call_gemini_with_retry
+
+    image_part = types.Part.from_bytes(data=img_bytes, mime_type=mime_type)
+
+    if caption.strip():
+        prompt = (
+            f"Analyze the image and follow this instruction: {caption.strip()}\n"
+            "Return only the extracted information requested."
+        )
+    else:
+        prompt = (
+            "You are an OCR and document extraction system. Read this image and extract all text inside it.\n"
+            "If it is an ID card, driving license, passport, receipt, or document, extract and list all fields clearly.\n"
+            "Return only the extracted text, keeping the layout logical."
+        )
+
+    response = await call_gemini_with_retry(model=GEMINI_MODEL, contents=[image_part, prompt])
+    return response.text.strip()
+
+
+def _read_file_bytes(path: str) -> bytes:
+    with open(path, "rb") as f:
+        return f.read()
+
+
+async def prepare_content(item_id: int, file_path: str, content_text: str) -> str | None:
+    """Turn a queued attachment into classifiable text.
+
+    Returns the text to classify, or None if the item should be dropped (a blank
+    voice note). Extracted text is cached back to the queue row.
+    """
+    if not file_path:
+        return content_text
+
+    lowered = file_path.lower()
+
+    if lowered.endswith(AUDIO_EXTS):
+        if content_text.strip():
+            return content_text
+        print(f"Backend [Queue Worker]: Audio file detected ({os.path.basename(file_path)}). Running transcription...")
+        from backend.processing.transcriber import transcribe_audio_local
+        transcription = await transcribe_audio_local(file_path)
+        cache_content_text(item_id, transcription)
+
+        if not transcription.strip():
+            print(f"Backend [Queue Worker]: Audio transcription for {os.path.basename(file_path)} "
+                  "was blank/silent. Skipping ingestion.")
+            return None
+        return transcription
+
+    if lowered.endswith(DOC_EXTS):
+        if content_text.strip():
+            return content_text
+        print(f"Backend [Queue Worker]: Document file detected ({os.path.basename(file_path)}). "
+              "Running text extraction for classification...")
+        try:
+            _, ext = os.path.splitext(lowered)
+            if ext == ".pdf":
+                from backend.processing.extractor import extract_pdf_text_from_bytes
+                raw = await asyncio.to_thread(_read_file_bytes, file_path)
+                extracted = extract_pdf_text_from_bytes(raw)
+            else:
+                from backend.processing.extractor import extract_pptx_text
+                extracted = await asyncio.to_thread(extract_pptx_text, file_path)
+
+            if extracted.strip():
+                cache_content_text(item_id, extracted)
+                print("Backend [Queue Worker]: Document text extraction completed and cached in database.")
+                return extracted
+        except Exception as ext_e:
+            print(f"Backend [Queue Worker]: Error extracting text for classification: {ext_e}")
+        return content_text
+
+    if lowered.endswith(IMAGE_EXTS):
+        print(f"Backend [Queue Worker]: Image file detected ({os.path.basename(file_path)}). "
+              "Running multimodal text extraction...")
+        try:
+            extracted = await _extract_image_text(file_path, content_text)
+            if extracted:
+                cache_content_text(item_id, extracted)
+                print("Backend [Queue Worker]: Image text extraction completed and cached in database.")
+                return extracted
+        except Exception as img_e:
+            print(f"Backend [Queue Worker]: Error extracting text from image: {img_e}")
+        return content_text
+
+    return content_text
+
+
+def detect_research_request(text: str, subject: str = "") -> bool:
+    """True when the input explicitly asks for the Deep Research pipeline.
+
+    Text and subject are searched separately so a trigger cannot match by spanning
+    the boundary between them.
+    """
+    text_lower = (text or "").lower()
+    subject_lower = (subject or "").lower()
+    return any(t in text_lower or t in subject_lower for t in RESEARCH_TRIGGERS)
+
+
+def strip_research_triggers(text: str) -> str:
+    """Remove trigger phrases so they don't leak into the saved note body."""
+    for trigger in RESEARCH_TRIGGERS:
+        text = re.compile(re.escape(trigger), re.IGNORECASE).sub("", text).strip()
+    return text
+
+
+async def looks_like_document(url: str, file_path: str) -> bool:
+    """Whether this capture should take the deep document-extraction path."""
+    if file_path and file_path.lower().endswith(DOC_EXTS):
+        return True
+    if not url:
+        return False
+
+    clean_u = url.lower().split("?")[0]
+    if clean_u.endswith(DOC_EXTS) or "/pdf/" in clean_u or "/manuals/" in clean_u:
+        return True
+
+    # Fall back to a HEAD request for URLs that serve documents without a file
+    # extension. This previously raised NameError (httpx was never imported) and the
+    # error was swallowed, so the probe never actually ran.
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=5.0) as check_client:
+            head_res = await check_client.head(url, headers={"User-Agent": "Mozilla/5.0"})
+            ct = head_res.headers.get("content-type", "").lower()
+            return "application/pdf" in ct or "powerpoint" in ct
+    except Exception as e:
+        print(f"Backend [Queue Worker]: Content-type probe failed for {url}: {e}")
+        return False
+
+
+def write_para_note(target_dir: str, title: str, body: str, tags: list[str],
+                    source_label: str, file_path: str = None,
+                    extra_frontmatter: dict = None) -> str:
+    """Write a note into a PARA folder, copying any raw source file alongside it.
+
+    Single implementation of what were two near-identical 45-line blocks in the
+    queue worker (one for 03_Areas matches, one for 02_Projects/Ideas).
+    """
+    from backend.utils.sanitize import sanitize_filename
+    from backend.vault.tasks import dump_frontmatter
+
+    os.makedirs(target_dir, exist_ok=True)
+    safe_title = sanitize_filename(title) or "Untitled Capture"
+    dest_path = os.path.join(target_dir, f"{safe_title}.md")
+
+    # Resolve name collisions
+    counter = 1
+    stem = dest_path[:-3]
+    while os.path.exists(dest_path):
+        dest_path = f"{stem}_{counter}.md"
+        counter += 1
+
+    # Copy the raw source file next to the note so the capture stays traceable
+    source_link = source_label
+    if file_path and os.path.exists(file_path):
+        _, ext = os.path.splitext(file_path.lower())
+        if ext not in (".md", ".txt"):
+            try:
+                raw_dest_name = f"{os.path.basename(dest_path)[:-3]}_raw{ext}"
+                shutil.copy2(file_path, os.path.join(target_dir, raw_dest_name))
+                source_link = f"[[{raw_dest_name}]]"
+            except OSError as copy_e:
+                print(f"Backend [PARA Writer]: Failed to copy raw file: {copy_e}")
+
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    frontmatter = {"title": title, "date_created": timestamp, "source": source_link, "tags": tags}
+    if extra_frontmatter:
+        frontmatter.update(extra_frontmatter)
+
+    content = (
+        f"{dump_frontmatter(frontmatter)}"
+        f"# {title}\n\n"
+        f"*Created on {timestamp} via {source_link}*\n\n"
+        f"---\n\n"
+        f"{body}\n"
+    )
+
+    from backend.vault.writer import atomic_write
+    atomic_write(dest_path, content)
+    return dest_path
+
+
+class PARARoutingResult(BaseModel):
+    matched_type: str = Field(description="The type of folder matched. Must be one of: 'project', 'area', or 'None'.")
+    matched_name: str = Field(description="The exact name of the project or area matched, or 'None'.")
+    note_title: str = Field(description="A clean, descriptive title for this note (3 to 6 words).")
+    reasoning: str = Field(description="Brief explanation of the match.")
+
+
+async def match_para_folder(text: str) -> tuple[PARARoutingResult, list[str], dict]:
+    """Ask the model which active Project or Area this note belongs to.
+
+    Returns (match, active_project_names, active_area_name_to_relpath).
+    """
+    from google.genai import types
+
+    from backend.config import GEMINI_MODEL
+    from backend.utils.gemini import call_gemini_with_retry
+
+    projects_dir = os.path.join(OBSIDIAN_VAULT_PATH, "02_Projects")
+    active_projects = []
+    if os.path.exists(projects_dir):
+        active_projects = [
+            d for d in os.listdir(projects_dir)
+            if os.path.isdir(os.path.join(projects_dir, d)) and not d.startswith(".")
+        ]
+
+    areas_dir = os.path.join(OBSIDIAN_VAULT_PATH, "03_Areas")
+    active_areas_map = {}
+    if os.path.exists(areas_dir):
+        for root, dirs, _ in os.walk(areas_dir):
+            dirs[:] = [d for d in dirs if not d.startswith(".")]
+            for d in dirs:
+                full_path = os.path.join(root, d)
+                active_areas_map[d] = os.path.relpath(full_path, areas_dir)
+
+    system_instruction = (
+        f"You are a personal information librarian for Steven's Second Brain.\n"
+        f"Your task is to analyze the incoming note and map it to exactly ONE of the active Projects or Areas if it fits.\n\n"
+        f"Active Projects (cased exactly): {active_projects}\n"
+        f"Active Areas (cased exactly): {list(active_areas_map.keys())}\n\n"
+        f"CRITICAL INSTRUCTION:\n"
+        f"- If the note is about an ongoing area of life or a domain of interest (e.g., family/Rosie, cookery, health, music, finance/legal, server administration, coding, or work domains TF RAID, Dstl, Southampton), map it to 'area' with the matched area name.\n"
+        f"- If the note is about a specific temporary project with a deadline/goal (e.g., 'Second Brain', 'Hermes', 'VibeCook'), map it to 'project' with the matched project name.\n"
+        f"- If it doesn't clearly fit any of these, set matched_type to 'None'.\n"
+        f"- Generatively produce a clean, brief note title (3 to 6 words) in note_title (do not use quotes or special characters)."
+    )
+
+    try:
+        config = types.GenerateContentConfig(
+            system_instruction=system_instruction,
+            temperature=0.1,
+            response_mime_type="application/json",
+            response_schema=PARARoutingResult
+        )
+        response = await call_gemini_with_retry(
+            model=GEMINI_MODEL,
+            contents=f"Map this note:\n\n{text}",
+            config=config
+        )
+        match = PARARoutingResult.model_validate_json(response.text.strip())
+    except Exception as e:
+        print(f"Watcher Router: Error matching PARA category via Gemini: {e}")
+        match = PARARoutingResult(
+            matched_type="None",
+            matched_name="None",
+            note_title="Quick Capture",
+            reasoning=f"Fallback due to error: {e}"
+        )
+
+    return match, active_projects, active_areas_map
+
+
+async def route_para_note(item_id: int, classification, classification_input: str, clean_input: str,
+                          url: str, file_path: str, raw_payload: dict, source_label: str) -> tuple[str, str]:
+    """Route a quick_note/idea/reference/meeting/project_note to its PARA home.
+
+    Returns (result_title, saved_file_path).
+    """
+    match, active_projects, active_areas_map = await match_para_folder(classification_input)
+
+    # 1. Matched an active project -> save inside the project folder
+    if match.matched_type == "project" and match.matched_name in active_projects:
+        result = await process_project_item(
+            classification_input, source_label,
+            category=classification.category, raw_file_path=file_path,
+            matched_project=match.matched_name, matched_title=match.note_title
+        )
+        return result.get("title"), result.get("file_path")
+
+    # 2. Matched an area -> save inside the area folder
+    if match.matched_type == "area" and match.matched_name in active_areas_map:
+        target_dir = os.path.join(OBSIDIAN_VAULT_PATH, "03_Areas", active_areas_map[match.matched_name])
+        dest = write_para_note(
+            target_dir, match.note_title, clean_input,
+            tags=["area", match.matched_name.lower().replace(" ", "_")],
+            source_label=source_label, file_path=file_path,
+            extra_frontmatter={"area": match.matched_name},
+        )
+        return match.note_title, dest
+
+    # 3. Unmatched idea -> park it in the project ideas folder
+    if classification.category == "idea":
+        target_dir = os.path.join(OBSIDIAN_VAULT_PATH, "02_Projects", "Ideas")
+        dest = write_para_note(
+            target_dir, match.note_title, clean_input,
+            tags=["future_project", "idea"],
+            source_label=source_label, file_path=file_path,
+        )
+        return match.note_title, dest
+
+    # 4. Otherwise fall back to a lightweight reference summary
+    target_url = url or f"https://local.brain/bookmark/{item_id}"
+    target_title = raw_payload.get("title") or match.note_title or "Bookmark Capture"
+    notes_clean = clean_input.replace(target_url, "").strip() if target_url in clean_input else clean_input
+
+    result = await process_capture_core(
+        url=target_url,
+        title=target_title,
+        markdown_text=notes_clean,
+        file_path=file_path,
+        deep_extraction=False
+    )
+    return result.get("title", target_title), result.get("node_path")
+
+
+async def finalise_item(item_id: int, classification, result_title: str, saved_file_path: str,
+                        source_type: str, clean_input: str, research_requested: bool,
+                        instruction_msg: str = None):
+    """Post-processing shared by every successful ingest: log, commit, index, enrich, notify.
+
+    Each step is independently guarded -- a failure in indexing must not lose the note.
+    """
+    update_item_status(item_id, "completed")
+
+    location_str = "Unknown"
+    if saved_file_path:
+        try:
+            rel_path = os.path.relpath(saved_file_path, OBSIDIAN_VAULT_PATH)
+            location_str = os.path.dirname(rel_path) or "root"
+        except ValueError:
+            pass
+
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    completed_entry = f"- [[{result_title}]] - {source_type.title()} Source (Processed on {timestamp})\n"
+
+    try:
+        from backend.vault.writer import atomic_write
+        old_content = ""
+        if os.path.exists(COMPLETED_MD_FILE):
+            try:
+                with open(COMPLETED_MD_FILE, encoding="utf-8") as f:
+                    old_content = f.read()
+            except OSError:
+                old_content = ""
+        atomic_write(COMPLETED_MD_FILE, old_content + completed_entry)
+    except Exception as e:
+        print(f"Backend [Queue Worker]: Error writing to {COMPLETED_MD_FILE}: {e}")
+
+    # Git commit (blocking subprocess -> off the event loop)
+    try:
+        from backend.utils.git import commit_vault_changes
+        commit_message = f"[orchestrator] Ingested: [[{result_title}]] (Category: {classification.category})"
+        await asyncio.to_thread(commit_vault_changes, commit_message)
+    except Exception as git_e:
+        print(f"Backend [Queue Worker]: Git commit failed: {git_e}")
+
+    try:
+        from backend.utils.activity_log import log_librarian_activity
+        log_librarian_activity(
+            title=result_title,
+            location=location_str,
+            source_type=f'{classification.category} via {source_type}'
+        )
+    except Exception as log_e:
+        print(f'Backend [Queue Worker]: Activity log write failed: {log_e}')
+
+    try:
+        from backend.rag.vectorstore import index_vault
+        print("Backend [Queue Worker]: Ingest complete. Running incremental vector indexer...")
+        await index_vault()
+    except Exception as index_e:
+        print(f"Backend [Queue Worker]: Incremental indexing failed: {index_e}")
+
+    try:
+        from backend.utils.librarian import enrich_note_metadata
+        if saved_file_path and saved_file_path.endswith('.md'):
+            print('Backend [Queue Worker]: Enriching note with tags and wikilinks...')
+            await enrich_note_metadata(
+                saved_file_path=saved_file_path,
+                note_text=clean_input,
+                classification_category=classification.category,
+                is_research=research_requested
+            )
+    except Exception as enrich_e:
+        print(f'Backend [Queue Worker]: Note enrichment failed (non-fatal): {enrich_e}')
+
+    # Stash the result on the queue row so the Jira callback can find it later
+    try:
+        import json
+
+        from backend.ingestion.queue import get_db_connection
+        conn = get_db_connection()
+        try:
+            row = conn.execute("SELECT raw_payload FROM ingestion_queue WHERE id = ?", (item_id,)).fetchone()
+            if row:
+                payload_dict = json.loads(row["raw_payload"]) if row["raw_payload"] else {}
+                payload_dict["processed_title"] = result_title
+                payload_dict["saved_file_path"] = saved_file_path
+                conn.execute("UPDATE ingestion_queue SET raw_payload = ? WHERE id = ?",
+                             (json.dumps(payload_dict), item_id))
+                conn.commit()
+        finally:
+            conn.close()
+    except Exception as payload_e:
+        print(f"Backend [Queue Worker]: Failed to save processed_title in database: {payload_e}")
+
+    if classification.category == "instruction":
+        await notify_via_telegram(instruction_msg or "🧠✅ Vault instruction executed.")
         return
-        
+
+    reply_markup = {
+        "inline_keyboard": [[{"text": "📤 Send to Jira", "callback_data": f"jira:{item_id}"}]]
+    }
+    await notify_via_telegram(
+        f"🧠✅ Processed: [[{result_title}]]\n"
+        f"Category: {classification.category} (conf: {classification.confidence})\n"
+        f"Location: {location_str}\n"
+        f"Reason: {classification.reasoning}",
+        reply_markup=reply_markup
+    )
+
+
+async def classify_item(classification_input: str, research_requested: bool):
+    """Run the LLM router, honouring the deterministic /research override."""
+    if research_requested:
+        from backend.ingestion.classifier import ClassificationResult
+        print("Backend [Queue Worker]: Router detected explicit /research trigger (Category: deep_research)")
+        return ClassificationResult(
+            category="deep_research",
+            confidence=1.0,
+            reasoning="Explicit /research command trigger."
+        )
+
+    classification = await classify_input(classification_input)
+    print(f"Backend [Queue Worker]: Router classified item as '{classification.category}' "
+          f"(confidence: {classification.confidence})")
+    return classification
+
+
+async def process_queue_worker(max_items: int = 5):
+    """Drain up to max_items from the SQLite queue.
+
+    Previously handled exactly one item per 15s tick, so a backlog of 20 captures took
+    five minutes to clear.
+    """
+    for _ in range(max_items):
+        item = get_next_pending_item()
+        if not item:
+            return
+        await _process_one_item(item)
+
+
+async def _process_one_item(item):
     item_id = item["id"]
     source_type = item["source_type"]
     raw_payload = json_loads_safe(item["raw_payload"])
     content_text = item["content_text"] or ""
     file_path = item["file_path"]
-    
+
     print(f"\nBackend [Queue Worker]: Processing item ID {item_id} (Source: {source_type})")
     update_item_status(item_id, "processing")
-    
+
     try:
-        # Guard: if a staged file was expected but has already been consumed by
-        # another queue item (timestamp-collision duplicate), skip immediately
-        # rather than retrying and spamming error notifications.
+        # Guard: a staged file already consumed by a timestamp-collision duplicate
         if file_path and not os.path.exists(file_path) and "staging" in file_path:
             print(f"Backend [Queue Worker]: Staged file missing for item {item_id} "
                   f"({os.path.basename(file_path)}). Likely already consumed by a "
@@ -176,557 +653,100 @@ async def process_queue_worker():
                                error_message="Staging file already consumed by duplicate queue entry")
             return
 
-        # Check if the file is an audio file and needs transcription
-        if file_path and (file_path.lower().endswith(('.ogg', '.mp3', '.wav', '.m4a', '.3gp', '.opus'))):
-            if not content_text.strip():
-                print(f"Backend [Queue Worker]: Audio file detected ({os.path.basename(file_path)}). Running transcription...")
-                from backend.processing.transcriber import transcribe_audio_local
-                transcription = await transcribe_audio_local(file_path)
-                content_text = transcription
-                
-                # Update database record with the transcribed text to cache it
-                from backend.ingestion.queue import get_db_connection
-                db_conn = get_db_connection()
-                db_cursor = db_conn.cursor()
-                db_cursor.execute("UPDATE ingestion_queue SET content_text = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (transcription, item_id))
-                db_conn.commit()
-                db_conn.close()
-                # If transcription is blank/silent, drop item safely to prevent creating spurious notes
-                if not content_text.strip():
-                    print(f"Backend [Queue Worker]: Audio transcription for {os.path.basename(file_path)} was blank/silent. Skipping ingestion.")
-                    update_item_status(item_id, "completed", error_message="Blank/silent voice note ignored.")
-                    if os.path.exists(file_path) and ("staging" in file_path or "00_System/Inbox" in file_path):
-                        try:
-                            os.remove(file_path)
-                        except Exception:
-                            pass
-                    return
-
-        # Check if the file is a PDF or PPTX and needs text extraction for classification
-        elif file_path and file_path.lower().endswith(('.pdf', '.pptx')):
-            if not content_text.strip():
-                print(f"Backend [Queue Worker]: Document file detected ({os.path.basename(file_path)}). Running text extraction for classification...")
+        # 1. Turn attachments into classifiable text
+        prepared = await prepare_content(item_id, file_path, content_text)
+        if prepared is None:
+            update_item_status(item_id, "completed", error_message="Blank/silent voice note ignored.")
+            if file_path and os.path.exists(file_path) and ("staging" in file_path or "00_System/Inbox" in file_path):
                 try:
-                    _, ext = os.path.splitext(file_path.lower())
-                    extracted_text = ""
-                    if ext == ".pdf":
-                        from backend.processing.extractor import extract_pdf_text_from_bytes
-                        with open(file_path, "rb") as f:
-                            extracted_text = extract_pdf_text_from_bytes(f.read())
-                    elif ext == ".pptx":
-                        from backend.processing.extractor import extract_pptx_text
-                        extracted_text = extract_pptx_text(file_path)
-                    
-                    if extracted_text.strip():
-                        content_text = extracted_text
-                        # Update database record with the extracted text to cache it
-                        from backend.ingestion.queue import get_db_connection
-                        db_conn = get_db_connection()
-                        db_cursor = db_conn.cursor()
-                        db_cursor.execute("UPDATE ingestion_queue SET content_text = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (extracted_text, item_id))
-                        db_conn.commit()
-                        db_conn.close()
-                        print("Backend [Queue Worker]: Document text extraction completed and cached in database.")
-                except Exception as ext_e:
-                    print(f"Backend [Queue Worker]: Error extracting text for classification: {ext_e}")
-                
-        # Check if the file is an image file and needs OCR/text extraction
-        elif file_path and file_path.lower().endswith(('.png', '.jpg', '.jpeg', '.webp', '.tiff', '.bmp')):
-            print(f"Backend [Queue Worker]: Image file detected ({os.path.basename(file_path)}). Running multimodal text extraction...")
-            try:
-                # Determine MIME type
-                _, ext = os.path.splitext(file_path.lower())
-                mime_type = "image/png"
-                if ext in [".jpg", ".jpeg"]:
-                    mime_type = "image/jpeg"
-                elif ext == ".webp":
-                    mime_type = "image/webp"
-                
-                with open(file_path, "rb") as img_f:
-                    img_bytes = img_f.read()
-                    
-                from backend.config import GEMINI_MODEL
-                from google.genai import types
-                from backend.utils.gemini import call_gemini_with_retry
-                
-                image_part = types.Part.from_bytes(data=img_bytes, mime_type=mime_type)
-                
-                # If the user provided a caption or instruction, use it to guide extraction
-                if content_text.strip():
-                    prompt = (
-                        f"Analyze the image and follow this instruction: {content_text.strip()}\n"
-                        "Return only the extracted information requested."
-                    )
-                else:
-                    prompt = (
-                        "You are an OCR and document extraction system. Read this image and extract all text inside it.\n"
-                        "If it is an ID card, driving license, passport, receipt, or document, extract and list all fields clearly.\n"
-                        "Return only the extracted text, keeping the layout logical."
-                    )
-                
-                response = await call_gemini_with_retry(
-                    model=GEMINI_MODEL,
-                    contents=[image_part, prompt]
-                )
-                
-                extracted_text = response.text.strip()
-                if extracted_text:
-                    content_text = extracted_text
-                    # Update database record with the extracted text to cache it
-                    from backend.ingestion.queue import get_db_connection
-                    db_conn = get_db_connection()
-                    db_cursor = db_conn.cursor()
-                    db_cursor.execute("UPDATE ingestion_queue SET content_text = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (extracted_text, item_id))
-                    db_conn.commit()
-                    db_conn.close()
-                    print("Backend [Queue Worker]: Image text extraction completed and cached in database.")
-            except Exception as img_e:
-                print(f"Backend [Queue Worker]: Error extracting text from image: {img_e}")
+                    os.remove(file_path)
+                except OSError:
+                    pass
+            return
+        content_text = prepared
 
-        # Determine raw classification text
         classification_input = content_text
         if file_path and not classification_input:
             classification_input = f"File: {os.path.basename(file_path)}"
-            
-        # Check if Research Brain is explicitly requested
-        research_requested = False
-        triggers = [
-            "/research_brain", "/research", "#research", "add to research brain", "add to research",
-            "/centaur", "add to centaur brain", "#centaur", "centaur brain"
-        ]
-        text_lower = classification_input.lower()
-        subject_lower = str(raw_payload.get("subject", "")).lower()
-        
-        for trigger in triggers:
-            if trigger in text_lower or trigger in subject_lower:
-                research_requested = True
-                break
 
-        # 1. Run LLM Router (Classifier) with deterministic override for /research
-        if research_requested:
-            from backend.ingestion.classifier import ClassificationResult
-            classification = ClassificationResult(
-                category="deep_research",
-                confidence=1.0,
-                reasoning="Explicit /research command trigger."
-            )
-            print("Backend [Queue Worker]: Router detected explicit /research trigger (Category: deep_research)")
-        else:
-            classification = await classify_input(classification_input)
-            print(f"Backend [Queue Worker]: Router classified item as '{classification.category}' (confidence: {classification.confidence})")
-        
-        # 2. Process based on classification
-        success = False
-        result_title = "Ingested Capture"
-        
-        # Pull out URL if present
+        # 2. Classify
+        research_requested = detect_research_request(
+            classification_input, str(raw_payload.get("subject", ""))
+        )
+        classification = await classify_item(classification_input, research_requested)
+
+        # 3. Route
         urls = re.findall(r'(https?://[^\s)\]\n]+)', classification_input)
         url = urls[0] if urls else None
-        
         source_label = f"{source_type.title()} Input"
-                
-        # Clean trigger tags from input text so they don't appear in the final note body
-        clean_input = classification_input
-        for trigger in triggers:
-            pattern = re.compile(re.escape(trigger), re.IGNORECASE)
-            clean_input = pattern.sub("", clean_input).strip()
-            
-        # Check if URL or input refers to a PDF or PPTX file
-        is_pdf_or_pptx = False
-        if file_path and file_path.lower().endswith((".pdf", ".pptx")):
-            is_pdf_or_pptx = True
-        elif url:
-            clean_u = url.lower().split("?")[0]
-            if clean_u.endswith((".pdf", ".pptx")) or "/pdf/" in clean_u or "/manuals/" in clean_u:
-                is_pdf_or_pptx = True
-            else:
-                try:
-                    async with httpx.AsyncClient(follow_redirects=True, timeout=5.0) as check_client:
-                        head_res = await check_client.head(url, headers={"User-Agent": "Mozilla/5.0"})
-                        ct = head_res.headers.get("content-type", "").lower()
-                        if "application/pdf" in ct or "powerpoint" in ct:
-                            is_pdf_or_pptx = True
-                except Exception:
-                    pass
+        clean_input = strip_research_triggers(classification_input)
+        instruction_msg = None
 
-        saved_file_path = None
-        if research_requested or classification.category == "deep_research" or is_pdf_or_pptx:
+        if research_requested or classification.category == "deep_research" \
+                or await looks_like_document(url, file_path):
             # Full Research / Document Deep Extraction workflow
             target_url = url or f"https://local.brain/deep-research/{item_id}"
-            target_title = raw_payload.get("title") or (os.path.basename(file_path).rsplit(".", 1)[0] if file_path else "")
+            target_title = raw_payload.get("title") or (
+                os.path.basename(file_path).rsplit(".", 1)[0] if file_path else ""
+            )
             notes = clean_input.replace(target_url, "").strip() if target_url in clean_input else clean_input
-            
+
             result = await process_capture_core(
-                url=target_url,
-                title=target_title,
-                markdown_text=notes,
-                file_path=file_path,
-                deep_extraction=True,
-                is_research=True
+                url=target_url, title=target_title, markdown_text=notes,
+                file_path=file_path, deep_extraction=True, is_research=True
             )
             result_title = result.get("title", target_title)
             saved_file_path = result.get("node_path")
-            success = True
-            
+
         elif classification.category == "task":
-            # Task Handler: extract check-items and append to Next_Actions.md
-            msg = await process_task_item(classification_input, source_label)
+            await process_task_item(classification_input, source_label)
             result_title = "Tasks"
             saved_file_path = TASKS_MD_FILE
-            success = True
-            
+
         elif classification.category == "voice_dump":
-            # Voice Splitter Handler: split multi-topic dump and re-queue items
-            msg = await process_voice_dump_item(classification_input, source_label)
+            await process_voice_dump_item(classification_input, source_label)
             result_title = "Split Voice Dump"
-            success = True
-            
+            saved_file_path = None
+
         elif classification.category == "instruction":
-            # Vault Instruction Handler: execute agentic commands on vault notes, tasks, or structure
             from backend.ingestion.handlers.instruction import process_vault_instruction
-            msg = await process_vault_instruction(classification_input, source_label)
+            instruction_msg = await process_vault_instruction(classification_input, source_label)
             result_title = "Vault Instruction Executed"
-            success = True
+            saved_file_path = None
 
-        elif classification.category in ["quick_note", "idea", "reference", "meeting_transcript", "project_note"]:
-            # Quick Note/Idea/Reference/Meeting/Project Note: check if it matches an active project or area folder
-            # If yes: saves inside project or area. If no: saves as lightweight summary or future project idea
-            from pydantic import BaseModel, Field
-            class PARARoutingResult(BaseModel):
-                matched_type: str = Field(description="The type of folder matched. Must be one of: 'project', 'area', or 'None'.")
-                matched_name: str = Field(description="The exact name of the project or area matched, or 'None'.")
-                note_title: str = Field(description="A clean, descriptive title for this note (3 to 6 words).")
-                reasoning: str = Field(description="Brief explanation of the match.")
-
-            from backend.config import GEMINI_MODEL
-            from google.genai import types
-            from backend.utils.gemini import call_gemini_with_retry
-            from backend.utils.sanitize import sanitize_filename
-            
-            projects_dir = os.path.join(OBSIDIAN_VAULT_PATH, "02_Projects")
-            active_projects = []
-            if os.path.exists(projects_dir):
-                active_projects = [d for d in os.listdir(projects_dir) if os.path.isdir(os.path.join(projects_dir, d)) and not d.startswith(".")]
-                
-            areas_dir = os.path.join(OBSIDIAN_VAULT_PATH, "03_Areas")
-            active_areas_map = {}
-            if os.path.exists(areas_dir):
-                for root, dirs, files in os.walk(areas_dir):
-                    dirs[:] = [d for d in dirs if not d.startswith(".")]
-                    for d in dirs:
-                        full_path = os.path.join(root, d)
-                        rel_path = os.path.relpath(full_path, areas_dir)
-                        active_areas_map[d] = rel_path
-            
-            system_instruction = (
-                f"You are a personal information librarian for Steven's Second Brain.\n"
-                f"Your task is to analyze the incoming note and map it to exactly ONE of the active Projects or Areas if it fits.\n\n"
-                f"Active Projects (cased exactly): {active_projects}\n"
-                f"Active Areas (cased exactly): {list(active_areas_map.keys())}\n\n"
-                f"CRITICAL INSTRUCTION:\n"
-                f"- If the note is about an ongoing area of life or a domain of interest (e.g., family/Rosie, cookery, health, music, finance/legal, server administration, coding, or work domains TF RAID, Dstl, Southampton), map it to 'area' with the matched area name.\n"
-                f"- If the note is about a specific temporary project with a deadline/goal (e.g., 'Second Brain', 'Hermes', 'VibeCook'), map it to 'project' with the matched project name.\n"
-                f"- If it doesn't clearly fit any of these, set matched_type to 'None'.\n"
-                f"- Generatively produce a clean, brief note title (3 to 6 words) in note_title (do not use quotes or special characters)."
+        elif classification.category in PARA_NOTE_CATEGORIES:
+            result_title, saved_file_path = await route_para_note(
+                item_id, classification, classification_input, clean_input,
+                url, file_path, raw_payload, source_label
             )
-            
-            try:
-                config = types.GenerateContentConfig(
-                    system_instruction=system_instruction,
-                    temperature=0.1,
-                    response_mime_type="application/json",
-                    response_schema=PARARoutingResult
-                )
-                response = await call_gemini_with_retry(
-                    model=GEMINI_MODEL,
-                    contents=f"Map this note:\n\n{classification_input}",
-                    config=config
-                )
-                match = PARARoutingResult.model_validate_json(response.text.strip())
-            except Exception as e:
-                print(f"Watcher Router: Error matching PARA category via Gemini: {e}")
-                match = PARARoutingResult(
-                    matched_type="None",
-                    matched_name="None",
-                    note_title="Quick Capture",
-                    reasoning=f"Fallback due to error: {e}"
-                )
-                
-            if match.matched_type == "project" and match.matched_name in active_projects:
-                # Save inside the matched project folder
-                result = await process_project_item(
-                    classification_input, source_label,
-                    category=classification.category, raw_file_path=file_path,
-                    matched_project=match.matched_name, matched_title=match.note_title
-                )
-                result_title = result.get('title')
-                saved_file_path = result.get("file_path")
-                success = True
-                
-            elif match.matched_type == "area" and match.matched_name in active_areas_map:
-                # Save inside the matched area folder!
-                target_area_rel_path = active_areas_map[match.matched_name]
-                target_area_dir = os.path.join(OBSIDIAN_VAULT_PATH, "03_Areas", target_area_rel_path)
-                
-                safe_title = sanitize_filename(match.note_title)
-                file_path_dest = os.path.join(target_area_dir, f"{safe_title}.md")
-                
-                # Resolve name collisions
-                counter = 1
-                base_file_path = file_path_dest
-                while os.path.exists(file_path_dest):
-                    file_path_dest = base_file_path.replace(".md", f"_{counter}.md")
-                    counter += 1
-                    
-                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                
-                # Copy raw source file if provided (excluding .md and .txt duplicates)
-                source_link = source_label
-                if file_path and os.path.exists(file_path):
-                    _, ext = os.path.splitext(file_path.lower())
-                    if ext not in [".md", ".txt"]:
-                        try:
-                            import shutil
-                            raw_dest_name = f"{os.path.basename(file_path_dest).rsplit('.', 1)[0]}_raw{ext}"
-                            raw_dest_path = os.path.join(target_area_dir, raw_dest_name)
-                            shutil.copy2(file_path, raw_dest_path)
-                            source_link = f"[[{raw_dest_name}]]"
-                        except Exception as copy_e:
-                            print(f"Area Router: Failed to copy raw file: {copy_e}")
-                        
-                file_content = f"""---
-title: "{match.note_title}"
-area: "{match.matched_name}"
-date_created: "{timestamp}"
-source: "{source_link}"
-tags: [area, {match.matched_name.lower().replace(' ', '_')}]
----
-# {match.note_title}
 
-*Created on {timestamp} via {source_link}*
-
----
-
-{clean_input}
-"""
-                from backend.vault.writer import atomic_write
-                atomic_write(file_path_dest, file_content)
-                result_title = match.note_title
-                saved_file_path = file_path_dest
-                success = True
-                
-            elif classification.category == "idea":
-                # Save general project ideas in the 02_Projects/Ideas/ folder!
-                ideas_dir = os.path.join(OBSIDIAN_VAULT_PATH, "02_Projects", "Ideas")
-                os.makedirs(ideas_dir, exist_ok=True)
-                safe_title = sanitize_filename(match.note_title)
-                file_path_dest = os.path.join(ideas_dir, f"{safe_title}.md")
-                
-                # Check for name collisions
-                counter = 1
-                base_file_path = file_path_dest
-                while os.path.exists(file_path_dest):
-                    file_path_dest = base_file_path.replace(".md", f"_{counter}.md")
-                    counter += 1
-                
-                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                
-                # Copy raw source file if provided (excluding .md and .txt duplicates)
-                source_link = source_label
-                if file_path and os.path.exists(file_path):
-                    _, ext = os.path.splitext(file_path.lower())
-                    if ext not in [".md", ".txt"]:
-                        try:
-                            import shutil
-                            raw_dest_name = f"{os.path.basename(file_path_dest).rsplit('.', 1)[0]}_raw{ext}"
-                            raw_dest_path = os.path.join(ideas_dir, raw_dest_name)
-                            shutil.copy2(file_path, raw_dest_path)
-                            source_link = f"[[{raw_dest_name}]]"
-                        except Exception as copy_e:
-                            print(f"Project Router: Failed to copy raw idea file: {copy_e}")
-                
-                file_content = f"""---
-title: "{match.note_title}"
-date_created: "{timestamp}"
-source: "{source_link}"
-tags: [future_project, idea]
----
-# {match.note_title}
-
-*Created on {timestamp} via {source_link}*
-
----
-
-{clean_input}
-"""
-                from backend.vault.writer import atomic_write
-                atomic_write(file_path_dest, file_content)
-                result_title = match.note_title
-                saved_file_path = file_path_dest
-                success = True
-                
-            else:
-                # Save as standard lightweight summary in Reference_Notes/ (no concepts updated)
-                target_url = url or f"https://local.brain/bookmark/{item_id}"
-                target_title = raw_payload.get("title") or match.note_title or "Bookmark Capture"
-                notes_clean = clean_input.replace(target_url, "").strip() if target_url in clean_input else clean_input
-                
-                result = await process_capture_core(
-                    url=target_url,
-                    title=target_title,
-                    markdown_text=notes_clean,
-                    file_path=file_path,
-                    deep_extraction=False
-                )
-                result_title = result.get("title", target_title)
-                saved_file_path = result.get("node_path")
-                success = True
-            
         elif classification.category == "url_capture" or url:
-            # Lightweight URL Capture (without concept updates)
             target_url = url or f"https://local.brain/bookmark/{item_id}"
             target_title = raw_payload.get("title") or "Bookmark Capture"
-            notes = classification_input.replace(target_url, "").strip() if target_url in classification_input else classification_input
-            
+            notes = classification_input.replace(target_url, "").strip() \
+                if target_url in classification_input else classification_input
             result = await process_capture_core(
-                url=target_url,
-                title=target_title,
-                markdown_text=notes,
-                deep_extraction=False
+                url=target_url, title=target_title, markdown_text=notes, deep_extraction=False
             )
             result_title = result.get("title", target_title)
             saved_file_path = result.get("node_path")
-            success = True
-            
+
         else:
-            # Standard fallback (lightweight summary, no concept updates)
             target_url = f"https://local.brain/fallback/{item_id}"
             target_title = f"Capture {datetime.now().strftime('%Y-%m-%d %H:%M')}"
             result = await process_capture_core(
-                url=target_url,
-                title=target_title,
-                markdown_text=classification_input,
-                deep_extraction=False
+                url=target_url, title=target_title,
+                markdown_text=classification_input, deep_extraction=False
             )
             result_title = result.get("title", target_title)
             saved_file_path = result.get("node_path")
-            success = True
-            
-        if success:
-            update_item_status(item_id, "completed")
-            
-            # Extract display location relative to vault root
-            location_str = "Unknown"
-            if saved_file_path:
-                try:
-                    rel_path = os.path.relpath(saved_file_path, OBSIDIAN_VAULT_PATH)
-                    location_str = os.path.dirname(rel_path) or "root"
-                except Exception:
-                    pass
 
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            completed_entry = f"- [[{result_title}]] - {source_type.title()} Source (Processed on {timestamp})\n"
-            
-            # Log to completed list atomically to prevent corruption
-            try:
-                from backend.vault.writer import atomic_write
-                if os.path.exists(COMPLETED_MD_FILE):
-                    try:
-                        with open(COMPLETED_MD_FILE, encoding="utf-8") as f:
-                            old_content = f.read()
-                    except Exception:
-                        old_content = ""
-                else:
-                    old_content = ""
-                atomic_write(COMPLETED_MD_FILE, old_content + completed_entry)
-            except Exception as e:
-                print(f"Backend [Queue Worker]: Error writing to {COMPLETED_MD_FILE}: {e}")
-                
-            # Auto-commit to Git
-            try:
-                from backend.utils.git import commit_vault_changes
-                commit_message = f"[orchestrator] Ingested: [[{result_title}]] (Category: {classification.category})"
-                commit_vault_changes(commit_message)
-            except Exception as git_e:
-                print(f"Backend [Queue Worker]: Git commit failed: {git_e}")
-                
-            # Log to Librarian Activity Log
-            try:
-                from backend.utils.activity_log import log_librarian_activity
-                log_librarian_activity(
-                    title=result_title,
-                    location=location_str,
-                    source_type=f'{classification.category} via {source_type}'
-                )
-            except Exception as log_e:
-                print(f'Backend [Queue Worker]: Activity log write failed: {log_e}')
-                
-            # Trigger incremental vector indexing
-            try:
-                from backend.rag.vectorstore import index_vault
-                print("Backend [Queue Worker]: Ingest complete. Running incremental vector indexer...")
-                await index_vault()
-            except Exception as index_e:
-                print(f"Backend [Queue Worker]: Incremental indexing failed: {index_e}")
-                
-            # Enrich note with tags and wikilinks
-            try:
-                from backend.utils.librarian import enrich_note_metadata
-                if saved_file_path and saved_file_path.endswith('.md'):
-                    print('Backend [Queue Worker]: Enriching note with tags and wikilinks...')
-                    await enrich_note_metadata(
-                        saved_file_path=saved_file_path,
-                        note_text=clean_input,
-                        classification_category=classification.category,
-                        is_research=research_requested
-                    )
-            except Exception as enrich_e:
-                print(f'Backend [Queue Worker]: Note enrichment failed (non-fatal): {enrich_e}')
-                
-            # Save the processed title and node path in raw_payload so callback/Jira can access it later
-            try:
-                import json
-                from backend.ingestion.queue import get_db_connection
-                db_conn = get_db_connection()
-                db_cursor = db_conn.cursor()
-                db_cursor.execute("SELECT raw_payload FROM ingestion_queue WHERE id = ?", (item_id,))
-                row = db_cursor.fetchone()
-                if row:
-                    payload_dict = json.loads(row["raw_payload"]) if row["raw_payload"] else {}
-                    payload_dict["processed_title"] = result_title
-                    payload_dict["saved_file_path"] = saved_file_path
-                    db_cursor.execute("UPDATE ingestion_queue SET raw_payload = ? WHERE id = ?", (json.dumps(payload_dict), item_id))
-                db_conn.commit()
-                db_conn.close()
-            except Exception as payload_e:
-                print(f"Backend [Queue Worker]: Failed to save processed_title in database: {payload_e}")
+        # 4. Log, commit, index, enrich, notify
+        await finalise_item(
+            item_id, classification, result_title, saved_file_path,
+            source_type, clean_input, research_requested, instruction_msg
+        )
 
-            # Present a "Send to Jira" inline button
-            reply_markup = None
-            if item_id:
-                reply_markup = {
-                    "inline_keyboard": [
-                        [
-                            {
-                                "text": "📤 Send to Jira",
-                                "callback_data": f"jira:{item_id}"
-                            }
-                        ]
-                    ]
-                }
-
-            # Notify Steven
-            if classification.category == "instruction":
-                await notify_via_telegram(msg)
-            else:
-                await notify_via_telegram(
-                    f"🧠✅ Processed: [[{result_title}]]\n"
-                    f"Category: {classification.category} (conf: {classification.confidence})\n"
-                    f"Location: {location_str}\n"
-                    f"Reason: {classification.reasoning}",
-                    reply_markup=reply_markup
-                )
-            
     except DuplicateURLError as e:
         update_item_status(item_id, "completed")
         print(f"Backend [Queue Worker]: Duplicate detected, marked completed: {e}")
@@ -737,13 +757,13 @@ tags: [future_project, idea]
         await notify_via_telegram(f"🧠❌ Processing Failed for item ID {item_id}: {e}")
     finally:
         # Clean up temporary staged Telegram files
-        if file_path and os.path.exists(file_path):
-            if "staging" in os.path.abspath(file_path):
-                try:
-                    os.remove(file_path)
-                    print(f"Backend [Queue Worker]: Cleaned up staged file: {os.path.basename(file_path)}")
-                except Exception as cleanup_e:
-                    print(f"Backend [Queue Worker]: Failed to remove staged file {file_path}: {cleanup_e}")
+        if file_path and os.path.exists(file_path) and "staging" in os.path.abspath(file_path):
+            try:
+                os.remove(file_path)
+                print(f"Backend [Queue Worker]: Cleaned up staged file: {os.path.basename(file_path)}")
+            except OSError as cleanup_e:
+                print(f"Backend [Queue Worker]: Failed to remove staged file {file_path}: {cleanup_e}")
+
 
 def json_loads_safe(s: str) -> dict:
     try:
@@ -754,6 +774,31 @@ def json_loads_safe(s: str) -> dict:
 
 
 _notified_conflicts = set()
+
+# Strong references to long-lived background tasks (see watch_inbox_loop).
+_WATCHER_TASKS: set = set()
+
+# Syncthing's own marker. The device-suffix variant is intentionally narrow: an earlier
+# `-[A-Z0-9]{7}\.md$` also matched ordinary notes (e.g. "Notes-ABC1234.md") and the healer
+# would then move or delete them. Requiring the base name to also exist means we only
+# treat a file as a conflict copy when there is a real original for it to conflict with.
+SYNC_CONFLICT_MARKER = ".sync-conflict-"
+DEVICE_SUFFIX_RE = re.compile(r'^(?P<base>.+)-(?P<device>[A-Z0-9]{7})\.md$')
+
+
+def is_sync_conflict_file(filename: str, directory: str = None) -> bool:
+    """Whether ``filename`` looks like a Syncthing conflict copy."""
+    if SYNC_CONFLICT_MARKER in filename:
+        return True
+
+    m = DEVICE_SUFFIX_RE.match(filename)
+    if not m:
+        return False
+
+    # Only a conflict copy if the original it shadows is actually present.
+    if directory is None:
+        return False
+    return os.path.exists(os.path.join(directory, f"{m.group('base')}.md"))
 
 async def auto_heal_syncthing_conflict(rel_path: str, full_path: str) -> bool:
     """Attempts to automatically resolve and merge Syncthing conflict files without data loss.
@@ -807,7 +852,8 @@ async def auto_heal_syncthing_conflict(rel_path: str, full_path: str) -> bool:
             # Now build clean active tasks list for Next_Actions.md
             if master_text:
                 master_lines = master_text.splitlines()
-                clean_lines = [l for l in master_lines if not (l.strip().startswith("- [x]") or l.strip().startswith("- [X]"))]
+                clean_lines = [line for line in master_lines
+                               if not line.strip().lower().startswith("- [x]")]
                 from backend.vault.writer import atomic_write
                 atomic_write(target_path, "\n".join(clean_lines) + "\n")
             else:
@@ -859,7 +905,7 @@ async def scan_for_syncthing_conflicts():
                 if any(part.startswith(".") for part in root.split(os.sep)):
                     continue
                 for file in files:
-                    if ".sync-conflict-" in file or re.search(r'-[A-Z0-9]{7}\.md$', file):
+                    if is_sync_conflict_file(file, root):
                         full_path = os.path.join(root, file)
                         rel_path = os.path.relpath(full_path, OBSIDIAN_VAULT_PATH)
                         found.add((rel_path, full_path))
@@ -895,6 +941,8 @@ async def watch_inbox_loop():
     """Background polling loop that runs DB migrations, checks active inputs,
     and runs the queue processing worker."""
     print("Backend [Watcher]: Starting background watcher loop...")
+    from backend.config import ensure_vault_layout
+    ensure_vault_layout()
     init_queue_db()
     
     enable_obsidian = ENABLE_OBSIDIAN_INBOX_POLLING
@@ -904,7 +952,10 @@ async def watch_inbox_loop():
     print(f"Backend [Watcher]: Settings -> Obsidian polling: {enable_obsidian}, Telegram polling: {enable_telegram}, Gmail polling: {enable_gmail}")
 
     if enable_telegram:
-        asyncio.create_task(run_telegram_bot_loop())
+        # Hold a strong reference; a task the loop only weakly references can be GC'd.
+        bot_task = asyncio.create_task(run_telegram_bot_loop())
+        _WATCHER_TASKS.add(bot_task)
+        bot_task.add_done_callback(_WATCHER_TASKS.discard)
 
     counter = 0
     while True:
@@ -936,7 +987,9 @@ async def watch_inbox_loop():
                 except Exception as index_e:
                     print(f"Backend [Watcher]: Periodic indexing failed: {index_e}")
             
-            # Reorganize Next_Actions.md dashboard and archive completed items
+            # Reorganize Next_Actions.md dashboard and archive completed items.
+            # Stays on the loop: it awaits the project-promotion prompt, and measured at
+            # well under a millisecond on a real vault.
             try:
                 from backend.utils.tasks_dashboard import maintain_tasks_dashboard
                 await maintain_tasks_dashboard()

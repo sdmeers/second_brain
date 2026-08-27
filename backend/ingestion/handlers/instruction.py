@@ -3,7 +3,6 @@ import re
 import shutil
 import difflib
 from datetime import datetime
-from typing import Optional, List
 from pydantic import BaseModel, Field
 from google.genai import types
 
@@ -26,7 +25,7 @@ TRASH_DIR = os.path.join(OBSIDIAN_VAULT_PATH, "05_Archive", "Trash")
 
 class TargetSelector(BaseModel):
     query: str = Field(description="Search text, title pattern, or phrase used to locate target file(s) or line(s).")
-    scope: Optional[str] = Field(default="all", description="Scope of search: 'tasks', 'notes', 'vault', or specific directory path.")
+    scope: str | None = Field(default="all", description="Scope of search: 'tasks', 'notes', 'vault', or specific directory path.")
 
 class VaultAction(BaseModel):
     action_type: str = Field(
@@ -35,14 +34,14 @@ class VaultAction(BaseModel):
                     "'append_to_note', 'update_frontmatter', 'add_tag', 'remove_tag', 'reindex', 'run_cleaner', 'get_sitrep', 'undo_last_action'."
     )
     target: TargetSelector
-    destination: Optional[str] = Field(default="", description="Destination path or folder (e.g. '03_Areas/Reading', '02_Projects/Hermes', '05_Archive').")
-    new_content: Optional[str] = Field(default="", description="Text to append, new title, or replacement content.")
-    new_metadata_json: Optional[str] = Field(default="", description="Optional JSON string of metadata key-value pairs (e.g. '{\"status\": \"active\"}').")
+    destination: str | None = Field(default="", description="Destination path or folder (e.g. '03_Areas/Reading', '02_Projects/Hermes', '05_Archive').")
+    new_content: str | None = Field(default="", description="Text to append, new title, or replacement content.")
+    new_metadata_json: str | None = Field(default="", description="Optional JSON string of metadata key-value pairs (e.g. '{\"status\": \"active\"}').")
     reasoning: str = Field(description="Brief explanation of what this specific action intends to perform.")
 
 class InstructionPlan(BaseModel):
     summary: str = Field(description="Human-readable summary of the actions to be executed.")
-    actions: List[VaultAction] = Field(description="List of individual vault actions to perform.")
+    actions: list[VaultAction] = Field(description="List of individual vault actions to perform.")
 
 SYSTEM_INSTRUCTION = """You are an expert agentic command interpreter for Steven's Second Brain system.
 Analyze the user's natural language instruction and translate it into a structured InstructionPlan consisting of one or more discrete VaultAction steps.

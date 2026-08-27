@@ -70,28 +70,28 @@ CAPTURED_MD_FILE = os.path.join(TASKS_PATH, "Captured.md")
 # System internal paths
 INTERNAL_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "00_System", "Internal")
 
-os.makedirs(SUMMARIES_PATH, exist_ok=True)
-os.makedirs(SOURCES_PATH, exist_ok=True)
-os.makedirs(ATLAS_PATH, exist_ok=True)
-os.makedirs(CONCEPTS_PATH, exist_ok=True)
-os.makedirs(REFERENCE_NOTES_PATH, exist_ok=True)
-os.makedirs(REFERENCE_SOURCES_PATH, exist_ok=True)
-os.makedirs(INTERNAL_PATH, exist_ok=True)
-os.makedirs(TASKS_PATH, exist_ok=True)
-if os.getenv("ENABLE_OBSIDIAN_INBOX_POLLING", "false").lower() == "true":
-    os.makedirs(INBOX_PATH, exist_ok=True)
-    os.makedirs(INBOX_FAILED_PATH, exist_ok=True)
-    os.makedirs(INBOX_ARCHIVE_PATH, exist_ok=True)
-os.makedirs(IMPORT_PATH, exist_ok=True)
+def ensure_vault_layout():
+    """Create the vault directories and seed files the system expects.
 
-# Initialize import files if they do not exist
-for filepath in [INBOX_MD_FILE, COMPLETED_MD_FILE, FAILED_MD_FILE]:
-    if not os.path.exists(filepath):
-        try:
-            with open(filepath, "w", encoding="utf-8") as f:
-                f.write("")
-        except Exception as e:
-            print(f"Backend [Startup]: Error creating initialization file {filepath}: {e}")
+    Called explicitly at startup rather than run as an import side effect, so that
+    importing backend.config (which every script does) no longer writes to disk.
+    """
+    for path in (SUMMARIES_PATH, SOURCES_PATH, ATLAS_PATH, CONCEPTS_PATH,
+                 REFERENCE_NOTES_PATH, REFERENCE_SOURCES_PATH, INTERNAL_PATH,
+                 TASKS_PATH, IMPORT_PATH):
+        os.makedirs(path, exist_ok=True)
+
+    if ENABLE_OBSIDIAN_INBOX_POLLING:
+        for path in (INBOX_PATH, INBOX_FAILED_PATH, INBOX_ARCHIVE_PATH):
+            os.makedirs(path, exist_ok=True)
+
+    for filepath in (INBOX_MD_FILE, COMPLETED_MD_FILE, FAILED_MD_FILE):
+        if not os.path.exists(filepath):
+            try:
+                with open(filepath, "w", encoding="utf-8") as f:
+                    f.write("")
+            except OSError as e:
+                print(f"Backend [Startup]: Error creating initialization file {filepath}: {e}")
 
 # Telegram Configuration
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -116,3 +116,7 @@ ENABLE_TELEGRAM_BOT = os.getenv("ENABLE_TELEGRAM_BOT", "false").lower() == "true
 ENABLE_GMAIL_POLLING = os.getenv("ENABLE_GMAIL_POLLING", "false").lower() == "true"
 
 PORT = int(os.getenv("PORT", 8080))
+
+# Optional shared secret for the HTTP API (/process, /query). When set, callers must
+# send `Authorization: Bearer <token>`. Unset leaves the API open, as before.
+API_AUTH_TOKEN = os.getenv("API_AUTH_TOKEN", "")

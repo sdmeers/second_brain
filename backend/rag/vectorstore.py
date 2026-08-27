@@ -150,7 +150,7 @@ async def index_file(vault_relative_path: str, full_file_path: str, file_hash: s
         cursor = conn.cursor()
         
         # Insert metadata and vectors
-        for idx, (chunk_text_val, vector) in enumerate(zip(chunks, embeddings)):
+        for idx, (chunk_text_val, vector) in enumerate(zip(chunks, embeddings, strict=False)):
             # 1. Insert into SQLite table
             cursor.execute("""
                 INSERT INTO brain_chunks (file_path, chunk_index, text_content, file_hash, file_mtime, file_size)

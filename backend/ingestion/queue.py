@@ -1,7 +1,6 @@
 import sqlite3
 import os
 import json
-from datetime import datetime
 
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "second_brain.db")
 
@@ -47,38 +46,66 @@ def add_to_queue(source_type: str, raw_payload: dict, content_text: str = None, 
     conn.close()
     return item_id
 
+# Failed items back off exponentially instead of being retried on the very next tick,
+# which previously produced three immediate failures and three Telegram error messages.
+RETRY_BACKOFF_MINUTES = (1, 5, 30)
+MAX_RETRIES = 3
+
+
 def get_next_pending_item():
-    """Retrieves the oldest pending item from the queue."""
+    """Retrieves the oldest item eligible for processing.
+
+    Pending items are always eligible. Failed items become eligible again only once
+    their backoff window (keyed on retry_count) has elapsed.
+    """
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("""
+    # retry_count is already incremented when the failure is recorded, so the first
+    # failed row arrives here with retry_count == 1 and gets the first backoff tier.
+    backoff_cases = " ".join(
+        f"WHEN {i} THEN '-{minutes} minutes'"
+        for i, minutes in enumerate(RETRY_BACKOFF_MINUTES, start=1)
+    )
+    cursor.execute(f"""
         SELECT * FROM ingestion_queue
-        WHERE status = 'pending' OR (status = 'failed' AND retry_count < 3)
+        WHERE status = 'pending'
+           OR (
+                status = 'failed'
+                AND retry_count < ?
+                AND updated_at <= datetime('now', CASE retry_count {backoff_cases}
+                                                  ELSE '-30 minutes' END)
+              )
         ORDER BY created_at ASC LIMIT 1
-    """)
+    """, (MAX_RETRIES,))
     row = cursor.fetchone()
     conn.close()
     return row
 
 def update_item_status(item_id: int, status: str, error_message: str = None):
-    """Updates the status of an item in the queue."""
+    """Updates the status of an item in the queue.
+
+    Uses SQLite's CURRENT_TIMESTAMP (UTC) rather than Python's local-time now(), so
+    updated_at is comparable with the column default that inserts already write and
+    with the datetime('now') backoff comparison above. Previously inserts were UTC and
+    updates were local, which under BST left the two an hour apart.
+    """
     conn = get_db_connection()
     cursor = conn.cursor()
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
+
     if status == 'failed':
         cursor.execute("""
             UPDATE ingestion_queue
-            SET status = ?, error_message = ?, retry_count = retry_count + 1, updated_at = ?
+            SET status = ?, error_message = ?, retry_count = retry_count + 1,
+                updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
-        """, (status, error_message, now, item_id))
+        """, (status, error_message, item_id))
     else:
         cursor.execute("""
             UPDATE ingestion_queue
-            SET status = ?, error_message = NULL, updated_at = ?
+            SET status = ?, error_message = NULL, updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
-        """, (status, now, item_id))
-        
+        """, (status, item_id))
+
     conn.commit()
     conn.close()
 

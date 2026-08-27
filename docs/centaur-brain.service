@@ -4,11 +4,13 @@ After=network.target
 
 [Service]
 Type=simple
-# EDIT THIS: Absolute path to your second_brain/backend directory
-WorkingDirectory=/home/username/second_brain/backend
+# EDIT THIS: Absolute path to your second_brain repository root.
+# main.py must run as a module from the repo root so `backend` resolves as a package.
+WorkingDirectory=/home/username/second_brain
 # EDIT THIS: Absolute path to your uv binary (find with 'which uv')
-ExecStart=/home/username/.local/bin/uv run main.py
+ExecStart=/home/username/.local/bin/uv run --project backend python3 -m backend.main
 Restart=always
+RestartSec=5
 Environment=PYTHONUNBUFFERED=1
 
 [Install]

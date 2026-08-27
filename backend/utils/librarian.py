@@ -7,6 +7,7 @@ from backend.rag.embeddings import get_embeddings_batch
 from backend.rag.vectorstore import get_vector_db_connection
 from backend.utils.gemini import call_gemini_with_retry
 from backend.config import GEMINI_MODEL, WIKILINK_SIMILARITY_THRESHOLD
+from backend.utils.sanitize import sanitize_filename
 from backend.vault.writer import atomic_write
 
 class WikilinkResult(BaseModel):
@@ -181,6 +182,9 @@ async def enrich_note_metadata(saved_file_path: str, note_text: str, classificat
     except Exception as e:
         print(f"Librarian: Failed to process frontmatter for {saved_file_path}: {e}")
 
+ALLOWED_PARA_CATEGORIES = {"02_Projects", "03_Areas", "04_Resources"}
+
+
 class PARADestination(BaseModel):
     category: str = Field(description="Must be one of: '02_Projects', '03_Areas', '04_Resources'")
     subfolder: str = Field(
@@ -242,8 +246,25 @@ async def determine_para_destination(title: str, text: str, is_pdf: bool = False
             config=config
         )
         dest = PARADestination.model_validate_json(response.text.strip())
-        
-        target_dir = os.path.join(OBSIDIAN_VAULT_PATH, dest.category, dest.subfolder)
+
+        # The category and subfolder come from the model, and are used to create
+        # directories: validate them against the allowlist and confine the result to
+        # the vault rather than trusting the response.
+        if dest.category not in ALLOWED_PARA_CATEGORIES:
+            raise ValueError(f"Model returned disallowed PARA category: {dest.category!r}")
+
+        subfolder = dest.subfolder.replace("\\", "/").strip("/")
+        segments = [sanitize_filename(part, default="") for part in subfolder.split("/")]
+        segments = [seg for seg in segments if seg and seg not in (".", "..")]
+        if not segments or len(segments) > 2:
+            raise ValueError(f"Model returned unusable PARA subfolder: {dest.subfolder!r}")
+
+        target_dir = os.path.join(OBSIDIAN_VAULT_PATH, dest.category, *segments)
+
+        vault_root = os.path.realpath(OBSIDIAN_VAULT_PATH)
+        if os.path.commonpath([vault_root, os.path.realpath(target_dir)]) != vault_root:
+            raise ValueError(f"Resolved PARA destination escapes the vault: {target_dir!r}")
+
         sources_dir = os.path.join(target_dir, "Sources")
         os.makedirs(sources_dir, exist_ok=True)
         return target_dir, sources_dir

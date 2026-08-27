@@ -10,19 +10,33 @@ from backend.config import (
 )
 from backend.config import GEMINI_MODEL
 from backend.utils.gemini import call_gemini_with_retry
+from backend.utils.sessions import SessionStore
 
-QA_CONTEXTS = {}
+# Q&A conversation memory (5 exchanges), expiring like the other flow state.
+QA_CONTEXTS = SessionStore("qa")
+
+# asyncio.create_task returns a task the loop only weakly references; without keeping a
+# strong reference here the GC can cancel an in-flight handler mid-message.
+_BACKGROUND_TASKS: set = set()
+
+
+def _spawn(coro):
+    task = asyncio.create_task(coro)
+    _BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_TASKS.discard)
+    return task
 
 def get_qa_context(chat_id: int) -> list:
-    if chat_id not in QA_CONTEXTS:
-        QA_CONTEXTS[chat_id] = []
-    return QA_CONTEXTS[chat_id]
+    ctx = QA_CONTEXTS.get(chat_id)
+    if ctx is None:
+        ctx = []
+        QA_CONTEXTS[chat_id] = ctx
+    return ctx
 
 def add_qa_context(chat_id: int, role: str, text: str):
     ctx = get_qa_context(chat_id)
     ctx.append({"role": role, "text": text})
-    if len(ctx) > 10:  # 5 exchanges
-        QA_CONTEXTS[chat_id] = ctx[-10:]
+    QA_CONTEXTS[chat_id] = ctx[-10:]  # keep 5 exchanges
 
 async def handle_qa_query(query_text: str, chat_id: int, token: str, http_client):
     await http_client.post(
@@ -559,7 +573,7 @@ async def run_telegram_bot_loop():
                                 if allowed_ids and int(chat_id) not in allowed_ids:
                                     print(f"Backend [Telegram Bot]: Ignored callback query from unauthorized chat {chat_id}")
                                     continue
-                                asyncio.create_task(handle_telegram_callback_query(callback_query, token, client))
+                                _spawn(handle_telegram_callback_query(callback_query, token, client))
                                 continue
 
                             message = update.get("message") or update.get("channel_post")
@@ -568,7 +582,7 @@ async def run_telegram_bot_loop():
                                 if allowed_ids and int(chat_id) not in allowed_ids:
                                     print(f"Backend [Telegram Bot]: Ignored message from unauthorized chat {chat_id}")
                                     continue
-                                asyncio.create_task(process_telegram_message(message, token, client))
+                                _spawn(process_telegram_message(message, token, client))
                 elif response.status_code == 409:
                     print("Backend [Telegram Bot]: Telegram returned HTTP 409 (Conflict with another polling loop). Retrying in 3s...")
                     await asyncio.sleep(3)

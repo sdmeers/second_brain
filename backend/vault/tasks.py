@@ -17,7 +17,7 @@ import os
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from typing import Iterator, Optional
+from collections.abc import Iterator
 
 import yaml
 
@@ -58,13 +58,13 @@ class Task:
     description: str
     checked: bool = False
     contexts: list[str] = field(default_factory=list)
-    project: Optional[str] = None
-    category: Optional[str] = None
-    waiting_on: Optional[str] = None
-    due: Optional[date] = None
-    tickler: Optional[date] = None
-    source: Optional[str] = None
-    completed_on: Optional[date] = None
+    project: str | None = None
+    category: str | None = None
+    waiting_on: str | None = None
+    due: date | None = None
+    tickler: date | None = None
+    source: str | None = None
+    completed_on: date | None = None
 
     @property
     def is_deferred(self) -> bool:
@@ -72,7 +72,7 @@ class Task:
         return self.tickler is not None and self.tickler > datetime.now().date()
 
 
-def _parse_iso(value: str) -> Optional[date]:
+def _parse_iso(value: str) -> date | None:
     try:
         return datetime.strptime(value, "%Y-%m-%d").date()
     except (ValueError, TypeError):
@@ -108,7 +108,7 @@ def strip_task_metadata(line: str) -> str:
     return re.sub(r'\s{2,}', " ", text).strip()
 
 
-def parse_task_line(line: str) -> Optional[Task]:
+def parse_task_line(line: str) -> Task | None:
     """Parse one markdown line into a :class:`Task`, or None if it is not a task line."""
     m = CHECKBOX_RE.match(line.rstrip("\n"))
     if not m:
@@ -232,7 +232,7 @@ class Project:
         return str(self.frontmatter.get("status", "active")).lower()
 
     @property
-    def due_date(self) -> Optional[date]:
+    def due_date(self) -> date | None:
         return parse_flexible_date(self.frontmatter.get("due_date"))
 
     @property
@@ -244,7 +244,7 @@ class Project:
         return self.name.strip().replace(" ", "_")
 
 
-def parse_flexible_date(value) -> Optional[date]:
+def parse_flexible_date(value) -> date | None:
     """Parse a frontmatter date that may be ISO, DD-MM-YYYY, or already a date."""
     if isinstance(value, date):
         return value
@@ -302,7 +302,7 @@ def projects_root() -> str:
     return os.path.join(OBSIDIAN_VAULT_PATH, "02_Projects")
 
 
-def find_project_note(name: str) -> Optional[str]:
+def find_project_note(name: str) -> str | None:
     """Locate a project's master note by name.
 
     Resolution order matches what the handlers previously each re-implemented:
@@ -346,7 +346,7 @@ def find_project_note(name: str) -> Optional[str]:
     return None
 
 
-def read_project(path: str) -> Optional[Project]:
+def read_project(path: str) -> Project | None:
     """Load a project master note into a :class:`Project`."""
     if not path or not os.path.exists(path):
         return None

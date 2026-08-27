@@ -1,6 +1,5 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import Optional
 from backend.processing.capture import process_capture_core, DuplicateURLError
 
 router = APIRouter()
@@ -8,9 +7,9 @@ router = APIRouter()
 class CapturePayload(BaseModel):
     source: str
     url: str
-    title: Optional[str] = "Untitled Capture"
-    authorHint: Optional[str] = ""
-    markdownText: Optional[str] = ""
+    title: str | None = "Untitled Capture"
+    authorHint: str | None = ""
+    markdownText: str | None = ""
 
 @router.post("/process")
 async def process_capture(payload: CapturePayload):

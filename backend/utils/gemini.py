@@ -3,13 +3,40 @@ import time
 import json
 import hashlib
 import asyncio
-from typing import Optional
 from datetime import datetime
 from google import genai
 from google.genai import types
 from backend.config import GEMINI_API_KEY
 
-client = genai.Client(api_key=GEMINI_API_KEY)
+_client = None
+
+
+def get_client():
+    """Lazily construct the Gemini client.
+
+    Previously this module built a genai.Client at import time unconditionally, so
+    merely importing the classifier under LLM_PROVIDER=openai still required a Gemini
+    key. Deferring construction lets the non-Gemini providers actually load.
+    """
+    global _client
+    if _client is None:
+        if not GEMINI_API_KEY:
+            raise RuntimeError(
+                "GEMINI_API_KEY is not set but a Gemini call was attempted. "
+                "Set GEMINI_API_KEY, or set LLM_PROVIDER/EMBEDDING_PROVIDER to a configured provider."
+            )
+        _client = genai.Client(api_key=GEMINI_API_KEY)
+    return _client
+
+
+class _LazyClientProxy:
+    """Backwards-compatible ``client`` attribute; resolves on first attribute access."""
+
+    def __getattr__(self, name):
+        return getattr(get_client(), name)
+
+
+client = _LazyClientProxy()
 
 CACHE_METADATA_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".cache_metadata.json")
 
@@ -95,7 +122,7 @@ async def call_gemini_with_retry(model: str, contents, config = None, max_retrie
     # Original Gemini implementation
     for attempt in range(max_retries):
         try:
-            return await client.aio.models.generate_content(
+            return await get_client().aio.models.generate_content(
                 model=model,
                 contents=contents,
                 config=config
@@ -111,7 +138,7 @@ async def call_gemini_with_retry(model: str, contents, config = None, max_retrie
             else:
                 raise e
 
-async def get_or_create_context_cache(model: str, system_instruction: str) -> Optional[str]:
+async def get_or_create_context_cache(model: str, system_instruction: str) -> str | None:
     """
     Checks if there's an active context cache for this system_instruction.
     If not, and the instruction meets the minimum token size (4,096 tokens),
@@ -122,7 +149,7 @@ async def get_or_create_context_cache(model: str, system_instruction: str) -> Op
     if LLM_PROVIDER != "gemini":
         return None
     try:
-        token_res = await client.aio.models.count_tokens(
+        token_res = await get_client().aio.models.count_tokens(
             model=model,
             contents=system_instruction
         )
@@ -152,13 +179,13 @@ async def get_or_create_context_cache(model: str, system_instruction: str) -> Op
         if cached_name:
             print(f"Backend [Cache]: Cleaning up old or expired cache: {cached_name}")
             try:
-                await client.aio.caches.delete(name=cached_name)
+                await get_client().aio.caches.delete(name=cached_name)
             except Exception as e:
                 print(f"Backend [Cache]: Error deleting old cache: {e}")
     
     print("Backend [Cache]: Creating new context cache for system instruction...")
     try:
-        cache = await client.aio.caches.create(
+        cache = await get_client().aio.caches.create(
             model=model,
             config=types.CreateCachedContentConfig(
                 display_name=f"centaur_brain_sys_instr_{model.replace('-', '_')}",

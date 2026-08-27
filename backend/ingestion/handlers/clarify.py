@@ -5,6 +5,7 @@ import shutil
 import httpx
 from backend.config import OBSIDIAN_VAULT_PATH, TASKS_PATH
 from backend.vault.writer import atomic_write
+from backend.utils.sessions import SessionStore
 from backend.vault.tasks import (
     append_project_step,
     archive_completed_lines,
@@ -12,8 +13,9 @@ from backend.vault.tasks import (
     strip_task_metadata,
 )
 
-# In-memory session state for clarify flow
-CLARIFY_SESSIONS = {}
+# In-memory session state for the clarify flow; expires so an abandoned run is
+# reported as "session expired" rather than lingering forever.
+CLARIFY_SESSIONS = SessionStore("clarify")
 
 async def handle_clarify_command(chat_id: int, token: str, http_client: httpx.AsyncClient):
     captured_md = os.path.join(TASKS_PATH, "Captured.md")

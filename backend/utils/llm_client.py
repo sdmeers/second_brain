@@ -1,4 +1,3 @@
-from typing import Optional, Type
 from pydantic import BaseModel
 
 from backend.config import (
@@ -61,7 +60,7 @@ async def generate_text(prompt: str, system_instruction: str = None, temperature
     else:
         raise ValueError(f"Unsupported LLM_PROVIDER: {LLM_PROVIDER}")
 
-async def generate_structured_output(prompt: str, response_schema: Type[BaseModel], system_instruction: str = None, temperature: float = 0.1) -> BaseModel:
+async def generate_structured_output(prompt: str, response_schema: type[BaseModel], system_instruction: str = None, temperature: float = 0.1) -> BaseModel:
     """Generate structured output matching a Pydantic schema using the configured LLM provider."""
     if LLM_PROVIDER == "gemini":
         from backend.utils.gemini import call_gemini_with_retry
@@ -155,7 +154,7 @@ async def get_embeddings_batch(texts: list[str]) -> list[list[float]]:
     else:
         raise ValueError(f"Unsupported EMBEDDING_PROVIDER: {EMBEDDING_PROVIDER}")
 
-async def get_or_create_context_cache(system_instruction: str) -> Optional[str]:
+async def get_or_create_context_cache(system_instruction: str) -> str | None:
     """Returns a cache name if Gemini supports it and conditions are met. Otherwise returns None."""
     if LLM_PROVIDER != "gemini":
         return None

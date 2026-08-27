@@ -30,7 +30,8 @@ def fetch_cover(url: str, is_youtube: bool, title: str = "", author: str = "", d
                 if "items" in data:
                     img = data["items"][0].get("volumeInfo", {}).get("imageLinks", {})
                     return img.get("extraLarge") or img.get("large") or img.get("thumbnail") or ""
-        except: pass
+        except Exception as e:
+            print(f"Cover lookup failed: {e}")
 
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
@@ -40,7 +41,8 @@ def fetch_cover(url: str, is_youtube: bool, title: str = "", author: str = "", d
             if not match:
                 match = re.search(r'<meta [^>]*content=["''](.*?)["''][^>]*property=["'']og:image["'']', res.text)
             if match: return match.group(1)
-    except: pass
+    except Exception as e:
+        print(f"Cover scrape failed: {e}")
     return ""
 
 def reindex():
@@ -63,7 +65,7 @@ def reindex():
         
         try:
             data = yaml.safe_load(yaml_str)
-        except:
+        except yaml.YAMLError:
             print(f"Failed to parse YAML for {file_path.name}")
             continue
             

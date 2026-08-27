@@ -77,3 +77,6 @@ backend/sources_all.txt
 
 # Archive folder
 docs/archive/
+
+# Extension local network config (see extension/config.example.js)
+extension/config.js

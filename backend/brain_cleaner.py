@@ -12,7 +12,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 # Existing relative imports
-from backend.logger import log_action
+from backend.utils.logger import log_action
 from google import genai
 
 from backend.vault.writer import atomic_write
@@ -24,7 +24,8 @@ dotenv_path = os.path.join(os.path.dirname(__file__), ".env")
 load_dotenv(dotenv_path=dotenv_path)
 VAULT_PATH = os.getenv("OBSIDIAN_VAULT_PATH")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-from backend.config import (
+
+from backend.config import (  # noqa: E402  (must follow load_dotenv above)
     LLM_PROVIDER, GEMINI_MODEL
 )
 
@@ -187,7 +188,8 @@ def clean_file(file_path):
     
     try:
         data = yaml.safe_load(yaml_block)
-    except: return
+    except yaml.YAMLError:
+        return
 
     old_tags = data.get("tags", [])
     new_tags = ["brain"]
@@ -290,7 +292,7 @@ Here are the concept pages to merge:
                     yaml_block = match.group(1)
                     try:
                         data = yaml.safe_load(yaml_block) or {}
-                    except:
+                    except yaml.YAMLError:
                         data = {}
                     body = merged_content[match.end():].strip()
                 else:

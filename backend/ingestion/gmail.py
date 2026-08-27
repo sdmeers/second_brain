@@ -172,7 +172,7 @@ async def poll_gmail():
             loop.run_in_executor(None, _process_gmail_emails, gmail_email, gmail_app_password, loop),
             timeout=20.0
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         print("Backend [Gmail Watcher]: Gmail polling timed out after 20s.")
     except Exception as e:
         print(f"Backend [Gmail Watcher]: Error polling Gmail: {e}")

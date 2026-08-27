@@ -1,7 +1,6 @@
 import os
 import json
 from datetime import datetime
-from typing import Optional, Tuple
 from backend.config import OBSIDIAN_VAULT_PATH
 from backend.vault.writer import atomic_write
 
@@ -57,7 +56,7 @@ def clear_holiday_pause(scope: str = "all"):
     state["updated_at"] = datetime.now().isoformat()
     save_holiday_state(state)
 
-def is_scope_paused(scope: str) -> Tuple[bool, Optional[str]]:
+def is_scope_paused(scope: str) -> tuple[bool, str | None]:
     """Checks if a given scope ('personal', 'professional', 'all') is paused today.
     Returns (is_paused: bool, until_date_display: str)."""
     state = get_holiday_state()

@@ -4,6 +4,7 @@ import shutil
 from datetime import datetime, timedelta
 import httpx
 from backend.config import OBSIDIAN_VAULT_PATH
+from backend.utils.sessions import SessionStore
 from backend.vault.tasks import (
     append_project_step,
     archive_completed_lines,
@@ -222,10 +223,11 @@ async def handle_project_command(chat_id: int, text: str, token: str, http_clien
         
     await send_msg(chat_id, token, http_client, msg)
 
-PROMOTION_SESSIONS = {}
+# Multi-step flow state, expiring so abandoned flows do not leak (see utils/sessions.py)
+PROMOTION_SESSIONS = SessionStore("promotion")
 
 # Pending /tickle deferrals, keyed by chat_id -> task search string
-TICKLE_SESSIONS = {}
+TICKLE_SESSIONS = SessionStore("tickle")
 
 async def handle_done_command(chat_id: int, text: str, token: str, http_client: httpx.AsyncClient):
     parts = text.split(maxsplit=1)
@@ -260,7 +262,7 @@ async def handle_done_command(chat_id: int, text: str, token: str, http_client: 
                 new_lines.append(line)
                 
         if found:
-            has_active = any("- [ ]" in l for l in new_lines)
+            has_active = any("- [ ]" in line for line in new_lines)
             if not has_active:
                 fname = os.path.basename(fp)
                 if fname == "Next_Actions.md":
@@ -1083,19 +1085,18 @@ def get_reflect_summary_data() -> dict:
         "project_roadmaps": project_roadmaps
     }
 
-async def handle_reflect_command(chat_id: int, token: str, http_client: httpx.AsyncClient):
-    """Sends the interactive GTD Reflection & Guided Review Hub."""
-    data = get_reflect_summary_data()
-    
+def _build_reflect_hub(data: dict) -> tuple[str, dict]:
+    """Renders the reflection hub screen. Shared by /reflect and the 'reflect:hub'
+    button so the two can never drift apart."""
     num_cap = len(data["captured_items"])
     num_wait = len(data["waiting_items"])
     num_stale_wait = len(data["stale_waitings"])
     num_orphans = len(data["orphaned_projects"])
     num_someday = len(data["someday_items"])
     num_deadlines = len(data["project_deadlines"])
-    
+
     stale_text = f" ({num_stale_wait} stale &gt;5d)" if num_stale_wait > 0 else ""
-    
+
     text = (
         f"🧘 <b>GTD Reflection & Guided Review</b>\n\n"
         f"Keep your Second Brain clear, current, and complete.\n\n"
@@ -1106,7 +1107,7 @@ async def handle_reflect_command(chat_id: int, token: str, http_client: httpx.As
         f"5. 🚨 <b>Deadlines &amp; Ticklers:</b> {num_deadlines} upcoming deadline(s)\n\n"
         f"Tap <b>Start Guided Review</b> to walk through in sequence, or pick a specific check:"
     )
-    
+
     reply_markup = {
         "inline_keyboard": [
             [{"text": "▶️ Start Guided Review", "callback_data": "reflect:step:1"}],
@@ -1118,7 +1119,20 @@ async def handle_reflect_command(chat_id: int, token: str, http_client: httpx.As
              {"text": "📊 Full Sitrep", "callback_data": "reflect:sitrep"}]
         ]
     }
-    
+    return text, reply_markup
+
+
+async def _edit(http_client, token: str, chat_id, message_id, text: str, buttons: list = None):
+    """Edit a Telegram message in place; the reflection flow does this on every step."""
+    payload = {"chat_id": chat_id, "message_id": message_id, "text": text, "parse_mode": "HTML"}
+    if buttons is not None:
+        payload["reply_markup"] = {"inline_keyboard": buttons}
+    await http_client.post(f"https://api.telegram.org/bot{token}/editMessageText", json=payload)
+
+
+async def handle_reflect_command(chat_id: int, token: str, http_client: httpx.AsyncClient):
+    """Sends the interactive GTD Reflection & Guided Review Hub."""
+    text, reply_markup = _build_reflect_hub(get_reflect_summary_data())
     await send_msg(chat_id, token, http_client, text, reply_markup=reply_markup)
 
 async def handle_reflect_callback(callback_query: dict, token: str, http_client: httpx.AsyncClient):
@@ -1134,39 +1148,11 @@ async def handle_reflect_callback(callback_query: dict, token: str, http_client:
     data = get_reflect_summary_data()
 
     if data_str == "reflect:hub":
-        num_cap = len(data["captured_items"])
-        num_wait = len(data["waiting_items"])
-        num_stale_wait = len(data["stale_waitings"])
-        num_orphans = len(data["orphaned_projects"])
-        num_someday = len(data["someday_items"])
-        num_deadlines = len(data["project_deadlines"])
-        
-        stale_text = f" ({num_stale_wait} stale &gt;5d)" if num_stale_wait > 0 else ""
-        
-        text = (
-            f"🧘 <b>GTD Reflection & Guided Review</b>\n\n"
-            f"Keep your Second Brain clear, current, and complete.\n\n"
-            f"1. 📥 <b>Get Clear:</b> {num_cap} captured items awaiting clarify\n"
-            f"2. ⏳ <b>Audit Delegations:</b> {num_wait} waiting items{stale_text}\n"
-            f"3. 🎯 <b>Project Health:</b> {len(data['all_projects'])} total, {num_orphans} orphaned (0 active actions)\n"
-            f"4. 💡 <b>Someday / Maybe:</b> {num_someday} ideas on hold\n"
-            f"5. 🚨 <b>Deadlines &amp; Ticklers:</b> {num_deadlines} upcoming deadline(s)\n\n"
-            f"Tap <b>Start Guided Review</b> to walk through in sequence, or pick a specific check:"
-        )
-        reply_markup = {
-            "inline_keyboard": [
-                [{"text": "▶️ Start Guided Review", "callback_data": "reflect:step:1"}],
-                [{"text": f"1. 📥 Get Clear ({num_cap})", "callback_data": "reflect:step:1"},
-                 {"text": f"2. ⏳ Waitings ({num_wait})", "callback_data": "reflect:step:2"}],
-                [{"text": f"3. 🎯 Orphaned ({num_orphans})", "callback_data": "reflect:step:3"},
-                 {"text": f"4. 💡 Someday ({num_someday})", "callback_data": "reflect:step:4"}],
-                [{"text": f"5. 🚨 Deadlines ({num_deadlines})", "callback_data": "reflect:step:5"},
-                 {"text": "📊 Full Sitrep", "callback_data": "reflect:sitrep"}]
-            ]
-        }
+        text, reply_markup = _build_reflect_hub(data)
         await http_client.post(
             f"https://api.telegram.org/bot{token}/editMessageText",
-            json={"chat_id": chat_id, "message_id": message_id, "text": text, "parse_mode": "HTML", "reply_markup": reply_markup}
+            json={"chat_id": chat_id, "message_id": message_id, "text": text,
+                  "parse_mode": "HTML", "reply_markup": reply_markup}
         )
         return
 
@@ -1197,10 +1183,7 @@ async def handle_reflect_callback(callback_query: dict, token: str, http_client:
                 [{"text": "🏠 Reflection Hub", "callback_data": "reflect:hub"}]
             ]
             
-        await http_client.post(
-            f"https://api.telegram.org/bot{token}/editMessageText",
-            json={"chat_id": chat_id, "message_id": message_id, "text": text, "parse_mode": "HTML", "reply_markup": {"inline_keyboard": buttons}}
-        )
+        await _edit(http_client, token, chat_id, message_id, text, buttons)
         return
 
     # STEP 2: Audit Delegated Items (Waiting For)
@@ -1234,10 +1217,7 @@ async def handle_reflect_callback(callback_query: dict, token: str, http_client:
              {"text": "⏭️ Step 3: Projects ➡️", "callback_data": "reflect:step:3"}],
             [{"text": "🏠 Reflection Hub", "callback_data": "reflect:hub"}]
         ]
-        await http_client.post(
-            f"https://api.telegram.org/bot{token}/editMessageText",
-            json={"chat_id": chat_id, "message_id": message_id, "text": text, "parse_mode": "HTML", "reply_markup": {"inline_keyboard": buttons}}
-        )
+        await _edit(http_client, token, chat_id, message_id, text, buttons)
         return
 
     # STEP 3: Project Health & Momentum (Orphaned Projects)
@@ -1276,10 +1256,7 @@ async def handle_reflect_callback(callback_query: dict, token: str, http_client:
         ])
         buttons.append([{"text": "🏠 Reflection Hub", "callback_data": "reflect:hub"}])
         
-        await http_client.post(
-            f"https://api.telegram.org/bot{token}/editMessageText",
-            json={"chat_id": chat_id, "message_id": message_id, "text": text, "parse_mode": "HTML", "reply_markup": {"inline_keyboard": buttons}}
-        )
+        await _edit(http_client, token, chat_id, message_id, text, buttons)
         return
 
     # STEP 4: Someday / Maybe Activation
@@ -1304,10 +1281,7 @@ async def handle_reflect_callback(callback_query: dict, token: str, http_client:
              {"text": "⏭️ Step 5: Deadlines ➡️", "callback_data": "reflect:step:5"}],
             [{"text": "🏠 Reflection Hub", "callback_data": "reflect:hub"}]
         ]
-        await http_client.post(
-            f"https://api.telegram.org/bot{token}/editMessageText",
-            json={"chat_id": chat_id, "message_id": message_id, "text": text, "parse_mode": "HTML", "reply_markup": {"inline_keyboard": buttons}}
-        )
+        await _edit(http_client, token, chat_id, message_id, text, buttons)
         return
 
     # STEP 5: Deadlines, Accomplishments & Wrap-up
@@ -1342,10 +1316,7 @@ async def handle_reflect_callback(callback_query: dict, token: str, http_client:
             [{"text": "⏮️ Step 4: Someday", "callback_data": "reflect:step:4"},
              {"text": "🏠 Return to Hub", "callback_data": "reflect:hub"}]
         ]
-        await http_client.post(
-            f"https://api.telegram.org/bot{token}/editMessageText",
-            json={"chat_id": chat_id, "message_id": message_id, "text": text, "parse_mode": "HTML", "reply_markup": {"inline_keyboard": buttons}}
-        )
+        await _edit(http_client, token, chat_id, message_id, text, buttons)
         return
 
     # Launch Clarify from Reflection

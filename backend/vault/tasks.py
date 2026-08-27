@@ -71,6 +71,22 @@ class Task:
         """True when a tickler date hides this task from today's lists."""
         return self.tickler is not None and self.tickler > datetime.now().date()
 
+    @property
+    def display(self) -> str:
+        """Just the prose, with structured fields stripped, for showing to a human.
+
+        ``description`` deliberately keeps the inline tags so callers can still match on
+        them; this is the presentation form used in Telegram summaries.
+        """
+        text = self.description
+        text = CONTEXT_RE.sub("", text)
+        text = PROJECT_RE.sub("", text)
+        text = CATEGORY_RE.sub("", text)
+        text = WAITING_RE.sub("", text)
+        text = DUE_RE.sub("", text)
+        text = TICKLER_RE.sub("", text)
+        return re.sub(r'\s{2,}', " ", text).strip(" -–—")
+
 
 def _parse_iso(value: str) -> date | None:
     try:

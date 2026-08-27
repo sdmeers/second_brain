@@ -187,3 +187,31 @@ class TestTaskDataclass:
     def test_constructible_directly(self):
         t = Task(raw="- [ ] x", description="x")
         assert t.checked is False and t.contexts == []
+
+
+class TestTaskDisplay:
+    """`display` strips structured fields for human-facing summaries; `description`
+    deliberately keeps them so callers can still match on tags."""
+
+    def test_strips_all_structured_fields(self):
+        t = parse_task_line(FULL_LINE)
+        assert t.display == "Call the plumber"
+
+    def test_description_retains_tags(self):
+        t = parse_task_line(FULL_LINE)
+        assert "#project/Bathroom_Refit" in t.description
+
+    def test_plain_task_is_unchanged(self):
+        assert parse_task_line("- [ ] Buy milk").display == "Buy milk"
+
+    def test_strips_waiting_owner(self):
+        t = parse_task_line("- [ ] Chase invoice #waiting(Alex) #professional")
+        assert t.display == "Chase invoice"
+
+    def test_preserves_bracketed_text(self):
+        t = parse_task_line("- [ ] [Draft] review the spec @computer #personal")
+        assert t.display == "[Draft] review the spec"
+
+    def test_completed_line(self):
+        t = parse_task_line("- [x] ~~Buy milk~~ (Completed on 2026-08-27)")
+        assert t.display == "Buy milk"

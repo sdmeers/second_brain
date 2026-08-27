@@ -44,6 +44,7 @@ even if the search then reports no match.
 | A2 | `/holiday personal 23rd Aug` | "Holiday Mode Activated", scope `#personal`, correct date | `NameError` on any non-ISO date |
 | A3 | `/holiday` → 🏠 Personal → 📅 Open Calendar Picker → pick a date | Same confirmation via the button path | Button path worked, typed dates did not |
 | A4 | `/reflect` → **5. 🚨 Deadlines** | "Weekly Accomplishments: **N** action(s) completed" — should be non-zero (your vault currently has 13 in the last 7 days) | Always reported 0 |
+| A6 | `/reflect` hub line 5, after tickling a task | Reads `N project deadline(s), M tickler(s) due`, and step 5 lists the deferred task under **Deferred Tasks Returning** | Ticklers were never counted or shown, despite the label |
 
 **A5 — Instruction agent (was writing to a phantom file).** Send as plain text, not a command:
 > `add a task to test the instruction handler`

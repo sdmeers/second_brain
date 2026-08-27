@@ -232,3 +232,65 @@ class TestSessionStore:
         s = SessionStore("t", ttl=3600)
         s["a"], s["b"] = 1, 2
         assert len(s) == 2
+
+
+class TestReflectTicklers:
+    """The reflection hub has always been labelled 'Deadlines & Ticklers', but only
+    project due_dates were counted, so a deferred task appeared nowhere."""
+
+    def _summary(self):
+        from backend.ingestion.handlers.engage import get_reflect_summary_data
+        return get_reflect_summary_data()
+
+    def test_upcoming_tickler_is_reported(self, tasks_dir):
+        from datetime import datetime, timedelta
+        soon = (datetime.now().date() + timedelta(days=5)).strftime("%Y-%m-%d")
+        (tasks_dir / "Next_Actions.md").write_text(
+            f"# ⚡ Next Actions\n\n- [ ] Buy anniversary card @errands #personal 🔔 {soon}\n",
+            encoding="utf-8")
+        ticklers = self._summary()["upcoming_ticklers"]
+        assert len(ticklers) == 1
+        desc, days_until, disp = ticklers[0]
+        assert desc == "Buy anniversary card", "display form should strip tags and the 🔔 stamp"
+        assert days_until == 5
+
+    def test_tickler_due_today_is_included(self, tasks_dir):
+        from datetime import datetime
+        today = datetime.now().date().strftime("%Y-%m-%d")
+        (tasks_dir / "Next_Actions.md").write_text(
+            f"# ⚡ Next Actions\n\n- [ ] Surfacing now @home #personal 🔔 {today}\n", encoding="utf-8")
+        assert self._summary()["upcoming_ticklers"][0][1] == 0
+
+    def test_tickler_beyond_14_days_is_excluded(self, tasks_dir):
+        from datetime import datetime, timedelta
+        far = (datetime.now().date() + timedelta(days=40)).strftime("%Y-%m-%d")
+        (tasks_dir / "Next_Actions.md").write_text(
+            f"# ⚡ Next Actions\n\n- [ ] Far future @home #personal 🔔 {far}\n", encoding="utf-8")
+        assert self._summary()["upcoming_ticklers"] == []
+
+    def test_past_tickler_is_excluded(self, tasks_dir):
+        from datetime import datetime, timedelta
+        past = (datetime.now().date() - timedelta(days=3)).strftime("%Y-%m-%d")
+        (tasks_dir / "Next_Actions.md").write_text(
+            f"# ⚡ Next Actions\n\n- [ ] Already surfaced @home #personal 🔔 {past}\n", encoding="utf-8")
+        assert self._summary()["upcoming_ticklers"] == []
+
+    def test_ticklers_are_sorted_soonest_first(self, tasks_dir):
+        from datetime import datetime, timedelta
+        d = datetime.now().date()
+        (tasks_dir / "Next_Actions.md").write_text(
+            f"# ⚡ Next Actions\n"
+            f"- [ ] Later @home #personal 🔔 {(d + timedelta(days=9)).strftime('%Y-%m-%d')}\n"
+            f"- [ ] Sooner @home #personal 🔔 {(d + timedelta(days=2)).strftime('%Y-%m-%d')}\n",
+            encoding="utf-8")
+        got = [t[0] for t in self._summary()["upcoming_ticklers"]]
+        assert got == ["Sooner", "Later"]
+
+    def test_hub_reports_both_counts(self, tasks_dir):
+        from datetime import datetime, timedelta
+        from backend.ingestion.handlers.engage import _build_reflect_hub
+        soon = (datetime.now().date() + timedelta(days=3)).strftime("%Y-%m-%d")
+        (tasks_dir / "Next_Actions.md").write_text(
+            f"# ⚡ Next Actions\n\n- [ ] Deferred thing @home #personal 🔔 {soon}\n", encoding="utf-8")
+        text, _ = _build_reflect_hub(self._summary())
+        assert "1 tickler(s) due" in text

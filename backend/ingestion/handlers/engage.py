@@ -1047,7 +1047,22 @@ def get_reflect_summary_data() -> dict:
         if task.checked and task.completed_on and task.completed_on >= seven_days_ago:
             completed_7d_count += 1
 
-    # 6. Projects, orphans (no active next action), deadlines and roadmaps
+    # 6. Upcoming ticklers — tasks deferred to today or the next 14 days.
+    # The reflection hub has always been labelled "Deadlines & Ticklers", but only
+    # project due_dates were ever counted, so a deferred task showed up nowhere.
+    upcoming_ticklers = []
+    for path in (TASKS_MD_FILE, WAITING_FOR_MD_FILE, SOMEDAY_MAYBE_MD_FILE):
+        for task in iter_task_lines(path, include_checked=False):
+            if not task.tickler:
+                continue
+            days_until = (task.tickler - today).days
+            if 0 <= days_until <= 14:
+                upcoming_ticklers.append(
+                    (task.display, days_until, task.tickler.strftime("%d-%m-%Y"))
+                )
+    upcoming_ticklers.sort(key=lambda t: t[1])
+
+    # 7. Projects, orphans (no active next action), deadlines and roadmaps
     all_projects = []
     orphaned_projects = []
     project_deadlines = []
@@ -1082,6 +1097,7 @@ def get_reflect_summary_data() -> dict:
         "all_projects": all_projects,
         "orphaned_projects": orphaned_projects,
         "project_deadlines": project_deadlines,
+        "upcoming_ticklers": upcoming_ticklers,
         "project_roadmaps": project_roadmaps
     }
 
@@ -1094,6 +1110,7 @@ def _build_reflect_hub(data: dict) -> tuple[str, dict]:
     num_orphans = len(data["orphaned_projects"])
     num_someday = len(data["someday_items"])
     num_deadlines = len(data["project_deadlines"])
+    num_ticklers = len(data["upcoming_ticklers"])
 
     stale_text = f" ({num_stale_wait} stale &gt;5d)" if num_stale_wait > 0 else ""
 
@@ -1104,7 +1121,7 @@ def _build_reflect_hub(data: dict) -> tuple[str, dict]:
         f"2. ⏳ <b>Audit Delegations:</b> {num_wait} waiting items{stale_text}\n"
         f"3. 🎯 <b>Project Health:</b> {len(data['all_projects'])} total, {num_orphans} orphaned (0 active actions)\n"
         f"4. 💡 <b>Someday / Maybe:</b> {num_someday} ideas on hold\n"
-        f"5. 🚨 <b>Deadlines &amp; Ticklers:</b> {num_deadlines} upcoming deadline(s)\n\n"
+        f"5. 🚨 <b>Deadlines &amp; Ticklers:</b> {num_deadlines} project deadline(s), {num_ticklers} tickler(s) due\n\n"
         f"Tap <b>Start Guided Review</b> to walk through in sequence, or pick a specific check:"
     )
 
@@ -1115,7 +1132,7 @@ def _build_reflect_hub(data: dict) -> tuple[str, dict]:
              {"text": f"2. ⏳ Waitings ({num_wait})", "callback_data": "reflect:step:2"}],
             [{"text": f"3. 🎯 Orphaned ({num_orphans})", "callback_data": "reflect:step:3"},
              {"text": f"4. 💡 Someday ({num_someday})", "callback_data": "reflect:step:4"}],
-            [{"text": f"5. 🚨 Deadlines ({num_deadlines})", "callback_data": "reflect:step:5"},
+            [{"text": f"5. 🚨 Deadlines ({num_deadlines + num_ticklers})", "callback_data": "reflect:step:5"},
              {"text": "📊 Full Sitrep", "callback_data": "reflect:sitrep"}]
         ]
     }
@@ -1301,11 +1318,34 @@ async def handle_reflect_callback(callback_query: dict, token: str, http_client:
                     d_lines.append(f"• 🚨 <b>{p_name}</b> — Due in {days_left}d ({d_disp})")
             deadline_text = "<b>Upcoming Project Deadlines (<=14d):</b>\n" + "\n".join(d_lines) + "\n\n"
         else:
-            deadline_text = "<b>Project Deadlines:</b> None within the next 14 days.\n\n"
-            
+            deadline_text = (
+                "<b>Project Deadlines:</b> None within the next 14 days.\n"
+                "<i>(Set <code>due_date</code> in a project note's frontmatter to track one.)</i>\n\n"
+            )
+
+        # Deferred tasks coming back into view. Previously the hub promised "Ticklers"
+        # but nothing here ever listed them.
+        ticklers = data["upcoming_ticklers"]
+        if ticklers:
+            t_lines = []
+            for desc, days_until, t_disp in ticklers[:8]:
+                short = desc if len(desc) <= 55 else desc[:52] + "..."
+                if days_until == 0:
+                    t_lines.append(f"• 🔔 <b>{short}</b> — surfaces TODAY ({t_disp})")
+                elif days_until == 1:
+                    t_lines.append(f"• 🔔 {short} — surfaces tomorrow ({t_disp})")
+                else:
+                    t_lines.append(f"• 🔔 {short} — in {days_until}d ({t_disp})")
+            tickler_text = (
+                "<b>Deferred Tasks Returning (&lt;=14d):</b>\n" + "\n".join(t_lines) + "\n\n"
+            )
+        else:
+            tickler_text = "<b>Deferred Tasks:</b> None returning in the next 14 days.\n\n"
+
         text = (
             f"🏁 <b>Step 5 of 5: Deadlines &amp; Accomplishments</b>\n\n"
             f"{deadline_text}"
+            f"{tickler_text}"
             f"🏆 <b>Weekly Accomplishments:</b> {comp_7d} action(s) completed in the last 7 days!\n\n"
             f"🎉 <b>Reflection Complete!</b>\n"
             f"Your Second Brain is 100% current, organized, and ready for high-impact execution."

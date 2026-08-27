@@ -110,17 +110,17 @@ CRITICAL RULES:
     for idx, chunk in enumerate(chunks, 1):
         # Extract filename without extension as wiki-link representation
         filename_only = os.path.basename(chunk["file_path"]).rsplit(".", 1)[0]
-        context_str += f"[{idx}] Source: [[{filename_only}]]\\nContent: {chunk['text']}\\n\\n"
+        context_str += f"[{idx}] Source: [[{filename_only}]]\nContent: {chunk['text']}\n\n"
         sources.add(chunk["file_path"])
-        
+
     history_str = ""
     if chat_history:
-        history_str = "\\nRecent Conversation History:\\n"
+        history_str = "\nRecent Conversation History:\n"
         for msg in chat_history:
             role = "User" if msg["role"] == "user" else "Librarian"
-            history_str += f"{role}: {msg['text']}\\n"
+            history_str += f"{role}: {msg['text']}\n"
 
-    prompt = f"Retrieved Vault Context:\\n\\n{context_str}{history_str}\\nUser Question: {user_query}"
+    prompt = f"Retrieved Vault Context:\n\n{context_str}{history_str}\nUser Question: {user_query}"
 
     
     # 4. Call Gemini Flash

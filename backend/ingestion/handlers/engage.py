@@ -282,6 +282,9 @@ WHERE contains(tags, "#project/{proj_tag}") AND !completed
 
 PROMOTION_SESSIONS = {}
 
+# Pending /tickle deferrals, keyed by chat_id -> task search string
+TICKLE_SESSIONS = {}
+
 async def handle_done_command(chat_id: int, text: str, token: str, http_client: httpx.AsyncClient):
     parts = text.split(maxsplit=1)
     if len(parts) < 2:
@@ -1185,11 +1188,11 @@ def get_reflect_summary_data() -> dict:
 
     # 5. Completed last 7 days
     completed_7d_count = 0
-    comp_path = os.path.join(OBSIDIAN_VAULT_PATH, "01_Tasks", "Completed.md")
+    comp_path = os.path.join(OBSIDIAN_VAULT_PATH, "01_Tasks", "z_Completed.md")
     if os.path.exists(comp_path):
         with open(comp_path, "r", encoding="utf-8") as f:
             for line in f:
-                if line.strip().startswith("- [x]"):
+                if line.strip().lower().startswith("- [x]"):
                     m_comp = re.search(r'\(Completed on (\d{4}-\d{2}-\d{2})\)', line)
                     if m_comp:
                         try:

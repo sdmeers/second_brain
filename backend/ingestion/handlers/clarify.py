@@ -1,10 +1,11 @@
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 import shutil
 import httpx
 from backend.config import OBSIDIAN_VAULT_PATH, GEMINI_MODEL, TASKS_PATH, INBOX_PATH
 from backend.utils.gemini import call_gemini_with_retry
+from backend.vault.writer import atomic_write
 from google.genai import types
 from pydantic import BaseModel, Field
 
@@ -244,9 +245,11 @@ async def archive_and_remove_captured(item_line: str) -> str:
         with open(captured_md, "r", encoding="utf-8") as f:
             content = f.read()
         content = content.replace(item_line, "")
-        with open(captured_md, "w", encoding="utf-8") as f:
-            f.write(content)
-            
+        atomic_write(captured_md, content)
+
+    return filename
+
+
 def parse_natural_date_str(date_str: str):
     """Parses natural dates like '23rd Aug', '23 Aug', '23/08', 'tomorrow', '7d', '2026-08-23'."""
     today = datetime.now().date()

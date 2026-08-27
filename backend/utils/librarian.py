@@ -103,7 +103,7 @@ async def enrich_note_metadata(saved_file_path: str, note_text: str, classificat
     
     wikilinks = []
     if candidate_titles:
-        prompt = f"Given this note content, which of these existing notes are genuinely conceptually related? Only include strong, meaningful connections. Return an empty list if none are truly relevant. Candidates: {candidate_titles}\\n\\nNote content: {note_text}"
+        prompt = f"Given this note content, which of these existing notes are genuinely conceptually related? Only include strong, meaningful connections. Return an empty list if none are truly relevant. Candidates: {candidate_titles}\n\nNote content: {note_text}"
         
         try:
             from google.genai import types

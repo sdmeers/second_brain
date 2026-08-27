@@ -2,6 +2,7 @@ import os
 import re
 import shutil
 import asyncio
+import httpx
 from datetime import datetime
 from backend.config import (
     INBOX_MD_FILE,
@@ -193,10 +194,11 @@ async def process_queue_worker():
                 db_cursor = db_conn.cursor()
                 db_cursor.execute("UPDATE ingestion_queue SET content_text = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (transcription, item_id))
                 db_conn.commit()
+                db_conn.close()
                 # If transcription is blank/silent, drop item safely to prevent creating spurious notes
                 if not content_text.strip():
                     print(f"Backend [Queue Worker]: Audio transcription for {os.path.basename(file_path)} was blank/silent. Skipping ingestion.")
-                    update_item_status(item_id, "completed", error_msg="Blank/silent voice note ignored.")
+                    update_item_status(item_id, "completed", error_message="Blank/silent voice note ignored.")
                     if os.path.exists(file_path) and ("staging" in file_path or "00_System/Inbox" in file_path):
                         try:
                             os.remove(file_path)
@@ -771,7 +773,7 @@ async def auto_heal_syncthing_conflict(rel_path: str, full_path: str) -> bool:
         target_path = os.path.join(dir_name, target_name)
         
         # Case A: Conflict is on Next_Actions.md
-        if target_name.lower() == "tasks.md":
+        if target_name.lower() == "next_actions.md":
             print(f"Backend [Auto-Healer]: Auto-resolving task conflict file {rel_path}...")
             
             with open(full_path, "r", encoding="utf-8") as f:
@@ -786,9 +788,10 @@ async def auto_heal_syncthing_conflict(rel_path: str, full_path: str) -> bool:
             checked_pattern = re.compile(r'^\s*-\s*\[[xX]\]\s*(.*)$', re.MULTILINE)
             checked_in_conflict = checked_pattern.findall(conflict_text)
             
-            # Archive checked off items to Completed_Next_Actions.md
+            # Archive checked off items to the canonical completed-tasks archive
             if checked_in_conflict:
-                completed_file = os.path.join(OBSIDIAN_VAULT_PATH, "00_System", "Completed_Next_Actions.md")
+                from backend.config import COMPLETED_TASKS_MD_FILE
+                completed_file = COMPLETED_TASKS_MD_FILE
                 today_str = datetime.now().strftime("%Y-%m-%d")
                 existing_archive = ""
                 if os.path.exists(completed_file):
@@ -819,7 +822,7 @@ async def auto_heal_syncthing_conflict(rel_path: str, full_path: str) -> bool:
             print(f"Backend [Auto-Healer]: Tasks conflict {rel_path} successfully auto-resolved!")
             await notify_via_telegram(
                 f"🧠⚡ **Auto-Resolved Task Sync Conflict**\n"
-                f"Merged task updates from `{rel_path}` into `Next_Actions.md` & `Completed_Next_Actions.md` without data loss."
+                f"Merged task updates from `{rel_path}` into `Next_Actions.md` & `z_Completed.md` without data loss."
             )
             return True
             

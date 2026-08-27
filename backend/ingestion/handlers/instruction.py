@@ -7,14 +7,21 @@ from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 from google.genai import types
 
-from backend.config import GEMINI_MODEL, OBSIDIAN_VAULT_PATH
+from backend.config import (
+    GEMINI_MODEL,
+    OBSIDIAN_VAULT_PATH,
+    TASKS_MD_FILE,
+    COMPLETED_TASKS_MD_FILE,
+)
 from backend.utils.gemini import call_gemini_with_retry
 from backend.vault.writer import atomic_write
 from backend.utils.sanitize import sanitize_filename
-from backend.logger import log_action
+from backend.utils.logger import log_action
 
-TASKS_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "00_System", "Tasks.md")
-COMPLETED_TASKS_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "00_System", "Completed_Tasks.md")
+# Canonical GTD locations (01_Tasks/), shared with the rest of the system.
+# These were previously stale 00_System/ paths, which made every task primitive a no-op.
+TASKS_FILE = TASKS_MD_FILE
+COMPLETED_TASKS_FILE = COMPLETED_TASKS_MD_FILE
 TRASH_DIR = os.path.join(OBSIDIAN_VAULT_PATH, "05_Archive", "Trash")
 
 class TargetSelector(BaseModel):
@@ -44,11 +51,11 @@ AVAILABLE ACTION PRIMITIVES:
 - 'undo_last_action': Revert or undo the most recent automated vault action (triggered by instructions like "Undo that change", "Undo last action", "Revert that", "Undo").
 - 'get_sitrep': Generate and return a real-time summary / SITREP of tasks, recent activity, and ideas (triggered by queries like "Give me a SITREP", "What is the current summary?", "What happened this week?", "Status report").
 - 'create_project': Create a new project folder structure under '02_Projects/Personal/' or '02_Projects/Professional/' containing master project note (triggered by instructions like "create a new project called Garage").
-- 'add_task': Append a new pending task line to Tasks.md (triggered by instructions like "Add a task to paint doors", "Remind me to call John").
-- 'delete_task': Remove matching pending task line(s) from Tasks.md.
-- 'complete_task': Mark matching task line(s) as '- [x]' in Tasks.md and archive them to Completed_Tasks.md.
-- 'update_task': Edit task text, deadline, or priority of matching task line(s) in Tasks.md.
-- 'convert_task_to_note': Remove matching task line(s) from Tasks.md and create a dedicated note (e.g., Book, Project, or Area note) in the target destination folder (default: '03_Areas/Reading' for books).
+- 'add_task': Append a new pending task line to Next_Actions.md (triggered by instructions like "Add a task to paint doors", "Remind me to call John").
+- 'delete_task': Remove matching pending task line(s) from Next_Actions.md.
+- 'complete_task': Mark matching task line(s) as '- [x]' in Next_Actions.md and archive them to z_Completed.md.
+- 'update_task': Edit task text, deadline, or priority of matching task line(s) in Next_Actions.md.
+- 'convert_task_to_note': Remove matching task line(s) from Next_Actions.md and create a dedicated note (e.g., Book, Project, or Area note) in the target destination folder (default: '03_Areas/Reading' for books).
 - 'move_note': Relocate a note file from its current location to a new folder (e.g., '02_Projects/...', '03_Areas/...', '05_Archive').
 - 'rename_note': Rename a note file.
 - 'delete_note': Soft-delete a note file by moving it to '05_Archive/Trash/'.
@@ -180,10 +187,10 @@ def find_matching_notes(query: str) -> list[str]:
 
 async def handle_task_action(action: VaultAction) -> str:
     """Executes task primitive operations (delete, complete, update, convert)."""
-    if not os.path.exists(TASKS_PATH):
-        return f"⚠️ Tasks file not found at {TASKS_PATH}"
+    if not os.path.exists(TASKS_FILE):
+        return f"⚠️ Tasks file not found at {TASKS_FILE}"
         
-    with open(TASKS_PATH, "r", encoding="utf-8") as f:
+    with open(TASKS_FILE, "r", encoding="utf-8") as f:
         lines = f.readlines()
         
     action_type = action.action_type
@@ -195,14 +202,15 @@ async def handle_task_action(action: VaultAction) -> str:
             
         dest_tag = f" #{action.destination.strip()}" if action.destination else ""
         date_str = datetime.now().strftime("%Y-%m-%d")
-        task_line = f"- [ ] {task_desc}{dest_tag} 📅 {date_str} (Captured via instruction on {date_str})\n"
-        
-        os.makedirs(os.path.dirname(TASKS_PATH), exist_ok=True)
-        with open(TASKS_PATH, "a", encoding="utf-8") as tf:
-            tf.write(task_line)
-            
+        task_line = f"- [ ] {task_desc}{dest_tag} 📅 {date_str} (Captured via instruction on {date_str})"
+
+        # Route through the shared GTD writer so the task picks up its #personal /
+        # #professional category tag and lands in the managed dashboard layout.
+        from backend.utils.tasks_dashboard import append_gtd_item
+        append_gtd_item(TASKS_FILE, task_line)
+
         log_action("Instruction Executed", f"Added task: {task_desc}")
-        return f"✓ Added task to Tasks.md: '{task_desc}'."
+        return f"✓ Added task to Next_Actions.md: '{task_desc}'."
 
     query = action.target.query.strip()
     matches = find_matching_tasks(query, lines)
@@ -211,42 +219,39 @@ async def handle_task_action(action: VaultAction) -> str:
         # Cross-Fallback: Check if target exists as a note file in vault!
         matching_notes = find_matching_notes(query)
         if matching_notes:
-            print(f"Backend [Instruction Handler]: Target task '{query}' not in Tasks.md, but matched note file in vault! Cross-routing to handle_note_file_action.")
+            print(f"Backend [Instruction Handler]: Target task '{query}' not in Next_Actions.md, but matched note file in vault! Cross-routing to handle_note_file_action.")
             if action.action_type == "convert_task_to_note":
                 action.action_type = "move_note"
             return await handle_note_file_action(action)
-        return f"⚠️ Target Verification: No task or note matching '{query}' found in Tasks.md or vault."
+        return f"⚠️ Target Verification: No task or note matching '{query}' found in Next_Actions.md or vault."
         
     action_type = action.action_type
     
     if action_type == "delete_task":
         indices_to_remove = set(idx for idx, _ in matches)
         new_lines = [line for i, line in enumerate(lines) if i not in indices_to_remove]
-        atomic_write(TASKS_PATH, "".join(new_lines))
+        atomic_write(TASKS_FILE, "".join(new_lines))
         removed_summary = ", ".join([f"'{line.strip()}'" for _, line in matches])
         log_action("Instruction Executed", f"Deleted task(s): {removed_summary}")
-        return f"✓ Deleted {len(matches)} task(s) from Tasks.md matching '{query}'."
+        return f"✓ Deleted {len(matches)} task(s) from Next_Actions.md matching '{query}'."
         
     elif action_type == "complete_task":
         indices_to_remove = set(idx for idx, _ in matches)
         new_lines = [line for i, line in enumerate(lines) if i not in indices_to_remove]
-        atomic_write(TASKS_PATH, "".join(new_lines))
+        atomic_write(TASKS_FILE, "".join(new_lines))
         
-        # Append to Completed_Tasks.md
-        completed_date = datetime.now().strftime("%Y-%m-%d")
-        os.makedirs(os.path.dirname(COMPLETED_TASKS_PATH), exist_ok=True)
-        with open(COMPLETED_TASKS_PATH, "a", encoding="utf-8") as cf:
-            for _, line in matches:
-                clean_line = line.strip().replace("- [ ]", "- [x]").replace("- [x]", "- [x]")
-                cf.write(f"{clean_line} [completed: {completed_date}]\n")
-                
+        # Archive to z_Completed.md in the same format the rest of the system writes,
+        # so /status and /reflect can count these as completions.
+        from backend.vault.tasks import archive_completed_lines
+        archive_completed_lines([line for _, line in matches])
+
         return f"✓ Marked {len(matches)} task(s) as completed and archived."
         
     elif action_type == "convert_task_to_note":
-        # Remove task from Tasks.md
+        # Remove task from Next_Actions.md
         indices_to_remove = set(idx for idx, _ in matches)
         new_lines = [line for i, line in enumerate(lines) if i not in indices_to_remove]
-        atomic_write(TASKS_PATH, "".join(new_lines))
+        atomic_write(TASKS_FILE, "".join(new_lines))
         
         # Target destination folder
         dest_folder = action.destination.strip() or "03_Areas/Reading"
@@ -295,8 +300,8 @@ Converted from task: *"{line.strip()}"*
         new_content = action.new_content.strip()
         for idx, line in matches:
             lines[idx] = f"- [ ] {new_content}\n"
-        atomic_write(TASKS_PATH, "".join(lines))
-        return f"✓ Updated {len(matches)} task(s) in Tasks.md."
+        atomic_write(TASKS_FILE, "".join(lines))
+        return f"✓ Updated {len(matches)} task(s) in Next_Actions.md."
         
     return f"⚠️ Unsupported task action: {action_type}"
 
@@ -358,13 +363,13 @@ WHERE contains(tags, "#project/{proj_tag}") AND !completed
     matching_notes = find_matching_notes(query)
     
     if not matching_notes:
-        # Cross-Fallback: Check if target exists as a task line in Tasks.md!
-        if os.path.exists(TASKS_PATH):
-            with open(TASKS_PATH, "r", encoding="utf-8") as f:
+        # Cross-Fallback: Check if target exists as a task line in Next_Actions.md!
+        if os.path.exists(TASKS_FILE):
+            with open(TASKS_FILE, "r", encoding="utf-8") as f:
                 lines = f.readlines()
             matching_tasks = find_matching_tasks(query, lines)
             if matching_tasks:
-                print(f"Backend [Instruction Handler]: Target note '{query}' not found as file, but matched {len(matching_tasks)} task(s) in Tasks.md! Routing to convert_task_to_note.")
+                print(f"Backend [Instruction Handler]: Target note '{query}' not found as file, but matched {len(matching_tasks)} task(s) in Next_Actions.md! Routing to convert_task_to_note.")
                 action.action_type = "convert_task_to_note"
                 if not action.destination or action.destination in ["03_Areas", ""]:
                     action.destination = "03_Areas/Reading"

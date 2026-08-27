@@ -158,3 +158,37 @@ class TestQueueBackoff:
         from backend.ingestion.queue import MAX_RETRIES, RETRY_BACKOFF_MINUTES
         assert RETRY_BACKOFF_MINUTES == (1, 5, 30)
         assert MAX_RETRIES == 3
+
+
+class TestCommandUnwrapping:
+    """Commands are rendered in backticks throughout the docs. Copying one out brought
+    the backticks along, so text.startswith("/") was False and the message went to the
+    RAG engine instead of the command dispatcher -- appearing to do nothing."""
+
+    @pytest.mark.parametrize("wrapped,expected", [
+        ("`/project second_brain add A step`", "/project second_brain add A step"),
+        ("`/tickle Buy card`", "/tickle Buy card"),
+        ("```/status```", "/status"),
+        ("  `/next @home`  ", "/next @home"),
+        ("``/daily``", "/daily"),
+    ])
+    def test_backticked_commands_are_unwrapped(self, wrapped, expected):
+        from backend.ingestion.telegram import unwrap_command
+        assert unwrap_command(wrapped) == expected
+
+    @pytest.mark.parametrize("text", [
+        "/project already clean",
+        "just some plain text",
+        "`a code snippet worth capturing`",
+        "`print('hello')`",
+        "What does `/tickle` do?",
+        "",
+    ])
+    def test_non_commands_are_left_alone(self, text):
+        from backend.ingestion.telegram import unwrap_command
+        assert unwrap_command(text) == text
+
+    def test_multiline_code_block_that_is_not_a_command_is_preserved(self):
+        from backend.ingestion.telegram import unwrap_command
+        snippet = "`def f():\n    return 1`"
+        assert unwrap_command(snippet) == snippet

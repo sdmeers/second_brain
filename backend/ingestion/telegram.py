@@ -20,6 +20,27 @@ QA_CONTEXTS = SessionStore("qa")
 _BACKGROUND_TASKS: set = set()
 
 
+def unwrap_command(text: str) -> str:
+    """Strip Markdown code formatting that would stop a command being recognised.
+
+    Every command in the docs is rendered as `/project ...`, so copying one out brings
+    the backticks along. `text.startswith("/")` was then False and the whole thing was
+    routed to the RAG engine instead of the command dispatcher, silently doing nothing.
+
+    Only unwraps when the result is actually a command, so ordinary text and code
+    snippets sent for capture are untouched.
+    """
+    if not text:
+        return text
+
+    candidate = text.strip()
+    # ```/cmd``` or `/cmd`
+    while len(candidate) >= 2 and candidate.startswith("`") and candidate.endswith("`"):
+        candidate = candidate[1:-1].strip()
+
+    return candidate if candidate.startswith("/") else text
+
+
 def _spawn(coro):
     task = asyncio.create_task(coro)
     _BACKGROUND_TASKS.add(task)
@@ -150,7 +171,7 @@ async def notify_via_telegram(message: str, reply_markup: dict = None):
 
 async def process_telegram_message(message: dict, token: str, http_client):
     chat_id = message["chat"]["id"]
-    text = message.get("text") or message.get("caption") or ""
+    text = unwrap_command(message.get("text") or message.get("caption") or "")
     
     voice = message.get("voice")
     audio = message.get("audio")

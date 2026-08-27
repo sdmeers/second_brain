@@ -31,7 +31,7 @@ Unlike rigid, proprietary productivity apps, the Second Brain guarantees **100% 
 ## 🛠️ Technology Stack
 
 *   **Core Backend:** Python 3.11+ (FastAPI, Asyncio, systemd user services).
-*   **Database & Search:** SQLite 3 (WAL mode) with `sqlite-vss` vector indexing (768-dimensional embeddings).
+*   **Database & Search:** SQLite 3 (WAL mode) with `sqlite-vss` vector indexing (3072-dimensional `gemini-embedding-2` vectors).
 *   **Audio Transcription:** `faster-whisper` (CUDA accelerated on NVIDIA GTX 1070).
 *   **LLM & Intelligence:** Google Gemini (Gemini 3.1 Flash Lite) via `google-genai` SDK with Context Caching, plus decoupled model provider support (Gemini, OpenAI, Ollama).
 *   **User Interface:** Telegram Bot API (`httpx` async polling) for voice notes, commands, and interactive inline keyboards.

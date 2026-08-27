@@ -41,12 +41,12 @@ The Unified Telegram Bot is your central command interface.
 | `/file <URL/doc>` | **Direct Filing** — Passes URLs, PDFs, or text directly to the AI Librarian (skipping GTD clarify). |
 | `/research <URL>` | **Deep Research** — Ingests content into Research Brain with full knowledge graph & concept extraction. |
 | `/clarify` | **Interactive Triage** — Process captured items in 5-item batches with inline buttons & calendar picker. |
-| `/next [@context]` | **Context Filter** — Filter active tasks (`@home`, `@computer`, `@errands`, `@phone`, `@anywhere`, `@office`, `@WFH`). |
+| `/next [@context]` | **Context Filter** — Bare `/next` offers a Personal / Professional / Both picker; `/next @context` filters directly (`@home`, `@computer`, `@errands`, `@phone`, `@anywhere`, `@office`, `@WFH`). |
 | `/waiting` | **Delegated Tracking** — View pending items owed by others with capture age and follow-up dates. |
 | `/project <name>` | **Project Dashboard** — View Desired Outcome, Active Actions, Roadmap Steps, and Linked References. |
 | `/project <name> add <step>` | **Roadmap Backlog** — Append a new future step under `## Project Steps` in a project note. |
-| `/archive <name>` | **Archive Project** — Marks a project complete and moves it from `02_Projects/` to `05_Archive/`. |
-| `/done <item>` | **Complete Action** — Archives task to `01_Tasks/Completed.md` and triggers 1-tap step promotion. |
+| `/archive <name>` | **Archive Project** — Sets `status: completed` and moves the whole project folder to `05_Archive/02_Projects/<Category>/`. |
+| `/done <item>` | **Complete Action** — Archives task to `01_Tasks/z_Completed.md` and triggers 1-tap step promotion. |
 | `/tickle <item>` | **Defer Task** — Opens interactive Telegram calendar picker to set a `🔔 YYYY-MM-DD` tickler date. |
 | `/daily` | **Daily Review** — On-demand action-oriented review (deadlines <=14d, surfaced ticklers, next actions by context). |
 | `/weekly` / `/status` | **System Sitrep** — High-level counts across all GTD task lists, active projects, and 7-day completed actions. |
@@ -71,7 +71,7 @@ When you run `/clarify`, unclarified items in `01_Tasks/Captured.md` are present
    - **`[⏳ Waiting For]`**: Prompts for who or what you are waiting on (`#waiting(Name)`), then optionally links an active project (`#project/Project_Name`) before recording to `Waiting_For.md`.
    - **`[💡 Someday / Maybe]`**: Logs item to `Someday_Maybe.md` for future weekly review.
    - **`[📚 Pass to AI Librarian]`**: Forwards reference material to PARA folders (`03_Areas/` or `04_Resources/`).
-   - **`[⚡ 2-Min Rule (Done)]`**: Immediately logs to `01_Tasks/Completed.md` with completion timestamp.
+   - **`[⚡ 2-Min Rule (Done)]`**: Immediately logs to `01_Tasks/z_Completed.md` with completion timestamp.
    - **`[🗑️ Trash]`**: Archives and removes the item.
 3. **Interactive Calendar Picker:**
    - When deferring an item, a visual keyboard calendar opens (`◀ August 2026 ▶`) allowing you to tap the exact date.
@@ -86,7 +86,7 @@ Every project is housed in its own dedicated directory under `02_Projects/Person
 - **Project Files & Subfolders:** You can freely store project-specific notes, meeting minutes (`Meetings/`), deliverables (`Outputs/`), and reference documents directly within the project's folder.
 
 ### Project Note Template
-```markdown
+````markdown
 ---
 title: "Garage"
 type: project
@@ -116,11 +116,11 @@ WHERE contains(tags, "#project/Garage") AND !completed
 
 ## Reference Material
 - [[02_Projects/Personal/Garage/Garage shelving dimensions.md]]
-```
+````
 
 ### 1-Tap Roadmap Step Promotion
 When you complete a project action (either via **Telegram `/done <item>`** or **ticking `- [x]` in Obsidian**):
-1. The completed task is archived to `01_Tasks/Completed.md`.
+1. The completed task is archived to `01_Tasks/z_Completed.md`.
 2. The bot inspects `## Project Steps` in the project note for unpromoted steps.
 3. Telegram immediately pings you with an interactive prompt:
    ```text
@@ -161,8 +161,30 @@ An interactive, 5-step review routine in Telegram:
 ### Holiday Review Pause (`/holiday`)
 - Run `/holiday` to pause daily digests and review briefings while on annual leave.
 - Choose scope: `[🏠 Personal]`, `[💼 Professional]`, or `[🌴 All Reviews]`.
-- Pick your return date using the visual calendar picker.
+- Pick your return date using the visual calendar picker, **or type it directly**:
+  `/holiday personal 23rd Aug`, `/holiday all 14/09`, `/holiday professional +14d`.
 - Run `/holiday resume` or `/holiday end` to resume reviews early at any time.
+- `/holiday status` shows which scopes are currently paused and until when.
+
+### Deferring a Task (`/tickle`)
+- `/tickle <task search text>` opens the visual calendar picker; tapping a date stamps the
+  matching task with `🔔 YYYY-MM-DD`.
+- Deferred tasks are hidden from `/next` and the daily review until that date arrives,
+  then surface automatically.
+
+### Accepted Date Formats
+Anywhere the system accepts a typed date (`/holiday`, clarify deferrals):
+
+| Style | Examples |
+| :--- | :--- |
+| Relative | `tomorrow`, `next week`, `next month`, `+7d`, `14d` |
+| ISO | `2026-09-01` |
+| Day-month | `23rd Aug`, `23 Aug`, `23 August 2027` |
+| Month-day | `Aug 23`, `August 23 2027` |
+| Numeric | `14/03/2027`, `14/03` |
+
+A bare day-and-month that has already passed this year rolls forward to next year.
+Anything unrecognised defaults to one week out.
 
 ---
 
@@ -173,3 +195,26 @@ An interactive, 5-step review routine in Telegram:
 * 🚗 **Out & About:** Send voice notes to capture ideas. Type `/next @errands` or `/next @anywhere` when running errands.
 * ✅ **Completing Tasks:** Run `/done <task>` or check the box in Obsidian; tap to promote the next roadmap step when prompted.
 * 📚 **Filing Reading Material:** Send `/file <URL>` for standard reading or `/research <URL>` for deep concept mapping.
+
+---
+
+## 🧾 Writing Tasks by Hand in Obsidian
+
+You can edit `01_Tasks/*.md` directly — the daemon reconciles them within ~15 seconds.
+It rewrites `Next_Actions.md` on each sweep (sorting by due date and splitting Personal /
+Professional), so a few conventions matter:
+
+- **Follow the line format:**
+  `- [ ] <description> @<context> #project/<Name> #<category> 📅 YYYY-MM-DD 🔔 YYYY-MM-DD`
+- **Ticking `- [x]`** anywhere in `01_Tasks/` archives the item to `z_Completed.md` on the
+  next sweep, and triggers roadmap step promotion if it carried a `#project/` tag.
+- **Untagged items** automatically gain `#personal` or `#professional` (inferred from the
+  project's folder) the next time the dashboard is rebuilt.
+- **Square brackets in task text are safe** — `- [ ] [Draft] review the spec` is preserved
+  intact.
+- **Placeholder lines** (`🎉 *All clear!*`, `*None*`) are managed by the system; you can
+  ignore them, and they are removed automatically once a real item exists.
+
+Project master notes are equally editable. Frontmatter is written as standard YAML, so
+titles containing colons or quotes (`Phase 1: Discovery`) render correctly in Obsidian's
+properties panel.

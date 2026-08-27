@@ -21,6 +21,7 @@
 - [Installation & Setup](#-installation--setup)
 - [Configuration Reference](#-configuration-reference)
 - [Documentation Index](#-documentation-index)
+- [Development](#-development)
 - [License](#-license)
 
 ---
@@ -96,17 +97,17 @@ The **Second Brain** operates on the **"Agent-as-Librarian"** paradigm: an intel
 | `/file <URL/doc>` | **Direct PARA Filing** — Routes directly to AI Librarian, bypassing GTD clarify triage. |
 | `/research <URL>` | **Deep Research** — Ingests content into Research Brain with full knowledge graph concept extraction. |
 | `/clarify` | **Interactive Triage** — Process captured items in 5-item batches with inline buttons & calendar picker. |
-| `/next [@context]` | **Context Execution** — Filter tasks (`@home`, `@computer`, `@errands`, `@phone`, `@anywhere`, `@office`, `@WFH`). |
+| `/next [@context]` | **Context Execution** — Bare `/next` offers a Personal / Professional / Both picker; `/next @context` filters directly (`@home`, `@computer`, `@errands`, `@phone`, `@anywhere`, `@office`, `@WFH`). |
 | `/waiting` | **Delegated Tracking** — View pending items owed by others with age and follow-up dates. |
 | `/project <name>` | **Project Dashboard** — View Desired Outcome, Active Actions, Roadmap Steps, and References. |
 | `/project <name> add <step>` | **Roadmap Backlog** — Append a new future step to `## Project Steps` in a project note. |
-| `/archive <name>` | **Archive Project** — Marks project completed and moves it to `05_Archive/`. |
-| `/done <item>` | **Complete Action** — Archives task to `01_Tasks/Completed.md` and triggers 1-tap step promotion. |
-| `/tickle <item>` | **Defer Task** — Opens visual calendar picker to set a `🔔 YYYY-MM-DD` tickler date. |
+| `/archive <name>` | **Archive Project** — Sets `status: completed` and moves the whole project folder to `05_Archive/02_Projects/<Category>/`. |
+| `/done <item>` | **Complete Action** — Archives task to `01_Tasks/z_Completed.md` and triggers 1-tap step promotion. |
+| `/tickle <item>` | **Defer Task** — Opens visual calendar picker to set a `🔔 YYYY-MM-DD` tickler date; deferred items are hidden until that date. |
 | `/daily` | **Daily Review** — On-demand action review (deadlines <=14d, surfaced ticklers, next actions by context). |
 | `/weekly` / `/status` | **System Sitrep** — High-level counts across all GTD task lists, active projects, and 7-day completed actions. |
 | `/reflect` | **Guided Review** — Step-by-step interactive weekly reflection (inbox zero, stale waitings, orphaned projects, Someday/Maybe). |
-| `/holiday` | **Pause Reviews** — Pause automated briefings by scope (`Personal`, `Professional`, `All`) with calendar picker. |
+| `/holiday` | **Pause Reviews** — Pause automated briefings by scope (`Personal`, `Professional`, `All`) via calendar picker, or type a date directly (`/holiday personal 23rd Aug`). |
 | `/jira <summary>` | **Jira Export** — Create a ticket directly in Jira backlog. |
 | `/undo` | **Safety Revert** — Reverts the last automated Git commit (`git revert HEAD`). |
 | `/help` | **Help Menu** — Full command reference and workflow examples. |
@@ -130,7 +131,7 @@ vault/
 │   ├── Waiting_For.md             <-- ⏳ Delegated actions (#waiting(Name))
 │   ├── Someday_Maybe.md           <-- 💡 Future ideas & uncommitted desires
 │   ├── Captured.md                <-- 📥 Raw captures awaiting /clarify
-│   └── Completed.md               <-- ✅ Archived completed actions
+│   └── z_Completed.md             <-- ✅ Archived completed actions (newest first)
 ├── 02_Projects/                   <-- ACTIVE PROJECTS
 │   ├── Personal/                  <-- Personal projects & deliverables
 │   └── Professional/              <-- Work & career deliverables
@@ -319,6 +320,7 @@ systemctl --user status second-brain.service
 | `TELEGRAM_ALLOWED_CHAT_IDS` | *Optional* | Comma-separated list of authorized Telegram chat IDs. |
 | `ENABLE_TELEGRAM_BOT` | `true` | Enables unified Telegram bot polling loop. |
 | `ENABLE_GMAIL_POLLING` | `false` | Enables IMAP polling for incoming attachments. |
+| `API_AUTH_TOKEN` | *Optional* | Shared secret for `/process` and `/query`. When set, callers must send `Authorization: Bearer <token>`. Unset leaves the API open. |
 | `JIRA_URL` | *Optional* | Base URL for Atlassian Jira instance. |
 | `JIRA_USER_EMAIL` | *Optional* | User email for Jira API basic auth. |
 | `JIRA_API_TOKEN` | *Optional* | Atlassian API token for Jira ticket creation. |
@@ -330,7 +332,38 @@ systemctl --user status second-brain.service
 Comprehensive guides are located in the `docs/` directory:
 * **[User Guide & Workflows](docs/user_guide.md):** Complete day-to-day manual for GTD triage, contexts, reviews, and project management.
 * **[Technical Implementation](docs/technical_implementation.md):** Backend schemas, state machines, and system module breakdown.
+* **[Manual Testing](docs/manual_testing.md):** Verification plan for behaviour the automated suite cannot cover.
+* **[Changelog](docs/changelog.md):** What changed and why, most recent first.
 * **[Product Description](docs/product_description.md):** Architectural vision, value proposition, and core capabilities.
+
+---
+
+## 🧪 Development
+
+```bash
+cd backend
+uv run pytest              # ~220 tests, ~1.5s — no vault, API key or network required
+uv run ruff check .        # lint; must pass clean
+uv run ruff check . --fix  # apply safe autofixes
+```
+
+Tests build a throwaway vault in `tests/conftest.py`, so they never touch your real one.
+
+**Two conventions matter when working on the backend:**
+
+1. **Use `backend/vault/tasks.py` for anything touching task lines or project notes** —
+   `parse_task_line`, `strip_task_metadata`, `archive_completed_lines`,
+   `find_project_note`, `read_project`, `dump_frontmatter`. It is the single source of
+   truth for the formats in
+   [technical_implementation.md](docs/technical_implementation.md) §2 and §6. Independent
+   copies of these parsers drifting apart has been a recurring source of silent bugs.
+2. **Restart the service after any backend change** — code edits do not take effect until
+   you do:
+   ```bash
+   systemctl --user restart second-brain.service
+   systemctl --user status second-brain.service
+   journalctl --user -u second-brain.service -f
+   ```
 
 ---
 

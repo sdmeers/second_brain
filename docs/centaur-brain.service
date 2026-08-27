@@ -1,17 +1,18 @@
 [Unit]
-Description=Centaur Brain Backend Service
+Description=Second Brain Orchestrator Daemon (GTD + PARA)
 After=network.target
 
 [Service]
 Type=simple
-# EDIT THIS: Absolute path to your second_brain repository root.
-# main.py must run as a module from the repo root so `backend` resolves as a package.
-WorkingDirectory=/home/username/second_brain
-# EDIT THIS: Absolute path to your uv binary (find with 'which uv')
-ExecStart=/home/username/.local/bin/uv run --project backend python3 -m backend.main
+# EDIT THESE THREE PATHS for your machine.
+# WorkingDirectory is the backend/ directory; PYTHONPATH is the repository root, which
+# is what lets `backend` resolve as a package from inside main.py.
+WorkingDirectory=/home/username/second_brain/backend
+ExecStart=/home/username/.local/bin/uv run main.py
+Environment=PYTHONPATH=/home/username/second_brain
+Environment=PYTHONUNBUFFERED=1
 Restart=always
 RestartSec=5
-Environment=PYTHONUNBUFFERED=1
 
 [Install]
 WantedBy=default.target

@@ -23,7 +23,7 @@ vault/
 │   ├── Waiting_For.md             <-- ⏳ Delegated items (#waiting(Name))
 │   ├── Someday_Maybe.md           <-- 💡 Future ideas & uncommitted desires
 │   ├── Captured.md                <-- 📥 Raw captures awaiting /clarify
-│   └── Completed.md               <-- ✅ Archived completed items
+│   └── z_Completed.md             <-- ✅ Archived completed items (newest first)
 ├── 02_Projects/                   <-- ACTIVE PROJECTS (Master Notes & Roadmaps)
 │   ├── Personal/                  <-- Personal deliverables
 │   └── Professional/              <-- Work & career deliverables
@@ -55,9 +55,35 @@ vault/
 # Check service status
 systemctl --user status second-brain.service
 
-# Restart service after code changes
+# Restart service after code changes  (REQUIRED — edits do not take effect until you do)
 systemctl --user restart second-brain.service
 
 # Inspect live application logs
 journalctl --user -u second-brain.service -f
 ```
+
+## 🧪 Development
+
+```bash
+cd backend
+uv sync                    # install/update dependencies
+uv run pytest              # ~220 tests, ~1.5s — no vault, API key or network needed
+uv run ruff check .        # lint; must pass clean
+uv run ruff check . --fix  # apply safe autofixes
+```
+
+Tests build a throwaway vault in `conftest.py`, so they never touch your real one.
+
+> **When adding features that touch tasks or projects**, use the helpers in
+> `backend/vault/tasks.py` rather than writing another Markdown parser — see
+> [technical_implementation.md](technical_implementation.md) §6.
+
+## 📚 Documentation Index
+
+| Document | Contents |
+| :--- | :--- |
+| [user_guide.md](user_guide.md) | Day-to-day workflows and the full Telegram command reference |
+| [technical_implementation.md](technical_implementation.md) | Architecture, schemas, state machines, module breakdown |
+| [manual_testing.md](manual_testing.md) | Manual verification plan for behaviour the test suite cannot cover |
+| [changelog.md](changelog.md) | What changed and why, most recent first |
+| [product_description.md](product_description.md) | What the system is, in brief |

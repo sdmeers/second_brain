@@ -88,7 +88,7 @@ All projects are organized into dedicated subdirectories under `02_Projects/Pers
   - `Notes/`, `Meetings/`, `Outputs/` (Optional subfolders for meeting minutes, deliverables, and drafts)
   - Attachments, images, and reference documents.
 
-```markdown
+````markdown
 ---
 title: "Project Title"
 type: project
@@ -118,16 +118,23 @@ WHERE contains(tags, "#project/Project_Title") AND !completed
 
 ## Reference Material
 - [[Linked Note 1]]
-```
+````
 
 ---
 
 ## 4. Backend Subsystems & Module Breakdown
 
 ### 4.1 Ingestion Watcher & Router (`watcher.py`)
-- Background polling loop monitoring the SQLite ingestion queue and `00_System/Inbox/`.
-- **Deterministic Slash Override:** Commands like `/research`, `#research`, or `/file` bypass generic classifier heuristics to route directly to their target pipelines.
-- **Auto-Healer:** Detects and resolves Syncthing sync conflicts (`*.sync-conflict-*.md` and device suffixes like `-OROPVGA.md`) by performing line-level merges and committing the result to Git.
+- Background polling loop (15 s tick) monitoring the SQLite ingestion queue and `00_System/Inbox/`.
+- **Pipeline stages** — the queue worker is split into discrete, individually testable steps:
+  1. `prepare_content()` — turns an attachment into classifiable text (Whisper transcription for audio, PyMuPDF/python-pptx extraction for documents, multimodal OCR for images). Extracted text is cached back onto the queue row so a retry never re-transcribes.
+  2. `classify_item()` — runs the LLM router, honouring the deterministic `/research` override.
+  3. Routing — deep research, task, voice dump, instruction, PARA note (`route_para_note()`), URL capture, or fallback.
+  4. `finalise_item()` — completed log, Git commit, incremental indexing, tag/wikilink enrichment, Telegram notification. Each step is guarded independently so a failure in indexing cannot lose the note.
+- **Deterministic Slash Override:** Commands like `/research`, `#research`, or `/file` bypass generic classifier heuristics to route directly to their target pipelines. `detect_research_request()` searches the body and the email subject *separately*, so a trigger phrase cannot match by spanning the two.
+- **Document detection:** `looks_like_document()` checks the file extension, then the URL path, then falls back to an HTTP `HEAD` content-type probe — which catches PDFs served without a `.pdf` suffix (arXiv links, datasheets).
+- **PARA note writing:** `write_para_note()` is the single implementation used for both `03_Areas` matches and `02_Projects/Ideas`, including raw-source-file copying and filename collision resolution.
+- **Auto-Healer:** Detects and resolves Syncthing sync conflicts by performing line-level merges (preserving `- [x]` completion state) and committing the result to Git. Detection requires either Syncthing's own `.sync-conflict-` marker, or a `-XXXXXXX.md` device suffix **whose base file actually exists** — without that second condition an ordinary note such as `Notes-ABC1234.md` matched, and the healer would move or delete it.
 
 ### 4.2 Clarify State Machine (`clarify.py`)
 - Manages interactive multi-stage triage sessions over Telegram callback queries.
@@ -186,11 +193,181 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/sdmeers/second_brain
-ExecStart=/home/sdmeers/second_brain/backend/.venv/bin/python3 -m backend.main
+WorkingDirectory=/home/sdmeers/second_brain/backend
+ExecStart=/home/sdmeers/.local/bin/uv run main.py
+Environment=PYTHONPATH=/home/sdmeers/second_brain
+Environment=PYTHONUNBUFFERED=1
 Restart=always
 RestartSec=5
 
 [Install]
 WantedBy=default.target
 ```
+
+`PYTHONPATH` pointing at the repository root is what lets `backend` resolve as a package
+from inside `main.py`. `main.py` also inserts the repo root onto `sys.path` itself, so
+running `python3 -m backend.main` from the repo root works equally well.
+
+> **Note:** `main.py` imports `app` from `backend.api.routes` at module level. It looks
+> unused, but `uvicorn.run("backend.main:app", ...)` resolves that name at runtime — do
+> not let an autofixer strip it (it carries an explicit `# noqa: F401`).
+
+---
+
+## 6. Shared Vault Parser (`backend/vault/tasks.py`)
+
+**All task-line and project-note parsing goes through this module.** Before it existed the
+line format in §2 was re-implemented with ad-hoc regexes across `engage.py`, `clarify.py`,
+`tasks_dashboard.py`, `instruction.py` and `watcher.py`, and those copies drifted apart —
+which is how several silent failures arose (`Completed.md` vs `z_Completed.md`,
+`00_System/Tasks.md` vs `01_Tasks/Next_Actions.md`).
+
+| Helper | Purpose |
+| :--- | :--- |
+| `parse_task_line(line) -> Task \| None` | Parses every documented field into a dataclass (`description`, `contexts`, `project`, `category`, `waiting_on`, `due`, `tickler`, `source`, `completed_on`). `raw` is preserved verbatim. |
+| `render_task_line(...)` | Emits a line in the canonical field order of §2. |
+| `strip_task_metadata(line)` | Returns the clean human-readable description. |
+| `iter_task_lines(path, include_checked=)` | Iterates parsed tasks in a GTD file. |
+| `archive_completed_lines(lines)` | The **only** way to write `z_Completed.md`, newest-first. |
+| `find_project_note(name)` | Resolves a project by exact filename, directory name, then substring — tolerant of case and `_`/space differences. |
+| `read_project(path) -> Project` | Frontmatter (as YAML), `status`, `due_date`, `outcome`, `tag`, and roadmap `steps`. |
+| `ensure_project_note(name, category, outcome)` | Finds or creates the master note from the shared template. |
+| `append_project_step` / `remove_step_from_project` | Roadmap backlog maintenance. |
+| `parse_frontmatter` / `dump_frontmatter` | YAML-safe frontmatter read/write. |
+
+Two rules when working in this codebase:
+
+- **Never use `.strip("- [ ]")`.** `str.strip` takes a *character set*, not a prefix, so it
+  silently corrupts any task whose text begins or ends with `[`, `]`, `-` or a space —
+  `[Draft] review notes` became `Draft] review notes`. Use `strip_task_metadata()`.
+  Ruff's `B005` rule now catches this automatically.
+- **Never build frontmatter with f-strings.** Use `dump_frontmatter()`; a title containing
+  a quote or a colon (`Phase 1: Discovery`) otherwise emits YAML that both Obsidian and
+  `yaml.safe_load` reject.
+
+---
+
+## 7. Ingestion Queue Semantics (`backend/ingestion/queue.py`)
+
+- **Table:** `ingestion_queue (id, source_type, raw_payload, content_text, file_path,
+  status, error_message, retry_count, created_at, updated_at)`.
+- **Statuses:** `pending` → `processing` → `completed` | `failed`. Items stuck in
+  `processing` are reset to `pending` on startup.
+- **Draining:** the watcher processes up to **5 items per 15-second tick** (previously
+  exactly one, so a backlog of 20 captures took five minutes to clear).
+- **Retry backoff:** failed items become eligible again only after `1`, `5`, then `30`
+  minutes (`RETRY_BACKOFF_MINUTES`), and are abandoned after `MAX_RETRIES = 3`. Previously
+  a failing item retried on the very next tick, producing three failures — and three
+  Telegram error messages — inside a minute.
+- **Timestamps are UTC throughout.** Inserts use the column default `CURRENT_TIMESTAMP`
+  and `update_item_status` uses `CURRENT_TIMESTAMP` too, so the two are comparable. They
+  previously disagreed by an hour under BST because updates used Python's local-time
+  `datetime.now()`.
+
+---
+
+## 8. Concurrency & Blocking Discipline
+
+The daemon runs two long-lived tasks on one event loop: `watch_inbox_loop` (15-second
+tick) and `run_telegram_bot_loop` (10-second long poll). **Anything that blocks the loop
+delays Telegram button responses**, so:
+
+- Network calls in `processing/extractor.py` (`extract_web_text`, `extract_pdf_text`,
+  `extract_docx_text`, `fetch_cover`) are `async` and use `httpx.AsyncClient`. They were
+  synchronous with 30-second timeouts, which froze the bot for the duration of any slow
+  site during a capture.
+- `commit_vault_changes` (a `subprocess` call that can include a 30-second `git push`)
+  runs via `asyncio.to_thread`.
+- `ingestion/gmail.py` is the reference pattern for genuinely synchronous work:
+  `loop.run_in_executor(...)` wrapped in `asyncio.wait_for`.
+- Background tasks created with `asyncio.create_task` are held in a module-level set. The
+  loop only keeps weak references, so an unreferenced task can be garbage-collected
+  mid-flight.
+
+### Vector Store
+
+The `vss_brain_chunks` virtual table is declared as `vss0(vector(3072))`, matching the
+`gemini-embedding-2` dimension. **Changing `EMBEDDING_MODEL` to a model with a different
+dimension requires rebuilding this table** — the declared width is fixed at creation.
+
+### Incremental Vector Indexing
+
+`index_vault()` runs after every ingest and every 2 minutes. It caches `st_mtime` and
+`st_size` on `brain_chunks` and skips unchanged files without reading them; only when the
+stat differs does it hash to confirm a real content change. Zero-byte files are skipped
+outright (they produce no chunks, so they stored no cached stat and were re-read forever).
+On a 1,696-file / 253 MB vault a full pass went from **0.49 s to 0.04 s**, and now scales
+with *changed* files rather than vault size.
+
+### Atomic Vault Writes (`backend/vault/writer.py`)
+
+`atomic_write()` writes to a uniquely-named dot-prefixed temp file **in the same
+directory**, `fsync`s, then `os.replace`s. The unique name prevents two concurrent writes
+to one target from clobbering each other; the `fsync` prevents a crash leaving a
+renamed-but-empty file; the dot prefix keeps Syncthing and Obsidian from picking the temp
+file up mid-write.
+
+### Session State (`backend/utils/sessions.py`)
+
+The multi-step Telegram flows (`clarify`, step promotion, `tickle`, Q&A memory) keep state
+in a `SessionStore` — a `chat_id`-keyed dict whose entries expire after 30 minutes. State
+is deliberately process-local; losing an in-flight flow on restart is correct. Previously
+these were bare dicts with no eviction, so abandoned flows leaked and the "session
+expired" branches were unreachable.
+
+---
+
+## 9. Testing & Linting
+
+Both are configured in `backend/pyproject.toml`.
+
+```bash
+cd backend
+uv run pytest              # ~220 tests, ~1.5s
+uv run ruff check .        # must pass clean
+uv run ruff check . --fix  # apply safe autofixes
+```
+
+`backend/tests/conftest.py` creates a throwaway vault and populates the environment
+**before** any backend module is imported (the package requires `OBSIDIAN_VAULT_PATH` and
+an API key at import time), so tests never touch the real vault, need no API key, and make
+no network calls.
+
+| Test module | Covers |
+| :--- | :--- |
+| `test_task_parsing.py` | The §2 line schema: parsing, rendering, round-trips, metadata stripping. |
+| `test_date_parsing.py` | Natural/relative dates, frontmatter dates, deadline extraction. |
+| `test_vault_writes.py` | `atomic_write`, filename sanitising, YAML frontmatter with awkward titles, archive format. |
+| `test_queue_worker.py` | The helpers split out of the queue worker, plus retry/backoff tiers. |
+| `test_gtd_flows.py` | Dashboard maintenance and project-note resolution end to end. |
+| `test_regressions.py` | One test per confirmed historical bug. |
+
+Ruff's `F` rules matter most here: undefined names had silently broken `/tickle`,
+`/holiday` and the PDF content-type probe, and nothing was configured to catch them.
+`B005` catches the `.strip("- [ ]")` corruption described in §6.
+
+---
+
+## 10. HTTP API & Authentication (`backend/api/routes.py`)
+
+| Endpoint | Method | Auth | Purpose |
+| :--- | :--- | :--- | :--- |
+| `/process` | POST | optional | Chrome-extension capture ingestion. |
+| `/query` | POST | optional | RAG question answering. |
+| `/health` | GET | never | Disk usage and queue counts (kept open for monitoring). |
+
+The server binds `0.0.0.0` so the Chrome extension can reach it over Tailscale/LAN.
+Setting `API_AUTH_TOKEN` in `backend/.env` requires callers to send
+`Authorization: Bearer <token>`; leaving it unset keeps the API open, which is the
+previous behaviour. The extension reads the matching value from `extension/config.js`.
+
+The FastAPI app uses a `lifespan` context manager (not the deprecated
+`@app.on_event("startup")`) to own the background watcher task.
+
+### Chrome Extension Configuration
+
+`extension/config.js` (gitignored; see `config.example.js`) holds the backend candidate
+addresses and the optional API token, keeping personal Tailscale/LAN addresses out of the
+repository. **The port there must match `PORT` in `backend/.env`.** Manifest V3
+`host_permissions` cannot read that file, so a non-localhost address must also be listed
+in `extension/manifest.json`.

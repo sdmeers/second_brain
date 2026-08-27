@@ -118,6 +118,16 @@ It should take the **deep extraction** path. The content-type probe that decides
 previously raised `NameError` inside a swallowed `except`, so such links always fell
 through to the lightweight path.
 
+**D10 — YouTube duplicate detection (was blocking every video).** Send two *different*
+YouTube URLs, e.g. `https://www.youtube.com/watch?v=tBjgCj_dGZM` and any other video.
+Both should ingest. Then re-send one of them: it should be correctly rejected as
+`ℹ️ Already Ingested`. Short links (`youtu.be/<id>`), Shorts, and links carrying a
+timestamp (`&t=120s`) or playlist should all resolve to the same video.
+
+*Was:* the duplicate check discarded the entire query string, so every
+`youtube.com/watch?v=...` URL collapsed to `https://www.youtube.com/watch` and every new
+video was rejected as a duplicate of the first one ever ingested.
+
 **D9 — RAG answer quality (subjective).** Ask a question needing several notes. Answers
 should be at least as good as before: the entire retrieved context was previously sent to
 the model as one unbroken line with literal `\n` characters instead of real newlines.

@@ -1,6 +1,7 @@
 import os
 import re
 from backend.config import SUMMARIES_PATH, ATLAS_PATH, CONCEPTS_PATH
+from backend.utils.urls import normalize_url
 
 def get_atlas_themes() -> list[str]:
     """Reads the Atlas folder and returns a list of themes as wikilinks."""
@@ -31,15 +32,11 @@ def is_url_already_ingested(url: str) -> str | None:
     """
     if not os.path.exists(SUMMARIES_PATH):
         return None
-        
-    def clean_u(u: str) -> str:
-        u = u.strip().lower()
-        if u.startswith("http://") or u.startswith("https://"):
-            u = u.split("?")[0].split("#")[0].rstrip("/")
-        return u
-        
-    target_url = clean_u(url)
-    
+
+    target_url = normalize_url(url)
+    if not target_url:
+        return None
+
     try:
         for filename in os.listdir(SUMMARIES_PATH):
             if not filename.endswith(".md"):
@@ -57,7 +54,7 @@ def is_url_already_ingested(url: str) -> str | None:
                     frontmatter_text = "".join(frontmatter_lines)
                     match = re.search(r'^url:\s*["\']?(.*?)["\']?\s*$', frontmatter_text, re.MULTILINE)
                     if match:
-                        existing_url = clean_u(match.group(1))
+                        existing_url = normalize_url(match.group(1))
                         if existing_url == target_url:
                             return filename[:-3]  # Return title without .md
             except Exception as e:

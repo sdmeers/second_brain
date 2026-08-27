@@ -9,6 +9,7 @@ from bs4 import BeautifulSoup
 from google.genai import types
 from backend.config import GEMINI_MODEL
 from backend.utils.gemini import call_gemini_with_retry
+from backend.utils.urls import extract_youtube_id
 
 import os
 
@@ -197,14 +198,11 @@ async def extract_web_text(url: str) -> str:
 
 async def fetch_cover(url: str, is_youtube: bool) -> str:
     """Attempts to find a suitable cover image URL."""
-    if is_youtube:
-        video_id = None
-        if "v=" in url:
-            video_id = url.split("v=")[1].split("&")[0]
-        elif "youtu.be/" in url:
-            video_id = url.split("youtu.be/")[1].split("?")[0]
-        if video_id:
-            return f"https://i.ytimg.com/vi/{video_id}/maxresdefault.jpg"
+    # Shared extractor: also handles /shorts/, /embed/, /live/ and m.youtube.com, which
+    # the previous "v=" / "youtu.be/" string-splitting missed.
+    video_id = extract_youtube_id(url)
+    if video_id:
+        return f"https://i.ytimg.com/vi/{video_id}/maxresdefault.jpg"
     
     try:
         headers = {"User-Agent": "Mozilla/5.0"}

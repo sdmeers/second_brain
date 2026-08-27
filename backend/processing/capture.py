@@ -16,6 +16,7 @@ from backend.processing.extractor import (
 from backend.processing.brain_node import generate_brain_node, generate_light_node, clean_yaml_brackets
 from backend.processing.concept_updater import update_concept_page
 from backend.utils.sanitize import sanitize_filename
+from backend.utils.urls import extract_youtube_id
 from backend.utils.logger import log_action
 
 class DuplicateURLError(Exception):
@@ -52,7 +53,9 @@ async def process_capture_core(
         is_pdf = ext == ".pdf" or clean_url.endswith('.pdf') or '/pdf/' in clean_url
         is_pptx = ext == ".pptx" or clean_url.endswith('.pptx')
         is_docx = ext in [".docx", ".doc"] or clean_url.endswith('.docx') or clean_url.endswith('.doc')
-        is_youtube = "youtube.com/watch" in url or "youtu.be/" in url
+        # Covers watch?v=, youtu.be, /shorts/, /embed/, /live/ and mobile hosts;
+        # the previous substring test missed everything but the first two.
+        is_youtube = extract_youtube_id(url) is not None
         
         # Read the file bytes if file_path is provided
         file_bytes = None

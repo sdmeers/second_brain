@@ -28,7 +28,19 @@ Other operational scripts (all live in `backend/`, run the same way with `uv run
 - `add_book.py` — CLI to generate a book summary node directly into the vault ("Book Mode").
 - `create_jira_epics.py` — Jira export helper.
 
-There is no test suite, linter, or type-checker configured in this repo (no `pytest`/`ruff`/`mypy` config, no `tests/` directory) — do not assume one exists.
+Testing and linting (both configured in `backend/pyproject.toml`):
+
+```bash
+cd backend
+uv run pytest              # ~220 tests, ~1.5s, no vault/API key/network needed
+uv run ruff check .        # must pass clean
+uv run ruff check . --fix  # apply safe autofixes
+```
+
+`backend/tests/conftest.py` builds a throwaway vault and sets `OBSIDIAN_VAULT_PATH` before
+any backend module is imported, so tests never touch the real vault. Ruff's `F` rules are
+the important ones here — undefined names had previously broken `/tickle`, `/holiday` and
+the PDF content-type probe silently. There is no type-checker configured.
 
 The systemd unit for persistent operation is `docs/centaur-brain.service`; deploy path is `~/.config/systemd/user/second-brain.service`.
 
@@ -64,7 +76,23 @@ There's no ORM/migrations — the vault's structure *is* the data model, and mul
 - **Project master notes** live one-per-directory under `02_Projects/{Personal,Professional}/<Project_Name>/<Project_Name>.md`, with YAML frontmatter (`due_date`, `status`, `category`) plus `## Project Steps` (future roadmap backlog) and `## Active Actions` (a live Dataview query) sections. Completing a project-tagged action (via Telegram `/done` or ticking `- [x]` in Obsidian) triggers **step auto-promotion**: `engage.py` finds the project note, offers unchecked `## Project Steps` items as candidates, and on selection appends them to `Next_Actions.md` while removing them from the roadmap.
 - Archiving a project moves its whole directory to `05_Archive/02_Projects/<Category>/` (recent convention — see git history).
 
-When adding features that touch tasks or projects, grep for existing parsers (`tasks_dashboard.py`, `engage.py`) rather than writing a new Markdown parser — the line/frontmatter formats are relied on by several independent readers.
+**`backend/vault/tasks.py` is the single source of truth for parsing and writing task
+lines and project notes.** When adding features that touch tasks or projects, use its
+helpers rather than writing another Markdown parser:
+
+- `parse_task_line()` / `render_task_line()` / `strip_task_metadata()` — task lines.
+  Never use `.strip("- [ ]")`: `str.strip` takes a *character set*, so it corrupts any
+  task whose text starts or ends with `[`, `]`, `-` or a space.
+- `archive_completed_lines()` — the only way to write `z_Completed.md`, so `/status` and
+  `/reflect` can parse what every path produces.
+- `find_project_note()` / `read_project()` / `ensure_project_note()` /
+  `append_project_step()` / `remove_step_from_project()` — project notes.
+- `parse_frontmatter()` / `dump_frontmatter()` — **always** use these instead of
+  f-string interpolation; a title containing a quote or colon otherwise emits invalid YAML.
+
+Conventions drifting between independent copies of these parsers is what previously
+caused several silent failures (`Completed.md` vs `z_Completed.md`, `00_System/Tasks.md`
+vs `01_Tasks/Next_Actions.md`).
 
 ### Config and paths
 

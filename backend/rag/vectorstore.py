@@ -210,6 +210,12 @@ async def index_vault(force_reindex: bool = False):
                         indexed_files.add(rel_path)
                         stat = os.stat(full_path)
 
+                        # Empty files produce no chunks, so index_file stores no rows and
+                        # no cached stat -- which meant they were re-read and re-hashed on
+                        # every single pass, forever. Skip them outright.
+                        if stat.st_size == 0:
+                            continue
+
                         cursor.execute(
                             "SELECT file_hash, file_mtime, file_size FROM brain_chunks "
                             "WHERE file_path = ? LIMIT 1",

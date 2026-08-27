@@ -250,7 +250,7 @@ async def process_telegram_message(message: dict, token: str, http_client):
   /tickle [date] [item] Defer item (e.g. /tickle 23rd Aug Send card)
 
 ━━━ ⚡ **ENGAGE & PROJECTS** ━━━
-  /next                View active next actions
+  /next                View active next actions (choose Personal/Professional/Both)
   /next @errands       Filter actions by context (@home, @computer, etc.)
   /waiting             View delegated items
   /project [name]      View project roadmap & active actions
@@ -510,6 +510,10 @@ async def handle_telegram_callback_query(callback_query: dict, token: str, http_
     elif data.startswith("reflect:"):
         from backend.ingestion.handlers.engage import handle_reflect_callback
         await handle_reflect_callback(callback_query, token, http_client)
+
+    elif data.startswith("next:"):
+        from backend.ingestion.handlers.engage import handle_next_callback
+        await handle_next_callback(callback_query, token, http_client)
 
 
 

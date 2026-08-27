@@ -248,49 +248,72 @@ async def maintain_tasks_dashboard():
                             print(f"Tasks Dashboard: Error prompting project promotion for {proj_tag}: {pe}")
                         break
 
-        # 2. Categorize active tasks
+        # 2. Categorize active tasks by due date, split into Personal / Professional
         today = datetime.now().date()
-        overdue_tasks = []
-        due_today_tasks = []
-        upcoming_tasks = []
-        backlog_tasks = []
-        
-        for task in active_next_actions:
-            due_date = parse_deadline(task)
-            
-            # Replace relative date keywords with standard YYYY-MM-DD for compatibility
-            if due_date:
-                due_date_str = due_date.strftime("%Y-%m-%d")
-                task = re.sub(r'📅\s*tomorrow', f'📅 {due_date_str}', task, flags=re.IGNORECASE)
-                task = re.sub(r'📅\s*today', f'📅 {due_date_str}', task, flags=re.IGNORECASE)
-                
-            if due_date is None:
-                backlog_tasks.append(task)
-            else:
-                if due_date < today:
-                    overdue_tasks.append(task)
-                elif due_date == today:
-                    due_today_tasks.append(task)
-                elif today < due_date <= today + timedelta(days=7):
-                    upcoming_tasks.append(task)
-                else:
+
+        def _order_by_due(tasks):
+            overdue_tasks, due_today_tasks, upcoming_tasks, backlog_tasks = [], [], [], []
+            for task in tasks:
+                due_date = parse_deadline(task)
+
+                # Replace relative date keywords with standard YYYY-MM-DD for compatibility
+                if due_date:
+                    due_date_str = due_date.strftime("%Y-%m-%d")
+                    task = re.sub(r'📅\s*tomorrow', f'📅 {due_date_str}', task, flags=re.IGNORECASE)
+                    task = re.sub(r'📅\s*today', f'📅 {due_date_str}', task, flags=re.IGNORECASE)
+
+                if due_date is None:
                     backlog_tasks.append(task)
-                    
-        # 3. Rebuild Next_Actions.md content
+                else:
+                    if due_date < today:
+                        overdue_tasks.append(task)
+                    elif due_date == today:
+                        due_today_tasks.append(task)
+                    elif today < due_date <= today + timedelta(days=7):
+                        upcoming_tasks.append(task)
+                    else:
+                        backlog_tasks.append(task)
+            return overdue_tasks + due_today_tasks + upcoming_tasks + backlog_tasks
+
+        personal_raw = [t for t in active_next_actions if "#professional" not in t]
+        professional_raw = [t for t in active_next_actions if "#professional" in t]
+
+        personal_tasks = _order_by_due(personal_raw)
+        professional_tasks = _order_by_due(professional_raw)
+
+        # 3. Rebuild Next_Actions.md content, split into Personal / Professional sections
         new_content = """# ⚡ Next Actions
 
 > Flexible, context-tagged action list. Filter in Telegram using `/next @context`.
 
 ---
 
-## ⚡ Next Actions
+## 🏠 Personal
 """
-        all_active = overdue_tasks + due_today_tasks + upcoming_tasks + backlog_tasks
-        if all_active:
-            for task in all_active:
+        if personal_tasks:
+            for task in personal_tasks:
                 new_content += f"{task}\n"
         else:
-            new_content += "\n🎉 *All clear! No active next actions remaining.*\n"
+            new_content += "*None*\n"
+
+        new_content += "\n## 💼 Professional\n"
+        if professional_tasks:
+            for task in professional_tasks:
+                new_content += f"{task}\n"
+        else:
+            new_content += "*None*\n"
+
+        if not personal_tasks and not professional_tasks:
+            new_content = """# ⚡ Next Actions
+
+> Flexible, context-tagged action list. Filter in Telegram using `/next @context`.
+
+---
+
+## ⚡ Next Actions
+
+🎉 *All clear! No active next actions remaining.*
+"""
             
         # Write back to file if changed
         if os.path.exists(TASKS_MD_FILE):

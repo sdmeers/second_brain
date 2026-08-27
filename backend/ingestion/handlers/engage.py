@@ -172,11 +172,15 @@ async def handle_project_command(chat_id: int, text: str, token: str, http_clien
         step_to_add = m_add.group(2).strip()
         is_add = True
         
+    print(f"Backend [Project]: query={proj_query!r} is_add={is_add} step={step_to_add[:80]!r}")
+
     # Find (or create) the project master note via the shared resolver
     found_path = ensure_project_note(proj_query, category="Personal")
+    print(f"Backend [Project]: resolved note -> {found_path}")
 
     if is_add:
         append_project_step(proj_query, step_to_add)
+        print(f"Backend [Project]: appended step to {found_path}")
         await send_msg(chat_id, token, http_client, f"✅ Added step to roadmap:\n`{step_to_add}`")
         return
 
@@ -1383,6 +1387,7 @@ async def handle_reflect_callback(callback_query: dict, token: str, http_client:
 
 async def handle_engage_commands(chat_id: int, text: str, token: str, http_client: httpx.AsyncClient) -> bool:
     cmd_part = text.split()[0].lower()
+    print(f"Backend [Engage]: dispatching {cmd_part!r} (full: {text[:120]!r})")
     
     if cmd_part in ["/status", "/sitrep", "/weekly"]:
         await handle_status_command(chat_id, token, http_client)

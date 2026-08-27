@@ -171,8 +171,17 @@ async def notify_via_telegram(message: str, reply_markup: dict = None):
 
 async def process_telegram_message(message: dict, token: str, http_client):
     chat_id = message["chat"]["id"]
-    text = unwrap_command(message.get("text") or message.get("caption") or "")
-    
+    raw_text = message.get("text") or message.get("caption") or ""
+    text = unwrap_command(raw_text)
+
+    # Dispatch logging. Without this, a command that fails to route produces no log
+    # output at all, and the only way to tell what happened is to infer it from file
+    # mtimes -- which is how a /project ... add report went undiagnosed twice.
+    if raw_text:
+        note = "" if text == raw_text else f" (unwrapped from {raw_text!r})"
+        kind = "COMMAND" if text.startswith("/") else "text"
+        print(f"Backend [Telegram]: {kind} from {chat_id}: {text[:120]!r}{note}")
+
     voice = message.get("voice")
     audio = message.get("audio")
     photo = message.get("photo")

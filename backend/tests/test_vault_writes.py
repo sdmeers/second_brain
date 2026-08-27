@@ -185,3 +185,45 @@ class TestArchiveCompletedLines:
         archive_completed_lines(["- [ ] Buy milk"])
         assert (tasks_dir / "z_Completed.md").exists()
         assert not (Path(tasks_dir) / "Completed.md").exists()
+
+
+class TestAtomicWritePreservesPermissions:
+    """mkstemp creates 0600 and os.replace keeps the temp file's mode, so atomic_write
+    silently stripped group/other read bits from every file it touched."""
+
+    def test_existing_file_mode_is_preserved(self, tmp_path):
+        target = tmp_path / "note.md"
+        target.write_text("old", encoding="utf-8")
+        os.chmod(target, 0o644)
+        atomic_write(str(target), "new")
+        assert oct(target.stat().st_mode & 0o777) == oct(0o644)
+
+    def test_unusual_existing_mode_is_preserved(self, tmp_path):
+        target = tmp_path / "note.md"
+        target.write_text("old", encoding="utf-8")
+        os.chmod(target, 0o664)
+        atomic_write(str(target), "new")
+        assert oct(target.stat().st_mode & 0o777) == oct(0o664)
+
+    def test_new_file_respects_umask_not_0600(self, tmp_path):
+        target = tmp_path / "fresh.md"
+        atomic_write(str(target), "content")
+        umask = os.umask(0)
+        os.umask(umask)
+        assert oct(target.stat().st_mode & 0o777) == oct(0o666 & ~umask)
+
+    def test_new_file_is_group_readable_under_a_normal_umask(self, tmp_path):
+        old = os.umask(0o022)
+        try:
+            target = tmp_path / "fresh2.md"
+            atomic_write(str(target), "content")
+            assert target.stat().st_mode & 0o044, "should be group/other readable"
+        finally:
+            os.umask(old)
+
+    def test_binary_write_also_preserves_mode(self, tmp_path):
+        target = tmp_path / "f.bin"
+        target.write_bytes(b"x")
+        os.chmod(target, 0o644)
+        atomic_write(str(target), b"yy", is_binary=True)
+        assert oct(target.stat().st_mode & 0o777) == oct(0o644)

@@ -21,12 +21,23 @@ def atomic_write(file_path: str, content, is_binary: bool = False):
     encoding = None if is_binary else "utf-8"
     prefix = f".{os.path.basename(file_path)}."
 
+    # Preserve the target's permissions. mkstemp creates 0600 and os.replace keeps the
+    # temp file's mode, so without this every file the system writes silently loses its
+    # group/other read bits -- which breaks Samba shares and other-user access.
+    try:
+        target_mode = os.stat(file_path).st_mode & 0o7777
+    except FileNotFoundError:
+        umask = os.umask(0)
+        os.umask(umask)
+        target_mode = 0o666 & ~umask
+
     fd, temp_path = tempfile.mkstemp(prefix=prefix, suffix=".tmp", dir=dir_name)
     try:
         with os.fdopen(fd, mode, encoding=encoding) as f:
             f.write(content)
             f.flush()
             os.fsync(f.fileno())
+        os.chmod(temp_path, target_mode)
         os.replace(temp_path, file_path)
     except Exception:
         try:

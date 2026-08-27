@@ -246,10 +246,11 @@ class Project:
 
 def parse_flexible_date(value) -> date | None:
     """Parse a frontmatter date that may be ISO, DD-MM-YYYY, or already a date."""
-    if isinstance(value, date):
-        return value
+    # datetime is a subclass of date, so it must be tested first.
     if isinstance(value, datetime):
         return value.date()
+    if isinstance(value, date):
+        return value
     if not value:
         return None
     text = str(value).strip().strip('"').strip("'")

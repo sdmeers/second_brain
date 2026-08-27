@@ -153,7 +153,7 @@ An interactive, 5-step review routine in Telegram:
 - **Step 3: 🎯 Project Health & Momentum:** Scans for **Orphaned Projects** (0 active next actions) and offers 1-tap buttons to promote roadmap steps immediately.
 - **Step 4: 💡 Someday / Maybe Review:** Re-evaluates backlogged ideas for activation or cleanup.
 - **Step 5: 🚨 Deadlines & Accomplishments:** Reviews upcoming project deadlines (`due_date <= 14d`) and celebrates weekly completed tasks.
-*(Seamless navigation allows you to return to the reflection menu after clarifying or promoting steps at any point).*
+*(You can navigate between reflection steps at your own pace, or run `/clarify` independently anytime).*
 
 ### System Status & Sitrep (`/weekly` or `/status`)
 - Run `/weekly` or `/status` at any time for a high-level system sitrep (item counts across all lists and full active project directory).

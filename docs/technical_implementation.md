@@ -134,7 +134,7 @@ WHERE contains(tags, "#project/Project_Title") AND !completed
 - **8-Option GTD Triage:** Next Action, Project Roadmap, New Project, Waiting For, Someday/Maybe, AI Librarian, 2-Min Rule, Trash.
 - **Waiting For Flow:** Prompts for contact/entity name (`#waiting(Name)`) and optional project link before filing to `01_Tasks/Waiting_For.md`.
 - **Dynamic Project Picker:** Scans `02_Projects/Personal` and `02_Projects/Professional` to render 2-column inline buttons for rapid project association.
-- **Batch Processing & Reflection Bridge:** Processes 5 items per run with inline `[▶️ Continue]` / `[⏸️ Pause]` controls and provides 1-tap return buttons to resume Guided Reflection.
+- **Batch Processing:** Processes 5 items per run with inline `[▶️ Continue]` / `[⏸️ Pause]` controls.
 
 ### 4.3 Telegram Inline Calendar Engine (`telegram_calendar.py`)
 - Generates dynamic visual keyboard calendars for natural date selection.
@@ -148,7 +148,6 @@ WHERE contains(tags, "#project/Project_Title") AND !completed
   2. Extracts unchecked roadmap steps from `## Project Steps`.
   3. Sends an interactive Telegram prompt with candidate step buttons.
   4. Upon context selection, appends `- [ ] <step> @<context> #project/<tag>` to `Next_Actions.md` and deletes the line from `## Project Steps`.
-  5. Provides 1-tap navigation to return to Reflection Step 3 or view Next Actions.
 
 ### 4.5 Guided Reflection Engine (`engage.py`)
 - Interactive, multi-step review state machine triggered via `/reflect`:

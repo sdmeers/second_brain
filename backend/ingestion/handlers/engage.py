@@ -13,45 +13,89 @@ async def send_msg(chat_id: int, token: str, client: httpx.AsyncClient, text: st
     if reply_markup: payload["reply_markup"] = reply_markup
     await client.post(f"https://api.telegram.org/bot{token}/sendMessage", json=payload)
 
-async def handle_next_command(chat_id: int, text: str, token: str, http_client: httpx.AsyncClient):
+NEXT_CATEGORY_LABELS = {"personal": "Personal", "professional": "Professional", "both": "Both"}
+
+async def handle_next_command(chat_id: int, text: str, token: str, http_client: httpx.AsyncClient, show_category_picker: bool = True):
     cmd_parts = text.split(maxsplit=1)
     context_filter = cmd_parts[1].strip() if len(cmd_parts) > 1 else None
-    
+
+    # Bare `/next` (no @context arg) -> prompt for Personal / Professional / Both first
+    if not context_filter and show_category_picker:
+        buttons = [
+            [{"text": "🏠 Personal", "callback_data": "next:personal"},
+             {"text": "💼 Professional", "callback_data": "next:professional"}],
+            [{"text": "🔀 Both", "callback_data": "next:both"}]
+        ]
+        await send_msg(chat_id, token, http_client, "⚡ <b>Next Actions</b>\n\nFilter by category:", reply_markup={"inline_keyboard": buttons})
+        return
+
+    await send_next_actions(chat_id, token, http_client, context_filter=context_filter)
+
+async def send_next_actions(chat_id: int, token: str, http_client: httpx.AsyncClient, category_filter: str = None, context_filter: str = None, edit_message_id: int = None):
     tasks_file = os.path.join(OBSIDIAN_VAULT_PATH, "01_Tasks", "Next_Actions.md")
     if not os.path.exists(tasks_file):
-        await send_msg(chat_id, token, http_client, "No Next_Actions.md found.")
+        await _send_or_edit(chat_id, token, http_client, "No Next_Actions.md found.", edit_message_id)
         return
-        
+
     with open(tasks_file, "r", encoding="utf-8") as f:
         lines = f.readlines()
-        
+
     today = get_today_str()
     filtered_tasks = []
-    
+
     for line in lines:
         if not line.strip().startswith("- [ ]"): continue
-        
+
         # Check tickler date
         m = re.search(r'🔔 (\d{4}-\d{2}-\d{2})', line)
         if m and m.group(1) > today:
             continue
-            
+
         if context_filter:
             if context_filter not in line:
                 continue
-                
+
+        if category_filter and category_filter != "both":
+            if f"#{category_filter}" not in line:
+                continue
+
         filtered_tasks.append(line.strip())
-        
+
+    label_bits = []
+    if category_filter:
+        label_bits.append(NEXT_CATEGORY_LABELS.get(category_filter, category_filter.title()))
+    if context_filter:
+        label_bits.append(context_filter)
+    label = f" ({', '.join(label_bits)})" if label_bits else ""
+
     if not filtered_tasks:
-        await send_msg(chat_id, token, http_client, "No active next actions found.")
+        await _send_or_edit(chat_id, token, http_client, f"⚡ <b>Next Actions</b>{label}\n\nNo active next actions found.", edit_message_id)
         return
-        
-    msg = f"⚡ <b>Next Actions</b> {'(' + context_filter + ')' if context_filter else ''}\n\n"
+
+    msg = f"⚡ <b>Next Actions</b>{label}\n\n"
     for t in filtered_tasks:
         clean_t = re.sub(r'\[\[.*?\]\]', '', t).replace('(Source: )', '').replace('- [ ]', '•').strip()
         msg += f"{clean_t}\n"
-        
-    await send_msg(chat_id, token, http_client, msg)
+
+    await _send_or_edit(chat_id, token, http_client, msg, edit_message_id)
+
+async def _send_or_edit(chat_id: int, token: str, http_client: httpx.AsyncClient, text: str, edit_message_id: int = None):
+    if edit_message_id:
+        await http_client.post(
+            f"https://api.telegram.org/bot{token}/editMessageText",
+            json={"chat_id": chat_id, "message_id": edit_message_id, "text": text, "parse_mode": "HTML", "reply_markup": {"inline_keyboard": []}}
+        )
+    else:
+        await send_msg(chat_id, token, http_client, text)
+
+async def handle_next_callback(callback_query: dict, token: str, http_client: httpx.AsyncClient):
+    chat_id = callback_query["message"]["chat"]["id"]
+    message_id = callback_query["message"]["message_id"]
+    data = callback_query.get("data", "")
+    category = data.split(":", 1)[1] if ":" in data else "both"
+    if category not in NEXT_CATEGORY_LABELS:
+        category = "both"
+    await send_next_actions(chat_id, token, http_client, category_filter=category, edit_message_id=message_id)
 
 async def handle_waiting_command(chat_id: int, token: str, http_client: httpx.AsyncClient):
     file_path = os.path.join(OBSIDIAN_VAULT_PATH, "01_Tasks", "Waiting_For.md")
@@ -520,21 +564,13 @@ async def handle_promote_callback(callback_query: dict, token: str, http_client:
                 from backend.vault.writer import atomic_write
                 atomic_write(proj_path, "".join(new_proj_lines))
         
-        reply_markup = {
-            "inline_keyboard": [
-                [{"text": "🧘 Return to Step 3: Projects", "callback_data": "reflect:step:3"},
-                 {"text": "🏠 Reflection Hub", "callback_data": "reflect:hub"}],
-                [{"text": "⚡ View Next Actions (/next)", "callback_data": "reflect:next_actions"}]
-            ]
-        }
         await http_client.post(
             f"https://api.telegram.org/bot{token}/editMessageText",
             json={
                 "chat_id": chat_id,
                 "message_id": message_id,
                 "text": f"⚡ <b>Promoted to Next Actions:</b>\n• {clean_step} {chosen_ctx} #project/{project_tag}\n\n<i>Removed from project roadmap backlog.</i>",
-                "parse_mode": "HTML",
-                "reply_markup": reply_markup
+                "parse_mode": "HTML"
             }
         )
         if chat_id in PROMOTION_SESSIONS:
@@ -1513,7 +1549,7 @@ async def handle_reflect_callback(callback_query: dict, token: str, http_client:
 
     # View Next Actions from Reflection
     if data_str == "reflect:next_actions":
-        await handle_next_command(chat_id, "/next", token, http_client)
+        await handle_next_command(chat_id, "/next", token, http_client, show_category_picker=False)
         return
 
     # Step promotion from Reflection

@@ -15,15 +15,9 @@ async def handle_clarify_command(chat_id: int, token: str, http_client: httpx.As
     captured_md = os.path.join(TASKS_PATH, "Captured.md")
     
     if not os.path.exists(captured_md):
-        reply_markup = {
-            "inline_keyboard": [
-                [{"text": "🧘 Continue Guided Reflection ➡️", "callback_data": "reflect:step:2"},
-                 {"text": "🏠 Reflection Hub", "callback_data": "reflect:hub"}]
-            ]
-        }
         await http_client.post(
             f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": chat_id, "text": "🎉 Inbox zero! No captured items to clarify.", "reply_markup": reply_markup}
+            json={"chat_id": chat_id, "text": "🎉 Inbox zero! No captured items to clarify."}
         )
         return
 
@@ -33,15 +27,9 @@ async def handle_clarify_command(chat_id: int, token: str, http_client: httpx.As
     items = [line for line in lines if line.strip().startswith("- ")]
     
     if not items:
-        reply_markup = {
-            "inline_keyboard": [
-                [{"text": "🧘 Continue Guided Reflection ➡️", "callback_data": "reflect:step:2"},
-                 {"text": "🏠 Reflection Hub", "callback_data": "reflect:hub"}]
-            ]
-        }
         await http_client.post(
             f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": chat_id, "text": "🎉 Inbox zero! No captured items to clarify.", "reply_markup": reply_markup}
+            json={"chat_id": chat_id, "text": "🎉 Inbox zero! No captured items to clarify."}
         )
         return
 
@@ -68,9 +56,7 @@ async def process_next_clarify_item(chat_id: int, token: str, http_client: httpx
             reply_markup = {
                 "inline_keyboard": [
                     [{"text": "▶️ Continue next 5", "callback_data": "clarify:continue"},
-                     {"text": "⏸️ Pause", "callback_data": "clarify:pause"}],
-                    [{"text": "🧘 Return to Reflection Review", "callback_data": "reflect:step:2"},
-                     {"text": "🏠 Reflection Hub", "callback_data": "reflect:hub"}]
+                     {"text": "⏸️ Pause", "callback_data": "clarify:pause"}]
                 ]
             }
             await http_client.post(
@@ -82,20 +68,9 @@ async def process_next_clarify_item(chat_id: int, token: str, http_client: httpx
                 }
             )
         else:
-            reply_markup = {
-                "inline_keyboard": [
-                    [{"text": "🧘 Continue Guided Reflection ➡️", "callback_data": "reflect:step:2"}],
-                    [{"text": "🏠 Reflection Hub", "callback_data": "reflect:hub"},
-                     {"text": "⚡ View Next Actions", "callback_data": "reflect:next_actions"}]
-                ]
-            }
             await http_client.post(
                 f"https://api.telegram.org/bot{token}/sendMessage",
-                json={
-                    "chat_id": chat_id,
-                    "text": "🎉 All items clarified! Inbox zero!",
-                    "reply_markup": reply_markup
-                }
+                json={"chat_id": chat_id, "text": "🎉 All items clarified! Inbox zero!"}
             )
             del CLARIFY_SESSIONS[chat_id]
         return

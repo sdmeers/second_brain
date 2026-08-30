@@ -269,12 +269,11 @@ async def handle_done_command(chat_id: int, text: str, token: str, http_client: 
             has_active = any("- [ ]" in line for line in new_lines)
             if not has_active:
                 fname = os.path.basename(fp)
-                if fname == "Next_Actions.md":
-                    new_lines = ["# ⚡ Next Actions\n\n", "> Flexible, context-tagged action list. Filter in Telegram using `/next @context`.\n\n", "---\n\n", "## ⚡ Next Actions\n\n", "🎉 *All clear! No active next actions remaining.*\n"]
-                elif fname == "Waiting_For.md":
-                    new_lines = ["# ⏳ Waiting For\n\n", "> Delegated actions and items owed to you by others. View in Telegram using `/waiting`.\n\n", "---\n\n", "## ⏳ Waiting For\n\n", "🎉 *All clear! No pending items waiting on others.*\n"]
-                elif fname == "Someday_Maybe.md":
-                    new_lines = ["# 💡 Someday / Maybe\n\n", "> Future ideas, uncommitted desires, and projects to review during `/reflect`.\n\n", "---\n\n", "## 💡 Someday / Maybe\n\n", "🎉 *List clear! No someday/maybe items recorded.*\n"]
+                from backend.utils.tasks_dashboard import render_split_task_file, SPLIT_FILES
+                if fname in SPLIT_FILES:
+                    with open(fp, "w", encoding="utf-8") as f:
+                        f.write(render_split_task_file(fname, []))
+                    break
             with open(fp, "w", encoding="utf-8") as f:
                 f.writelines(new_lines)
             break
@@ -610,31 +609,27 @@ async def handle_status_command(chat_id: int, token: str, http_client: httpx.Asy
                     else:
                         completed_7d_count += 1
 
+    def render_category_block(title: str, items: list, limit: int = 10) -> str:
+        from backend.utils.tasks_dashboard import split_by_category
+        personal, professional = split_by_category(items)
+        block = f"{title} ({len(items)}):\n"
+        block += f"🏠 <b>Personal</b> ({len(personal)}):\n"
+        block += ("\n".join(f"• {item}" for item in personal[:limit]) if personal else "• <i>None</i>") + "\n"
+        block += f"💼 <b>Professional</b> ({len(professional)}):\n"
+        block += ("\n".join(f"• {item}" for item in professional[:limit]) if professional else "• <i>None</i>") + "\n\n"
+        return block
+
     msg = "📊 <b>GTD System Status</b>\n\n"
-    
+
     msg += f"📥 <b>Captured ({len(captured_items)}):</b>\n"
     if captured_items:
         msg += "\n".join(f"• {item}" for item in captured_items[:10]) + "\n\n"
     else:
         msg += "• <i>None</i>\n\n"
-        
-    msg += f"⚡ <b>Next Actions ({len(next_items)}):</b>\n"
-    if next_items:
-        msg += "\n".join(f"• {item}" for item in next_items[:10]) + "\n\n"
-    else:
-        msg += "• <i>None</i>\n\n"
 
-    msg += f"⏳ <b>Waiting For ({len(waiting_items)}):</b>\n"
-    if waiting_items:
-        msg += "\n".join(f"• {item}" for item in waiting_items[:10]) + "\n\n"
-    else:
-        msg += "• <i>None</i>\n\n"
-
-    msg += f"💡 <b>Someday/Maybe ({len(someday_items)}):</b>\n"
-    if someday_items:
-        msg += "\n".join(f"• {item}" for item in someday_items[:10]) + "\n\n"
-    else:
-        msg += "• <i>None</i>\n\n"
+    msg += render_category_block("⚡ <b>Next Actions</b>", next_items)
+    msg += render_category_block("⏳ <b>Waiting For</b>", waiting_items)
+    msg += render_category_block("💡 <b>Someday/Maybe</b>", someday_items)
 
     msg += f"✅ <b>Completed Tasks (Last 7 Days):</b> {completed_7d_count} item(s)\n\n"
 

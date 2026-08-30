@@ -74,6 +74,78 @@ def get_project_category(project_name: str) -> str:
 
     return "Personal"
 
+SPLIT_FILES = ("Next_Actions.md", "Waiting_For.md", "Someday_Maybe.md")
+
+FILE_META = {
+    "Next_Actions.md": {
+        "title": "# ⚡ Next Actions",
+        "desc": "> Flexible, context-tagged action list. Filter in Telegram using `/next @context`.",
+        "section_name": "⚡ Next Actions",
+        "empty_all": "🎉 *All clear! No active next actions remaining.*",
+    },
+    "Waiting_For.md": {
+        "title": "# ⏳ Waiting For",
+        "desc": "> Delegated actions and items owed to you by others. View in Telegram using `/waiting`.",
+        "section_name": "⏳ Waiting For",
+        "empty_all": "🎉 *All clear! No pending items waiting on others.*",
+    },
+    "Someday_Maybe.md": {
+        "title": "# 💡 Someday / Maybe",
+        "desc": "> Future ideas, uncommitted desires, and projects to review during `/reflect`.",
+        "section_name": "💡 Someday / Maybe",
+        "empty_all": "🎉 *List clear! No someday/maybe items recorded.*",
+    },
+}
+
+def order_tasks_by_due(tasks: list, today=None) -> list:
+    """Orders task lines overdue -> due today -> upcoming (7d) -> backlog, resolving
+    relative 📅 today/tomorrow markers to absolute dates along the way."""
+    today = today or datetime.now().date()
+    overdue_tasks, due_today_tasks, upcoming_tasks, backlog_tasks = [], [], [], []
+    for task in tasks:
+        due_date = parse_deadline(task)
+
+        if due_date:
+            due_date_str = due_date.strftime("%Y-%m-%d")
+            task = re.sub(r'📅\s*tomorrow', f'📅 {due_date_str}', task, flags=re.IGNORECASE)
+            task = re.sub(r'📅\s*today', f'📅 {due_date_str}', task, flags=re.IGNORECASE)
+
+        if due_date is None:
+            backlog_tasks.append(task)
+        elif due_date < today:
+            overdue_tasks.append(task)
+        elif due_date == today:
+            due_today_tasks.append(task)
+        elif today < due_date <= today + timedelta(days=7):
+            upcoming_tasks.append(task)
+        else:
+            backlog_tasks.append(task)
+    return overdue_tasks + due_today_tasks + upcoming_tasks + backlog_tasks
+
+def split_by_category(items: list) -> tuple:
+    """Splits tagged item lines into (personal, professional) buckets. Untagged items
+    default to personal."""
+    personal = [i for i in items if "#professional" not in i]
+    professional = [i for i in items if "#professional" in i]
+    return personal, professional
+
+def render_split_task_file(fname: str, items: list) -> str:
+    """Renders one of SPLIT_FILES as Markdown, ordering each category by due date."""
+    meta = FILE_META[fname]
+    personal, professional = split_by_category(items)
+    personal = order_tasks_by_due(personal)
+    professional = order_tasks_by_due(professional)
+
+    if not personal and not professional:
+        return (f"{meta['title']}\n\n{meta['desc']}\n\n---\n\n"
+                f"## {meta['section_name']}\n\n{meta['empty_all']}\n")
+
+    content = f"{meta['title']}\n\n{meta['desc']}\n\n---\n\n## 🏠 Personal\n"
+    content += ("\n".join(personal) + "\n") if personal else "*None*\n"
+    content += "\n## 💼 Professional\n"
+    content += ("\n".join(professional) + "\n") if professional else "*None*\n"
+    return content
+
 def ensure_category_tag(task_line: str, category: str = None, project_name: str = None) -> str:
     """Ensures task_line has either #personal or #professional tag."""
     line = task_line.strip()
@@ -126,7 +198,7 @@ def append_gtd_item(filepath: str, item_line: str):
                         existing_items.append(s)
 
     clean_item = item_line.strip()
-    if fname in ["Next_Actions.md", "Waiting_For.md"]:
+    if fname in SPLIT_FILES:
         clean_item = ensure_category_tag(clean_item)
 
     existing_items.append(clean_item)
@@ -135,13 +207,21 @@ def append_gtd_item(filepath: str, item_line: str):
 
 async def maintain_tasks_dashboard():
     """Scans all task files (Next_Actions.md, Waiting_For.md, Someday_Maybe.md, Captured.md),
-    moves completed tasks to z_Completed.md (in reverse chronological order),
-    writes List Clear messages for empty lists, and categorizes Next_Actions.md."""
+    moves completed tasks to z_Completed.md (in reverse chronological order), writes List
+    Clear messages for empty lists, and splits Next_Actions.md, Waiting_For.md and
+    Someday_Maybe.md into Personal / Professional sections (Captured.md stays flat and
+    category-agnostic since items haven't been clarified yet)."""
     from backend.config import WAITING_FOR_MD_FILE, SOMEDAY_MAYBE_MD_FILE, CAPTURED_MD_FILE
-    
+
+    split_file_paths = {
+        "Next_Actions.md": TASKS_MD_FILE,
+        "Waiting_For.md": WAITING_FOR_MD_FILE,
+        "Someday_Maybe.md": SOMEDAY_MAYBE_MD_FILE,
+    }
+
     try:
         newly_completed = []
-        active_next_actions = []
+        active_by_file = {}
 
         all_task_files = [
             ("Next_Actions.md", TASKS_MD_FILE),
@@ -153,13 +233,13 @@ async def maintain_tasks_dashboard():
         for fname, fpath in all_task_files:
             if not os.path.exists(fpath):
                 continue
-                
+
             with open(fpath, encoding="utf-8") as f:
                 lines = f.readlines()
-                
+
             file_newly_completed = []
             file_active = []
-            
+
             for line in lines:
                 stripped = line.strip()
                 if "🎉" in stripped or "Inbox Zero" in stripped or "All clear" in stripped or "List clear" in stripped or "*None*" in stripped:
@@ -173,27 +253,18 @@ async def maintain_tasks_dashboard():
                         if checkbox.lower() in ["x", "v"]:
                             file_newly_completed.append(stripped)
                         else:
-                            tagged_item = ensure_category_tag(stripped) if fname in ["Next_Actions.md", "Waiting_For.md"] else stripped
+                            tagged_item = ensure_category_tag(stripped) if fname in SPLIT_FILES else stripped
                             file_active.append(tagged_item)
 
-            if fname == "Next_Actions.md":
-                active_next_actions = file_active
+            active_by_file[fname] = file_active
 
             if file_newly_completed:
                 newly_completed.extend(file_newly_completed)
-                
-            # Maintain non-Next_Actions files immediately
-            if fname != "Next_Actions.md":
-                if fname == "Waiting_For.md":
-                    header = "# ⏳ Waiting For\n\n> Delegated actions and items owed to you by others. View in Telegram using `/waiting`.\n\n---\n\n## ⏳ Waiting For\n\n"
-                    clear_msg = "🎉 *All clear! No pending items waiting on others.*\n"
-                elif fname == "Someday_Maybe.md":
-                    header = "# 💡 Someday / Maybe\n\n> Future ideas, uncommitted desires, and projects to review during `/reflect`.\n\n---\n\n## 💡 Someday / Maybe\n\n"
-                    clear_msg = "🎉 *List clear! No someday/maybe items recorded.*\n"
-                elif fname == "Captured.md":
-                    header = "# 📥 Captured\n\n> Raw thoughts and voice captures awaiting clarification via `/clarify`.\n\n---\n\n## 📥 Captured Items\n\n"
-                    clear_msg = "🎉 *Inbox Zero! No captured items awaiting clarification.*\n"
-                
+
+            # Captured.md stays flat and category-agnostic (items aren't clarified yet)
+            if fname == "Captured.md":
+                header = "# 📥 Captured\n\n> Raw thoughts and voice captures awaiting clarification via `/clarify`.\n\n---\n\n## 📥 Captured Items\n\n"
+                clear_msg = "🎉 *Inbox Zero! No captured items awaiting clarification.*\n"
                 content = header + ("\n".join(file_active) + "\n" if file_active else clear_msg)
                 with open(fpath, encoding="utf-8") as rf:
                     curr_raw = rf.read()
@@ -204,7 +275,7 @@ async def maintain_tasks_dashboard():
         if newly_completed:
             archive_completed_lines(newly_completed)
             print(f"Tasks Dashboard: Moved {len(newly_completed)} completed tasks to z_Completed.md")
-            
+
             # Check newly completed tasks for #project/<tag> and prompt Telegram promotion
             from backend.config import TELEGRAM_ALLOWED_CHAT_IDS, TELEGRAM_BOT_TOKEN
             if TELEGRAM_BOT_TOKEN and TELEGRAM_ALLOWED_CHAT_IDS:
@@ -220,81 +291,17 @@ async def maintain_tasks_dashboard():
                             print(f"Tasks Dashboard: Error prompting project promotion for {proj_tag}: {pe}")
                         break
 
-        # 2. Categorize active tasks by due date, split into Personal / Professional
-        today = datetime.now().date()
+        # Rebuild Next_Actions.md, Waiting_For.md, Someday_Maybe.md, each split into
+        # Personal / Professional sections ordered overdue -> due today -> upcoming -> backlog
+        for fname, fpath in split_file_paths.items():
+            new_content = render_split_task_file(fname, active_by_file.get(fname, []))
+            if os.path.exists(fpath):
+                with open(fpath, encoding="utf-8") as f:
+                    current_raw = f.read()
+                if current_raw.strip() == new_content.strip():
+                    continue
+            atomic_write(fpath, new_content)
+            print(f"Tasks Dashboard: Regenerated and categorized {fname} successfully.")
 
-        def _order_by_due(tasks):
-            overdue_tasks, due_today_tasks, upcoming_tasks, backlog_tasks = [], [], [], []
-            for task in tasks:
-                due_date = parse_deadline(task)
-
-                # Replace relative date keywords with standard YYYY-MM-DD for compatibility
-                if due_date:
-                    due_date_str = due_date.strftime("%Y-%m-%d")
-                    task = re.sub(r'📅\s*tomorrow', f'📅 {due_date_str}', task, flags=re.IGNORECASE)
-                    task = re.sub(r'📅\s*today', f'📅 {due_date_str}', task, flags=re.IGNORECASE)
-
-                if due_date is None:
-                    backlog_tasks.append(task)
-                else:
-                    if due_date < today:
-                        overdue_tasks.append(task)
-                    elif due_date == today:
-                        due_today_tasks.append(task)
-                    elif today < due_date <= today + timedelta(days=7):
-                        upcoming_tasks.append(task)
-                    else:
-                        backlog_tasks.append(task)
-            return overdue_tasks + due_today_tasks + upcoming_tasks + backlog_tasks
-
-        personal_raw = [t for t in active_next_actions if "#professional" not in t]
-        professional_raw = [t for t in active_next_actions if "#professional" in t]
-
-        personal_tasks = _order_by_due(personal_raw)
-        professional_tasks = _order_by_due(professional_raw)
-
-        # 3. Rebuild Next_Actions.md content, split into Personal / Professional sections
-        new_content = """# ⚡ Next Actions
-
-> Flexible, context-tagged action list. Filter in Telegram using `/next @context`.
-
----
-
-## 🏠 Personal
-"""
-        if personal_tasks:
-            for task in personal_tasks:
-                new_content += f"{task}\n"
-        else:
-            new_content += "*None*\n"
-
-        new_content += "\n## 💼 Professional\n"
-        if professional_tasks:
-            for task in professional_tasks:
-                new_content += f"{task}\n"
-        else:
-            new_content += "*None*\n"
-
-        if not personal_tasks and not professional_tasks:
-            new_content = """# ⚡ Next Actions
-
-> Flexible, context-tagged action list. Filter in Telegram using `/next @context`.
-
----
-
-## ⚡ Next Actions
-
-🎉 *All clear! No active next actions remaining.*
-"""
-            
-        # Write back to file if changed
-        if os.path.exists(TASKS_MD_FILE):
-            with open(TASKS_MD_FILE, encoding="utf-8") as f:
-                current_raw = f.read()
-                
-            if current_raw.strip() != new_content.strip():
-                atomic_write(TASKS_MD_FILE, new_content)
-                print("Tasks Dashboard: Regenerated and categorized Tasks.md successfully.")
-            
     except Exception as e:
         print(f"Tasks Dashboard: Error maintaining task list: {e}")

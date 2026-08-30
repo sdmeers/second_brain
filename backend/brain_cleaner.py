@@ -635,19 +635,19 @@ async def generate_daily_digest(target_chat_id: int = None):
             unclarified_count = sum(1 for line in f if line.strip().startswith("- "))
             
     active_next_actions = []
-    active_actions_by_context = {}
+    active_actions_by_category = {"Personal": {}, "Professional": {}}
     tickler_surfaced = []
     active_projects = set()
-    
+
     if os.path.exists(next_file):
         with open(next_file, encoding="utf-8") as f:
             for line in f:
                 if not line.strip().startswith("- [ ]"): continue
-                
+
                 if is_weekend and "#professional" in line.lower(): continue
                 if prof_paused and "#professional" in line.lower(): continue
                 if pers_paused and "#personal" in line.lower(): continue
-                
+
                 clean_line = strip_task_metadata(line)
 
                 m_tick = re.search(r'🔔 (\d{4}-\d{2}-\d{2})', line)
@@ -655,42 +655,44 @@ async def generate_daily_digest(target_chat_id: int = None):
                     tick_date = m_tick.group(1)
                     if tick_date > today_str: continue # hidden
                     elif tick_date == today_str: tickler_surfaced.append(clean_line)
-                
+
                 active_next_actions.append(clean_line)
-                
+
                 m_ctx = re.search(r'(@[a-zA-Z0-9_\-]+)', clean_line)
                 ctx_name = m_ctx.group(1) if m_ctx else "@other"
-                
-                if ctx_name not in active_actions_by_context:
-                    active_actions_by_context[ctx_name] = []
-                active_actions_by_context[ctx_name].append(clean_line)
-                
+                category = "Professional" if "#professional" in line.lower() else "Personal"
+
+                active_actions_by_category[category].setdefault(ctx_name, []).append(clean_line)
+
                 m_proj = re.search(r'#project/([a-zA-Z0-9_\-]+)', line)
                 if m_proj: active_projects.add(m_proj.group(1))
 
     waiting_items = []
+    waiting_by_category = {"Personal": [], "Professional": []}
     stale_waitings = []
     if os.path.exists(waiting_file):
         with open(waiting_file, encoding="utf-8") as f:
             for line in f:
                 if not line.strip().startswith("- [ ]"): continue
-                
+
                 if is_weekend and "#professional" in line.lower(): continue
                 if prof_paused and "#professional" in line.lower(): continue
                 if pers_paused and "#personal" in line.lower(): continue
 
                 m_tick = re.search(r'🔔 (\d{4}-\d{2}-\d{2})', line)
                 if m_tick and m_tick.group(1) > today_str: continue
-                
+
                 clean_line = strip_task_metadata(line)
                 waiting_items.append(clean_line)
-                
+                category = "Professional" if "#professional" in line.lower() else "Personal"
+                waiting_by_category[category].append(clean_line)
+
                 m_cap = re.search(r'\(Captured .*? on (\d{4}-\d{2}-\d{2})\)', line)
                 if m_cap:
                     cap_date = datetime.strptime(m_cap.group(1), "%Y-%m-%d")
                     if (today_dt - cap_date).days > 5:
                         stale_waitings.append(clean_line)
-                
+
                 m_proj = re.search(r'#project/([a-zA-Z0-9_\-]+)', line)
                 if m_proj: active_projects.add(m_proj.group(1))
 
@@ -785,10 +787,17 @@ async def generate_daily_digest(target_chat_id: int = None):
     digest_content = f"# Daily Digest - {today_str}\n\n"
     
     digest_content += "## ⚡ Active Next Actions\n"
-    if active_actions_by_context:
-        for ctx_name, item_list in active_actions_by_context.items():
-            digest_content += f"### {ctx_name}\n"
-            digest_content += "\n".join(f"- {it}" for it in item_list) + "\n\n"
+    if active_next_actions:
+        for category in ("Personal", "Professional"):
+            icon = "🏠" if category == "Personal" else "💼"
+            digest_content += f"### {icon} {category}\n"
+            by_ctx = active_actions_by_category[category]
+            if by_ctx:
+                for ctx_name, item_list in by_ctx.items():
+                    digest_content += f"#### {ctx_name}\n"
+                    digest_content += "\n".join(f"- {it}" for it in item_list) + "\n\n"
+            else:
+                digest_content += "*None.*\n\n"
     else:
         digest_content += "*No active next actions.*\n\n"
 
@@ -798,7 +807,11 @@ async def generate_daily_digest(target_chat_id: int = None):
 
     if waiting_items:
         digest_content += "## ⏳ Waiting For Items\n"
-        digest_content += "\n".join(f"- {it}" for it in waiting_items) + "\n\n"
+        for category in ("Personal", "Professional"):
+            icon = "🏠" if category == "Personal" else "💼"
+            digest_content += f"### {icon} {category}\n"
+            items = waiting_by_category[category]
+            digest_content += ("\n".join(f"- {it}" for it in items) if items else "*None.*") + "\n\n"
 
     if tickler_surfaced:
         digest_content += "## 🔔 Tickler Items Surfaced Today\n"
@@ -844,16 +857,28 @@ async def generate_daily_digest(target_chat_id: int = None):
             summary_lines.extend(f"• {it}" for it in tickler_surfaced)
             summary_lines.append("")
             
-        if active_actions_by_context:
+        if active_next_actions:
             summary_lines.append(f"⚡ **Next Actions ({len(active_next_actions)}):**")
-            for ctx_name, item_list in active_actions_by_context.items():
-                summary_lines.append(f"**{ctx_name}**")
-                summary_lines.extend(f"• {it}" for it in item_list[:5])
+            for category in ("Personal", "Professional"):
+                icon = "🏠" if category == "Personal" else "💼"
+                by_ctx = active_actions_by_category[category]
+                if not by_ctx:
+                    continue
+                summary_lines.append(f"{icon} **{category}**")
+                for ctx_name, item_list in by_ctx.items():
+                    summary_lines.append(f"**{ctx_name}**")
+                    summary_lines.extend(f"• {it}" for it in item_list[:5])
             summary_lines.append("")
-            
+
         if waiting_items:
             summary_lines.append(f"⏳ **Waiting For ({len(waiting_items)}):**")
-            summary_lines.extend(f"• {it}" for it in waiting_items[:5])
+            for category in ("Personal", "Professional"):
+                icon = "🏠" if category == "Personal" else "💼"
+                items = waiting_by_category[category]
+                if not items:
+                    continue
+                summary_lines.append(f"{icon} **{category}**")
+                summary_lines.extend(f"• {it}" for it in items[:5])
             summary_lines.append("")
 
         if unclarified_count > 0:
@@ -986,34 +1011,31 @@ async def generate_weekly_review():
                         recent_activity_by_folder[folder_key].append(f)
                 except Exception: pass
 
+    from backend.utils.tasks_dashboard import split_by_category
+
+    def render_category_section(title: str, items: list) -> str:
+        personal, professional = split_by_category(items)
+        section = f"### {title} ({len(items)})\n"
+        section += "**🏠 Personal:**\n"
+        section += ("\n".join(f"- {i}" for i in personal) if personal else "- *None*") + "\n\n"
+        section += "**💼 Professional:**\n"
+        section += ("\n".join(f"- {i}" for i in professional) if professional else "- *None*") + "\n\n"
+        return section
+
     # Assemble Markdown Review Document
     review_md = f"# 🗓️ Weekly Review & System Status — {today_str}\n\n"
-    
+
     review_md += "## Part 1: All Action Items Across System\n\n"
-    
+
     review_md += f"### 📥 Captured Items ({len(captured_items)})\n"
     if captured_items:
         review_md += "\n".join(f"- {i}" for i in captured_items) + "\n\n"
     else:
         review_md += "- *None (Inbox zero!)*\n\n"
 
-    review_md += f"### ⚡ Next Actions ({len(next_items)})\n"
-    if next_items:
-        review_md += "\n".join(f"- {i}" for i in next_items) + "\n\n"
-    else:
-        review_md += "- *None*\n\n"
-
-    review_md += f"### ⏳ Waiting For ({len(waiting_items)})\n"
-    if waiting_items:
-        review_md += "\n".join(f"- {i}" for i in waiting_items) + "\n\n"
-    else:
-        review_md += "- *None*\n\n"
-
-    review_md += f"### 💡 Someday / Maybe ({len(someday_items)})\n"
-    if someday_items:
-        review_md += "\n".join(f"- {i}" for i in someday_items) + "\n\n"
-    else:
-        review_md += "- *None*\n\n"
+    review_md += render_category_section("⚡ Next Actions", next_items)
+    review_md += render_category_section("⏳ Waiting For", waiting_items)
+    review_md += render_category_section("💡 Someday / Maybe", someday_items)
 
     review_md += f"### 📌 Project Roadmaps ({len(project_roadmaps)} Active Projects)\n"
     if project_roadmaps:
@@ -1060,22 +1082,26 @@ async def generate_weekly_review():
         else:
             chat_id = str(TELEGRAM_ALLOWED_CHAT_IDS).split(",")[0].strip()
             
+        def render_telegram_category_section(title: str, items: list) -> str:
+            personal, professional = split_by_category(items)
+            section = f"{title} ({len(items)}):\n"
+            section += "🏠 <b>Personal</b>:\n"
+            section += ("\n".join(f"• {i}" for i in personal) if personal else "• <i>None</i>") + "\n"
+            section += "💼 <b>Professional</b>:\n"
+            section += ("\n".join(f"• {i}" for i in professional) if professional else "• <i>None</i>") + "\n\n"
+            return section
+
         async with httpx.AsyncClient() as client:
             # Message 1: Part 1 — All Action Items Across System
             msg1 = f"🗓️ <b>Weekly Review & System Status</b> — {today_str}\n\n"
             msg1 += "<b>Part 1: All Action Items Across System</b>\n\n"
-            
+
             msg1 += f"📥 <b>Captured ({len(captured_items)}):</b>\n"
             msg1 += ("\n".join(f"• {i}" for i in captured_items) if captured_items else "• <i>None (Inbox zero!)</i>") + "\n\n"
 
-            msg1 += f"⚡ <b>Next Actions ({len(next_items)}):</b>\n"
-            msg1 += ("\n".join(f"• {i}" for i in next_items) if next_items else "• <i>None</i>") + "\n\n"
-
-            msg1 += f"⏳ <b>Waiting For ({len(waiting_items)}):</b>\n"
-            msg1 += ("\n".join(f"• {i}" for i in waiting_items) if waiting_items else "• <i>None</i>") + "\n\n"
-
-            msg1 += f"💡 <b>Someday / Maybe ({len(someday_items)}):</b>\n"
-            msg1 += ("\n".join(f"• {i}" for i in someday_items) if someday_items else "• <i>None</i>") + "\n\n"
+            msg1 += render_telegram_category_section("⚡ <b>Next Actions</b>", next_items)
+            msg1 += render_telegram_category_section("⏳ <b>Waiting For</b>", waiting_items)
+            msg1 += render_telegram_category_section("💡 <b>Someday / Maybe</b>", someday_items)
 
             msg1 += "📌 <b>Project Roadmaps:</b>\n"
             if project_roadmaps:

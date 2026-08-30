@@ -773,14 +773,35 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
 
     # 9. Someday / Maybe Flow
     if action == "action_someday":
+        reply_markup = {
+            "inline_keyboard": [
+                [{"text": "🏠 Personal", "callback_data": "clarify:save_someday:Personal"},
+                 {"text": "💼 Professional", "callback_data": "clarify:save_someday:Professional"}]
+            ]
+        }
+        await http_client.post(
+            f"https://api.telegram.org/bot{token}/editMessageText",
+            json={
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": "🏷️ <b>Select Category for Someday/Maybe Item:</b>",
+                "parse_mode": "HTML",
+                "reply_markup": reply_markup
+            }
+        )
+        return
+
+    if action.startswith("save_someday"):
+        category = data.split(":")[2]
+        cat_tag = "#professional" if category == "Professional" else "#personal"
         clean_text = sanitize_task_item_text(item_line)
         someday_md = os.path.join(TASKS_PATH, "Someday_Maybe.md")
-        with open(someday_md, "a", encoding="utf-8") as f:
-            f.write(f"- [ ] {clean_text}\n")
+        from backend.utils.tasks_dashboard import append_gtd_item
+        append_gtd_item(someday_md, f"- [ ] {clean_text} {cat_tag}")
         await archive_and_remove_captured(item_line)
         await http_client.post(
             f"https://api.telegram.org/bot{token}/editMessageText",
-            json={"chat_id": chat_id, "message_id": message_id, "text": f"💡 Saved to Someday/Maybe:\n{clean_text}"}
+            json={"chat_id": chat_id, "message_id": message_id, "text": f"💡 Saved to Someday/Maybe ({cat_tag}):\n{clean_text}"}
         )
         session["current_index"] += 1
         await process_next_clarify_item(chat_id, token, http_client)

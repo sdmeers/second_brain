@@ -18,6 +18,12 @@ OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 GEMINI_MODEL = LLM_MODEL # Keeping for backwards compatibility
 WIKILINK_SIMILARITY_THRESHOLD = float(os.getenv('WIKILINK_SIMILARITY_THRESHOLD', '1.2'))
 
+# Embedding throughput controls. The Gemini embedding quota is counted in texts per minute
+# per project, so pacing uses the same unit. Default sits under the observed paid-tier
+# ceiling of 3,000; drop it well below if the project ever falls back to the free tier.
+EMBEDDING_TEXTS_PER_MINUTE = int(os.getenv("EMBEDDING_TEXTS_PER_MINUTE", "2500"))
+EMBEDDING_BATCH_SIZE = int(os.getenv("EMBEDDING_BATCH_SIZE", "100"))
+
 if LLM_PROVIDER == "gemini" or EMBEDDING_PROVIDER == "gemini":
     if not GEMINI_API_KEY:
         print(f"CRITICAL: GEMINI_API_KEY not found in {dotenv_path}")

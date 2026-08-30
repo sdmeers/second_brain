@@ -95,21 +95,26 @@ def calculate_file_hash(file_path: str) -> str:
         hasher.update(f.read())
     return hasher.hexdigest()
 
-async def delete_file_index(file_path: str, conn: sqlite3.Connection):
-    """Deletes all chunks and corresponding vector rows for a file."""
+async def delete_file_index(file_path: str, conn: sqlite3.Connection, commit: bool = True):
+    """Deletes all chunks and corresponding vector rows for a file.
+
+    Pass ``commit=False`` to leave the delete inside the caller's open transaction, so a
+    replace (delete + re-insert) either lands whole or rolls back whole. See ``index_file``.
+    """
     cursor = conn.cursor()
-    
+
     # Get all rowids from brain_chunks
     cursor.execute("SELECT id FROM brain_chunks WHERE file_path = ?", (file_path,))
     row_ids = [row[0] for row in cursor.fetchall()]
-    
+
     if row_ids:
         # Delete from vss_brain_chunks (rowid maps directly)
         placeholders = ",".join(["?"] * len(row_ids))
         cursor.execute(f"DELETE FROM vss_brain_chunks WHERE rowid IN ({placeholders})", row_ids)
         # Delete from brain_chunks
         cursor.execute("DELETE FROM brain_chunks WHERE file_path = ?", (file_path,))
-        conn.commit()
+        if commit:
+            conn.commit()
 
 async def index_file(vault_relative_path: str, full_file_path: str, file_hash: str, conn: sqlite3.Connection,
                      mtime: float = None, size: int = None):
@@ -141,12 +146,15 @@ async def index_file(vault_relative_path: str, full_file_path: str, file_hash: s
         if not chunks:
             return
             
-        # Clear existing indices for this file
-        await delete_file_index(vault_relative_path, conn)
-        
-        # Batch embed all chunks in one call
+        # Embed BEFORE touching the existing index. Embedding is a network call that can
+        # fail (a 429 burns three 25s retries then raises); doing the delete first meant a
+        # rate-limited re-index committed the delete, never wrote the replacement, and
+        # silently dropped the file out of the vector store for good.
         embeddings = await get_embeddings_batch(chunks)
-        
+
+        # Delete + re-insert now share one transaction, so the replace is all-or-nothing.
+        await delete_file_index(vault_relative_path, conn, commit=False)
+
         cursor = conn.cursor()
         
         # Insert metadata and vectors

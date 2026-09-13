@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Copy the project documentation into the Obsidian vault so it renders natively.
 #
-# Destination: $OBSIDIAN_VAULT_PATH/02_Projects/Personal/Second Brain/docs/
+# Destination: $OBSIDIAN_VAULT_PATH/03_Areas/Coding/Second Brain/docs/
+# (The project folder under 02_Projects was archived on 2026-09-12; don't point this back there.)
 #
 # Only the files listed below are touched. Vault-only material in that folder
 # (Syncthing/, old/, and any notes you have written there) is left alone.
@@ -9,6 +10,13 @@
 # Usage:  ./scripts/sync_docs_to_vault.sh [--dry-run]
 
 set -euo pipefail
+
+# RETIRED 2026-09-13. The Second Brain project was archived on 2026-09-12 and the vault
+# docs are now hand-maintained in 03_Areas/Coding/Second Brain/ (different filenames, no
+# docs/ subfolder), so copying here would either recreate the archived project folder or
+# duplicate those notes. Kept only until it is deleted.
+echo "sync_docs_to_vault.sh is retired: vault docs live in 03_Areas/Coding/Second Brain/ and are maintained by hand." >&2
+exit 1
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -21,7 +29,7 @@ if [[ -z "${VAULT_PATH}" || ! -d "${VAULT_PATH}" ]]; then
   exit 1
 fi
 
-DEST="${VAULT_PATH}/02_Projects/Personal/Second Brain/docs"
+DEST="${VAULT_PATH}/03_Areas/Coding/Second Brain/docs"
 
 DRY_RUN=0
 [[ "${1:-}" == "--dry-run" ]] && DRY_RUN=1

@@ -67,7 +67,7 @@ journalctl --user -u second-brain.service -f
 ```bash
 cd backend
 uv sync                    # install/update dependencies
-uv run pytest              # ~220 tests, ~1.5s — no vault, API key or network needed
+uv run pytest              # ~320 tests, ~2s — no vault, API key or network needed
 uv run ruff check .        # lint; must pass clean
 uv run ruff check . --fix  # apply safe autofixes
 ```

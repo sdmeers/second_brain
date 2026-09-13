@@ -63,15 +63,16 @@ The **Second Brain** operates on the **"Agent-as-Librarian"** paradigm: an intel
   4. Appends the promoted action to `Next_Actions.md` and deletes it from `## Project Steps`.
 
 ### 4. 🌅 Action-Oriented Daily & Weekly Reviews
-* **Daily Review (`/daily` & 07:30 Morning Briefing):**
+* **Daily Review (`/daily` & Morning Briefing — 07:30 Mon–Fri, 10:00 Sat–Sun):**
   - 🚨 Upcoming deadlines (projects with `due_date` <= 14 days).
   - 🔔 Surfaced ticklers unlocking today.
   - ⚡ Active Next Actions grouped by context (`@home`, `@computer`, `@errands`, etc.).
   - ⏳ Active delegated `Waiting For` items.
-* **Weekly Review (`/reflect` & Friday Briefing):**
+* **Weekly Review (`/reflect` & Friday 14:00 Briefing):**
   - Audits orphaned projects (0 active next actions), stale waitings (>5 days), and Someday/Maybe ideas.
   - Synthesizes newly learned research concepts from the past 7 days.
 * **Holiday Pause Mode (`/holiday`):** Pauses daily/weekly briefings by scope (`Personal`, `Professional`, `All`) with calendar date return selection.
+* **Personal / Professional split:** `Next_Actions.md`, `Waiting_For.md` and `Someday_Maybe.md` are rendered in `## 🏠 Personal` and `## 💼 Professional` sections (each ordered overdue → due today → upcoming → backlog), and the reviews and Telegram summaries report them the same way. `Captured.md` stays flat; `/clarify` asks for the category, including for Someday/Maybe items.
 
 ### 5. 📚 Deep Research Knowledge Graph (`/research`)
 * Ingests web articles, YouTube transcripts, PDFs, and slide decks (`.pptx`).
@@ -91,25 +92,25 @@ The **Second Brain** operates on the **"Agent-as-Librarian"** paradigm: an intel
 
 | Command | Description |
 | :--- | :--- |
-| *(plain text)* | **Conversational Q&A** — Natural language queries against your vault with 5-turn context memory. |
-| *(voice note)* | **Audio Capture** — Transcribes via local Whisper and saves to `01_Tasks/Captured.md`. |
-| `/in <text>` | **GTD Capture** — Append a raw capture directly to `01_Tasks/Captured.md`. |
+| *(plain text)* / `/ask` / `/query` | **Conversational Q&A** — Natural language queries against your vault with 5-turn context memory. |
+| *(voice note)* | **Audio Capture** — Transcribes via Gemini and saves to `01_Tasks/Captured.md` (questions are answered instead). Raw audio is kept in `00_System/Inbox/` for 30 days. |
+| `/in <text>` / `/capture` | **GTD Capture** — Append a raw capture directly to `01_Tasks/Captured.md`. |
 | `/file <URL/doc>` | **Direct PARA Filing** — Routes directly to AI Librarian, bypassing GTD clarify triage. |
 | `/research <URL>` | **Deep Research** — Ingests content into Research Brain with full knowledge graph concept extraction. |
 | `/clarify` | **Interactive Triage** — Process captured items in 5-item batches with inline buttons & calendar picker. |
-| `/next [@context]` | **Context Execution** — Bare `/next` offers a Personal / Professional / Both picker; `/next @context` filters directly (`@home`, `@computer`, `@errands`, `@phone`, `@anywhere`, `@office`, `@WFH`). |
+| `/next [@context]` / `/actions` | **Context Execution** — Bare `/next` offers a Personal / Professional / Both picker; `/next @context` filters directly (`@home`, `@computer`, `@errands`, `@phone`, `@anywhere`, `@office`, `@WFH`). |
 | `/waiting` | **Delegated Tracking** — View pending items owed by others with age and follow-up dates. |
 | `/project <name>` | **Project Dashboard** — View Desired Outcome, Active Actions, Roadmap Steps, and References. |
 | `/project <name> add <step>` | **Roadmap Backlog** — Append a new future step to `## Project Steps` in a project note. |
-| `/archive <name>` | **Archive Project** — Sets `status: completed` and moves the whole project folder to `05_Archive/02_Projects/<Category>/`. |
+| `/archive <name>` / `/archive-project` | **Archive Project** — Sets `status: completed` and moves the whole project folder to `05_Archive/02_Projects/<Category>/`. |
 | `/done <item>` | **Complete Action** — Archives task to `01_Tasks/z_Completed.md` and triggers 1-tap step promotion. |
 | `/tickle <item>` | **Defer Task** — Opens visual calendar picker to set a `🔔 YYYY-MM-DD` tickler date; deferred items are hidden until that date. |
 | `/daily` | **Daily Review** — On-demand action review (deadlines <=14d, surfaced ticklers, next actions by context). |
-| `/weekly` / `/status` | **System Sitrep** — High-level counts across all GTD task lists, active projects, and 7-day completed actions. |
+| `/weekly` / `/status` / `/sitrep` | **System Sitrep** — High-level counts across all GTD task lists, active projects, and 7-day completed actions. |
 | `/reflect` | **Guided Review** — Step-by-step interactive weekly reflection (inbox zero, stale waitings, orphaned projects, Someday/Maybe). |
 | `/holiday` | **Pause Reviews** — Pause automated briefings by scope (`Personal`, `Professional`, `All`) via calendar picker, or type a date directly (`/holiday personal 23rd Aug`). |
 | `/jira <summary>` | **Jira Export** — Create a ticket directly in Jira backlog. |
-| `/undo` | **Safety Revert** — Reverts the last automated Git commit (`git revert HEAD`). |
+| `/undo` | **Safety Revert** — Shows the last vault commit and its files, then reverts it on confirmation. Only `[orchestrator]` commits can be reverted; hand-made commits are refused. |
 | `/help` | **Help Menu** — Full command reference and workflow examples. |
 
 ---
@@ -210,7 +211,7 @@ flowchart TD
 - **Obsidian:** Installed locally on desktop or mobile.
 - **Telegram Bot:** Create a bot via [@BotFather](https://t.me/BotFather) on Telegram and obtain your API Token.
 - **Google AI Studio Key:** Obtain a free API Key from [aistudio.google.com](https://aistudio.google.com).
-- *(Optional GPU):* NVIDIA GPU with CUDA drivers for accelerated local Whisper audio transcription.
+- *(Optional GPU):* NVIDIA GPU with CUDA drivers for local Whisper transcription of audio files dropped into `00_System/Inbox/` (falls back to CPU, then Gemini). Telegram voice notes are always transcribed by Gemini.
 
 ---
 
@@ -218,7 +219,7 @@ flowchart TD
 
 ```bash
 # 1. Clone repository
-git clone https://github.com/sdmeers/centaur_brain.git second_brain
+git clone https://github.com/sdmeers/second_brain.git second_brain
 cd second_brain/backend
 
 # 2. Create virtual environment and install dependencies using uv
@@ -238,7 +239,7 @@ Edit `backend/.env` with your personal paths and keys:
 ```ini
 # Vault Path
 OBSIDIAN_VAULT_PATH=/home/username/vault
-PORT=8080
+PORT=8080   # code default; must match extension/config.js
 
 # LLM & Embedding Settings
 LLM_PROVIDER=gemini
@@ -304,6 +305,20 @@ systemctl --user start second-brain.service
 systemctl --user status second-brain.service
 ```
 
+Logs are in the **user** journal — `journalctl --user -u second-brain.service -f`. Plain
+`journalctl -u ...` reads the system journal and shows nothing.
+
+The scheduled briefings are separate units, not part of the daemon. Templates are in
+[`docs/systemd/`](docs/systemd/):
+
+| Timer | Schedule | Runs |
+| :--- | :--- | :--- |
+| `second-brain-cleaner.timer` | Mon–Fri 07:30, Sat–Sun 10:00 | `python3 -m backend.brain_cleaner` (daily digest and maintenance) |
+| `second-brain-weekly-review.timer` | Fri 14:00 | `python3 -m backend.brain_cleaner --weekly-review` |
+
+They call `backend/.venv/bin/python3` directly rather than `uv run`, so run `uv sync` after
+changing dependencies or the timers will run against a stale environment.
+
 ---
 
 ## ⚙️ Configuration Reference
@@ -316,6 +331,10 @@ systemctl --user status second-brain.service
 | `LLM_MODEL` | `gemini-3.1-flash-lite` | Target model for routing, summarization, and RAG Q&A. |
 | `EMBEDDING_PROVIDER` | `gemini` | Embeddings provider (`gemini`, `openai`, `ollama`). |
 | `EMBEDDING_MODEL` | `gemini-embedding-2` | Target embedding model for `sqlite-vss`. |
+| `EMBEDDING_TEXTS_PER_MINUTE` | `2500` | Ceiling for texts sent to the embedding API in any trailing 60 s. The Gemini quota counts texts, not requests; lower this if re-indexing hits sustained 429s. |
+| `EMBEDDING_BATCH_SIZE` | `100` | Chunks per embedding request. |
+| `PORT` | `8080` | HTTP port for `/process`, `/query` and `/health`. Must match `extension/config.js`. |
+| `ENABLE_OBSIDIAN_INBOX_POLLING` | `false` | Watches `00_System/Inbox/` for dropped files and `Inbox.md`. |
 | `TELEGRAM_BOT_TOKEN` | *Optional* | Telegram Bot API token from @BotFather. |
 | `TELEGRAM_ALLOWED_CHAT_IDS` | *Optional* | Comma-separated list of authorized Telegram chat IDs. |
 | `ENABLE_TELEGRAM_BOT` | `true` | Enables unified Telegram bot polling loop. |
@@ -342,7 +361,7 @@ Comprehensive guides are located in the `docs/` directory:
 
 ```bash
 cd backend
-uv run pytest              # ~220 tests, ~1.5s — no vault, API key or network required
+uv run pytest              # ~320 tests, ~2s — no vault, API key or network required
 uv run ruff check .        # lint; must pass clean
 uv run ruff check . --fix  # apply safe autofixes
 ```

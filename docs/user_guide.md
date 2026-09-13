@@ -20,7 +20,7 @@ This guide outlines your day-to-day workflow with the Second Brain, leveraging t
    - `02_Projects/.../<Project>.md` for multi-step goals, future roadmaps (`## Project Steps`), and active actions.
 4. **Reflect:** Keep your system trustworthy and current.
    - **Daily Review (`/daily`):** Action-oriented morning briefing listing upcoming deadlines (<= 14 days), surfaced ticklers, active Next Actions grouped by context, and pending follow-ups.
-   - **Weekly Review (`/reflect`):** Strategic Friday/Monday review covering orphaned projects, stale items, Someday/Maybe ideas, and AI concept synthesis.
+   - **Weekly Review (`/reflect`):** Strategic weekly review (automated briefing Fridays at 14:00) covering orphaned projects, stale items, Someday/Maybe ideas, and AI concept synthesis.
    - **Holiday Mode (`/holiday`):** Temporarily pause automated reviews while away.
 5. **Engage:** Execute with clarity and focus.
    - Run `/next @errands` when out shopping or `/next @computer` at your desk.
@@ -138,7 +138,7 @@ When you complete a project action (either via **Telegram `/done <item>`** or **
 
 ## 📅 Review Routines & Holiday Mode
 
-### Daily Review (`/daily` or 07:30 Morning Briefing)
+### Daily Review (`/daily` or Morning Briefing — 07:30 weekdays, 10:00 weekends)
 Designed for immediate daily execution:
 - 🚨 **Upcoming & Overdue Deadlines:** Projects with `due_date` within 14 days.
 - 🔔 **Surfaced Deferrals:** Tasks deferred to today unlocking for action.

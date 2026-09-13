@@ -176,8 +176,10 @@ WHERE contains(tags, "#project/Project_Title") AND !completed
 - **Concept Updater Loop:** Atomically updates or creates bidirectional concept notes in `04_Resources/Research_Brain/Concepts/` with rate-limiting throttling.
 
 ### 4.8 Review & Maintenance Engine (`brain_cleaner.py`)
-- **Daily Review (`/daily` & 07:30 run):** Gathers upcoming project deadlines (<= 14 days, strictly parsed from top-level project YAML frontmatter), surfaced ticklers (`🔔 == today`), active Next Actions grouped by `@context`, and pending Waiting items.
-- **Weekly Review (Friday 07:30 run):** Performs deep audit of Someday/Maybe ideas, orphaned projects, stale waitings, completed tasks, and AI research synthesis.
+- **Daily Review (`/daily` & timer run — 07:30 Mon–Fri, 10:00 Sat–Sun):** Gathers upcoming project deadlines (<= 14 days, strictly parsed from top-level project YAML frontmatter), surfaced ticklers (`🔔 == today`), active Next Actions grouped by `@context`, and pending Waiting items.
+- **Weekly Review (Friday 14:00 timer run):** Performs deep audit of Someday/Maybe ideas, orphaned projects, stale waitings, completed tasks, and AI research synthesis.
+- **Category split:** Next Actions, Waiting For and Someday/Maybe are reported (and rendered to disk) in Personal / Professional sections via the shared helpers in `tasks_dashboard.py` (`split_by_category`, `render_split_task_file`, `order_tasks_by_due`, `append_gtd_item`, `SPLIT_FILES`). `Captured.md` stays flat.
+- **Audio expiry:** `cleanup_old_audio` deletes `*_raw.*` files anywhere in the vault and Telegram `*_voice.*` files in `00_System/Inbox/` once they are 30 days old.
 
 ---
 
@@ -207,6 +209,22 @@ WantedBy=default.target
 `PYTHONPATH` pointing at the repository root is what lets `backend` resolve as a package
 from inside `main.py`. `main.py` also inserts the repo root onto `sys.path` itself, so
 running `python3 -m backend.main` from the repo root works equally well.
+
+Logs go to the **user** journal: `journalctl --user -u second-brain.service -f`.
+
+### Scheduled briefings (timers)
+
+The daily digest and weekly review run as separate oneshot units, so the daemon being
+down does **not** stop the briefings (and a briefing arriving does not prove the daemon
+is up). Templates for all units are in `docs/systemd/`.
+
+| Unit | `OnCalendar` | `ExecStart` |
+| :--- | :--- | :--- |
+| `second-brain-cleaner.timer` | `Mon..Fri *-*-* 07:30:00`, `Sat,Sun *-*-* 10:00:00` | `backend/.venv/bin/python3 -m backend.brain_cleaner` |
+| `second-brain-weekly-review.timer` | `Fri *-*-* 14:00:00` | `backend/.venv/bin/python3 -m backend.brain_cleaner --weekly-review` |
+
+These invoke the venv interpreter directly rather than `uv run`, so they do not sync
+dependencies — run `uv sync` after changing `pyproject.toml`.
 
 > **Note:** `main.py` imports `app` from `backend.api.routes` at module level. It looks
 > unused, but `uvicorn.run("backend.main:app", ...)` resolves that name at runtime — do
@@ -299,6 +317,17 @@ outright (they produce no chunks, so they stored no cached stat and were re-read
 On a 1,696-file / 253 MB vault a full pass went from **0.49 s to 0.04 s**, and now scales
 with *changed* files rather than vault size.
 
+**Re-indexing is transactional.** `index_file` embeds the new chunks *first*, then deletes
+the old rows and inserts the new ones in one transaction (`delete_file_index(...,
+commit=False)`). A rate-limited (429) embed therefore leaves the previous index intact;
+before this, the delete was committed ahead of the embed call and a 429 silently erased
+the file from the index.
+
+**Embedding pacing.** The Gemini embedding quota counts *texts* per minute, not requests,
+so `get_embeddings_batch` reserves against a trailing 60 s window of texts
+(`EMBEDDING_TEXTS_PER_MINUTE`, default 2500) in batches of `EMBEDDING_BATCH_SIZE`
+(default 100), and honours the `retryDelay` the API returns on a 429.
+
 ### Atomic Vault Writes (`backend/vault/writer.py`)
 
 `atomic_write()` writes to a uniquely-named dot-prefixed temp file **in the same
@@ -323,7 +352,7 @@ Both are configured in `backend/pyproject.toml`.
 
 ```bash
 cd backend
-uv run pytest              # ~220 tests, ~1.5s
+uv run pytest              # ~320 tests, ~2s
 uv run ruff check .        # must pass clean
 uv run ruff check . --fix  # apply safe autofixes
 ```
@@ -341,6 +370,10 @@ no network calls.
 | `test_queue_worker.py` | The helpers split out of the queue worker, plus retry/backoff tiers. |
 | `test_gtd_flows.py` | Dashboard maintenance and project-note resolution end to end. |
 | `test_regressions.py` | One test per confirmed historical bug. |
+| `test_urls.py` | URL normalisation for duplicate-capture detection. |
+| `test_embedding_resilience.py` | Texts-per-minute pacing, `retryDelay` handling, and a failed embed leaving the existing index intact. |
+| `test_undo.py` | `/undo` reverts only the latest `[orchestrator]` commit; refuses hand commits and moved `HEAD`; aborts conflicting reverts. |
+| `test_audio_cleanup.py` | 30-day expiry of inbox voice notes. |
 
 Ruff's `F` rules matter most here: undefined names had silently broken `/tickle`,
 `/holiday` and the PDF content-type probe, and nothing was configured to catch them.

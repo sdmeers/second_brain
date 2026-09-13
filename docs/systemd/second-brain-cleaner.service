@@ -1,0 +1,10 @@
+[Unit]
+Description=Second Brain Daily Cleaner and Cognitive Synthesis
+After=network.target
+
+[Service]
+Type=oneshot
+# EDIT THESE PATHS for your machine. Runs the venv interpreter directly (no `uv run`),
+# so run `uv sync` in backend/ after dependency changes.
+WorkingDirectory=/home/username/second_brain
+ExecStart=/home/username/second_brain/backend/.venv/bin/python3 -m backend.brain_cleaner

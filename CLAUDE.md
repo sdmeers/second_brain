@@ -22,8 +22,8 @@ uv run python3 -m backend.main   # run the FastAPI server + background watcher (
 Note: `backend/main.py` inserts the repo root onto `sys.path` and imports via the `backend.` package prefix, so it must be run as a module (`python3 -m backend.main`) rather than executed directly, and generally from the repository root so `backend` resolves as a package.
 
 Other operational scripts (all live in `backend/`, run the same way with `uv run python3 <script>.py`):
-- `index_brain.py` / `reindex_all.py` / `reindex_covers.py` — rebuild/backfill the vector index or book cover cache.
-- `rebuild_vault.py` / `resume_rebuild.py` — bulk regenerate brain nodes across the vault (resumable).
+- `index_brain.py` / `reindex_covers.py` — rebuild/backfill the vector index or book cover cache.
+- Server-only (gitignored, not in the repo): `reindex_all.py` (re-index via the running API) and `rebuild_vault.py` / `resume_rebuild.py` (bulk regenerate brain nodes, resumable).
 - `brain_cleaner.py` — the maintenance/review engine (daily & weekly review generation, orphan/stale audits).
 - `add_book.py` — CLI to generate a book summary node directly into the vault ("Book Mode").
 - `create_jira_epics.py` — Jira export helper.
@@ -32,7 +32,7 @@ Testing and linting (both configured in `backend/pyproject.toml`):
 
 ```bash
 cd backend
-uv run pytest              # ~220 tests, ~1.5s, no vault/API key/network needed
+uv run pytest              # ~320 tests, ~2s, no vault/API key/network needed
 uv run ruff check .        # must pass clean
 uv run ruff check . --fix  # apply safe autofixes
 ```
@@ -42,7 +42,7 @@ any backend module is imported, so tests never touch the real vault. Ruff's `F` 
 the important ones here — undefined names had previously broken `/tickle`, `/holiday` and
 the PDF content-type probe silently. There is no type-checker configured.
 
-The systemd unit for persistent operation is `docs/centaur-brain.service`; deploy path is `~/.config/systemd/user/second-brain.service`.
+Systemd unit templates live in `docs/systemd/`: `second-brain.service` (the daemon), plus `second-brain-cleaner.{service,timer}` (daily digest, Mon–Fri 07:30 / Sat–Sun 10:00) and `second-brain-weekly-review.{service,timer}` (Fri 14:00). They deploy to `~/.config/systemd/user/`. The timers run `backend/.venv/bin/python3` directly, so `uv sync` after dependency changes.
 
 **Important:** in normal operation, Second Brain runs as this background systemd user service — not as a foreground process started ad hoc. Any code change to `backend/` will NOT take effect until the service is restarted:
 

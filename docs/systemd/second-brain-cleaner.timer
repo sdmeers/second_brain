@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Second Brain Daily Cleaner and Digest Every Morning
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 07:30:00
+OnCalendar=Sat,Sun *-*-* 10:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

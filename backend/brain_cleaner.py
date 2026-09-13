@@ -598,9 +598,13 @@ SORT file.mtime DESC
 async def cleanup_old_audio():
     print("🎧 Cleaning old raw audio files...")
     cutoff = datetime.now() - timedelta(days=30)
+    inbox_dir = os.path.join(VAULT_PATH, "00_System", "Inbox")
     for root, dirs, files in os.walk(VAULT_PATH):
         for f in files:
-            if "_raw.ogg" in f or "_raw." in f:
+            # Telegram voice notes are kept in the inbox (the watcher skips them); their
+            # transcript already lives in Captured.md, so the raw files can expire too.
+            is_inbox_voice = root == inbox_dir and "_voice." in f
+            if "_raw." in f or is_inbox_voice:
                 p = os.path.join(root, f)
                 try:
                     if datetime.fromtimestamp(os.path.getmtime(p)) < cutoff:

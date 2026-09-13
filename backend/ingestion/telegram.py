@@ -373,11 +373,8 @@ async def process_telegram_message(message: dict, token: str, http_client):
                 file_path = os.path.join(inbox_path, filename)
                 with open(file_path, "wb") as f:
                     f.write(file_bytes)
-                    
-                transcript_file_path = os.path.join(inbox_path, f"{timestamp_str}_voice.md")
-                with open(transcript_file_path, "w", encoding="utf-8") as f:
-                    f.write(transcript)
-                
+
+                # The transcript lives inline in Captured.md; no separate _voice.md is written.
                 full_transcript = transcript.replace('\n', ' ').strip()
                 captured_md = os.path.join(OBSIDIAN_VAULT_PATH, "01_Tasks", "Captured.md")
                 date_str = datetime.now().strftime("%Y-%m-%d %H:%M")

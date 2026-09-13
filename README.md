@@ -93,7 +93,7 @@ The **Second Brain** operates on the **"Agent-as-Librarian"** paradigm: an intel
 | Command | Description |
 | :--- | :--- |
 | *(plain text)* / `/ask` / `/query` | **Conversational Q&A** — Natural language queries against your vault with 5-turn context memory. |
-| *(voice note)* | **Audio Capture** — Transcribes via Gemini and saves to `01_Tasks/Captured.md` (questions are answered instead). Raw audio is kept in `00_System/Inbox/` for 30 days. |
+| *(voice note)* | **Audio Capture** — Transcribes via Gemini and saves to `01_Tasks/Captured.md` (questions are answered instead). The transcript lives only in `Captured.md`; the audio waits in `00_System/Inbox/` (expires after 30 days) until `/clarify` moves it to `Inbox/Archive/` (kept 90 days). |
 | `/in <text>` / `/capture` | **GTD Capture** — Append a raw capture directly to `01_Tasks/Captured.md`. |
 | `/file <URL/doc>` | **Direct PARA Filing** — Routes directly to AI Librarian, bypassing GTD clarify triage. |
 | `/research <URL>` | **Deep Research** — Ingests content into Research Brain with full knowledge graph concept extraction. |

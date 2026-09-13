@@ -179,7 +179,7 @@ WHERE contains(tags, "#project/Project_Title") AND !completed
 - **Daily Review (`/daily` & timer run — 07:30 Mon–Fri, 10:00 Sat–Sun):** Gathers upcoming project deadlines (<= 14 days, strictly parsed from top-level project YAML frontmatter), surfaced ticklers (`🔔 == today`), active Next Actions grouped by `@context`, and pending Waiting items.
 - **Weekly Review (Friday 14:00 timer run):** Performs deep audit of Someday/Maybe ideas, orphaned projects, stale waitings, completed tasks, and AI research synthesis.
 - **Category split:** Next Actions, Waiting For and Someday/Maybe are reported (and rendered to disk) in Personal / Professional sections via the shared helpers in `tasks_dashboard.py` (`split_by_category`, `render_split_task_file`, `order_tasks_by_due`, `append_gtd_item`, `SPLIT_FILES`). `Captured.md` stays flat.
-- **Audio expiry:** `cleanup_old_audio` deletes `*_raw.*` files anywhere in the vault and Telegram `*_voice.*` files in `00_System/Inbox/` once they are 30 days old.
+- **Source-file expiry:** `cleanup_old_audio` deletes `*_raw.*` files anywhere in the vault and unclarified Telegram `*_voice.*` audio in `00_System/Inbox/` after 30 days, and anything in `00_System/Inbox/Archive/` (source files `/clarify` moved there) after 90 days. Old `(Source: [[...]])` links to expired files will no longer resolve; the captured text itself is kept in the task line.
 
 ---
 

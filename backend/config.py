@@ -57,7 +57,6 @@ REFERENCE_SOURCES_PATH = ARTICLES_SOURCES_PATH
 
 # New P.A.R.A paths
 INBOX_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "00_System", "Inbox")
-INBOX_FAILED_PATH = os.path.join(INBOX_PATH, "Failed")
 INBOX_ARCHIVE_PATH = os.path.join(INBOX_PATH, "Archive")
 
 IMPORT_PATH = INBOX_PATH
@@ -88,7 +87,7 @@ def ensure_vault_layout():
         os.makedirs(path, exist_ok=True)
 
     if ENABLE_OBSIDIAN_INBOX_POLLING:
-        for path in (INBOX_PATH, INBOX_FAILED_PATH, INBOX_ARCHIVE_PATH):
+        for path in (INBOX_PATH, INBOX_ARCHIVE_PATH):
             os.makedirs(path, exist_ok=True)
 
     for filepath in (INBOX_MD_FILE, COMPLETED_MD_FILE, FAILED_MD_FILE):

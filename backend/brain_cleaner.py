@@ -612,6 +612,18 @@ async def cleanup_old_audio():
                 except Exception:
                     pass
 
+    # /clarify moves processed source files into Inbox/Archive for traceability; keep 90 days.
+    archive_dir = os.path.join(inbox_dir, "Archive")
+    archive_cutoff = datetime.now() - timedelta(days=90)
+    if os.path.isdir(archive_dir):
+        for f in os.listdir(archive_dir):
+            p = os.path.join(archive_dir, f)
+            try:
+                if os.path.isfile(p) and datetime.fromtimestamp(os.path.getmtime(p)) < archive_cutoff:
+                    os.remove(p)
+            except Exception:
+                pass
+
 async def generate_daily_digest(target_chat_id: int = None):
     print("🌅 Generating daily digest...")
     from backend.utils.holiday_manager import is_scope_paused

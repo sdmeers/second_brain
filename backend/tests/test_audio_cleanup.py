@@ -30,3 +30,20 @@ def test_old_inbox_voice_files_are_removed(tmp_path, monkeypatch):
     assert not old_ogg.exists() and not old_md.exists()
     assert new_ogg.exists()
     assert elsewhere.exists()
+
+
+def test_inbox_archive_expires_after_90_days(tmp_path, monkeypatch):
+    monkeypatch.setattr(brain_cleaner, "VAULT_PATH", str(tmp_path))
+    archive = tmp_path / "00_System" / "Inbox" / "Archive"
+    stale_capture = archive / "2026-01-01_120000_capture.md"
+    recent_capture = archive / "2026-08-01_120000_capture.md"
+    recent_voice = archive / "2026-07-01_10-00-00_voice.ogg"
+    _touch(stale_capture, age_days=100)
+    _touch(recent_capture, age_days=45)
+    _touch(recent_voice, age_days=60)
+
+    asyncio.run(brain_cleaner.cleanup_old_audio())
+
+    assert not stale_capture.exists()
+    assert recent_capture.exists()
+    assert recent_voice.exists(), "archived voice notes follow the 90-day rule, not the 30-day inbox rule"

@@ -2,6 +2,54 @@ import subprocess
 import os
 from backend.config import OBSIDIAN_VAULT_PATH
 
+# Every automated vault commit starts with this; /undo refuses anything else.
+ORCHESTRATOR_PREFIX = "[orchestrator]"
+
+
+def _git(args: list[str], vault_path: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", *args], cwd=vault_path, check=True, capture_output=True, text=True)
+
+
+def get_last_commit_info(vault_path: str = None) -> dict | None:
+    """Returns {sha, subject, files, is_orchestrator} for the vault's HEAD, or None if there is no repo/commit."""
+    vault_path = vault_path or OBSIDIAN_VAULT_PATH
+    if not vault_path or not os.path.exists(os.path.join(vault_path, ".git")):
+        return None
+    try:
+        sha, subject = _git(["log", "-1", "--format=%H%n%s"], vault_path).stdout.split("\n", 1)
+        files = _git(["show", "--name-only", "--format=", "HEAD"], vault_path).stdout.split()
+    except (subprocess.CalledProcessError, ValueError):
+        return None
+    subject = subject.strip()
+    return {
+        "sha": sha.strip(),
+        "subject": subject,
+        "files": files,
+        "is_orchestrator": subject.startswith(ORCHESTRATOR_PREFIX),
+    }
+
+
+def revert_orchestrator_commit(expected_sha: str, vault_path: str = None) -> tuple[bool, str]:
+    """Reverts HEAD, but only if it is still `expected_sha` and was made by the orchestrator.
+
+    Returns (success, message). A revert that conflicts is aborted so the vault is left untouched.
+    """
+    vault_path = vault_path or OBSIDIAN_VAULT_PATH
+    info = get_last_commit_info(vault_path)
+    if not info:
+        return False, "No git history found in the vault."
+    if info["sha"] != expected_sha:
+        return False, "The vault has had a new commit since you asked, so nothing was reverted. Run /undo again."
+    if not info["is_orchestrator"]:
+        return False, "The last commit was not made by the orchestrator, so it won't be reverted."
+    try:
+        _git(["revert", "--no-edit", expected_sha], vault_path)
+    except subprocess.CalledProcessError as e:
+        subprocess.run(["git", "revert", "--abort"], cwd=vault_path, capture_output=True, text=True)
+        detail = (e.stderr or e.stdout or str(e)).strip()
+        return False, f"git revert failed and was aborted: {detail[:300]}"
+    return True, f"Reverted: {info['subject']}"
+
 def commit_vault_changes(commit_message: str):
     """Stages all changes in the vault, commits them, and optionally pushes to a remote repository."""
     if not OBSIDIAN_VAULT_PATH or not os.path.exists(os.path.join(OBSIDIAN_VAULT_PATH, ".git")):

@@ -316,7 +316,8 @@ async def process_telegram_message(message: dict, token: str, http_client):
                 await handle_engage_commands(chat_id, text, token, http_client)
                 return
             elif cmd_part == "/undo":
-                await http_client.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": chat_id, "text": f"🚧 `{cmd_part}` handler coming later!"})
+                from backend.ingestion.handlers.undo import handle_undo_command
+                await handle_undo_command(chat_id, token, http_client)
                 return
             elif cmd_part == "/jira":
                 jira_text = text[5:].strip()
@@ -550,6 +551,10 @@ async def handle_telegram_callback_query(callback_query: dict, token: str, http_
     elif data.startswith("next:"):
         from backend.ingestion.handlers.engage import handle_next_callback
         await handle_next_callback(callback_query, token, http_client)
+
+    elif data.startswith("undo:"):
+        from backend.ingestion.handlers.undo import handle_undo_callback
+        await handle_undo_callback(callback_query, token, http_client)
 
 
 

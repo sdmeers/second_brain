@@ -84,7 +84,10 @@ The **Second Brain** operates on the **"Agent-as-Librarian"** paradigm: an intel
 
 ### 7. 🛡️ Syncthing Auto-Healer
 * Monitors for multi-device Syncthing sync conflicts (`*.sync-conflict-*.md`).
-* Automatically performs line-level merging (preserving `- [x]` completion states) and creates atomic Git commits.
+* Conflicts on the task lists (`Next_Actions`, `Waiting_For`, `Someday_Maybe`, `Captured`) are union-merged: an open task on either device is kept, and a tick on either device wins and is archived to `z_Completed.md`. A merge that would drop an open task is refused and left for you.
+* Both copies are backed up to `backend/state/task_backups/` (kept 30 days, outside the synced vault) and committed to Git before anything is written.
+* `01_Tasks/` is also committed to Git (`[tasks] …` commits, which `/undo` skips over) about a minute after the server changes it, only when something changed.
+* Recommended: enable Syncthing *Staggered File Versioning* on the vault folder so edits made on other devices are versioned too.
 
 ---
 

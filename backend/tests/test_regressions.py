@@ -76,9 +76,9 @@ class TestSyncConflictHealer:
     """Bug 7: the healer's task branch tested for 'tasks.md' and so never ran."""
 
     def test_next_actions_is_recognised(self):
-        source = inspect.getsource(watcher.auto_heal_syncthing_conflict)
-        assert '"next_actions.md"' in source.lower()
-        assert '== "tasks.md"' not in source.lower()
+        from backend.vault.task_merge import canonical_task_file_name
+        assert canonical_task_file_name("next_actions.md") == "Next_Actions.md"
+        assert canonical_task_file_name("tasks.md") is None
 
     def test_conflict_detection_requires_an_existing_original(self):
         """The old regex also matched ordinary notes like Notes-ABC1234.md."""

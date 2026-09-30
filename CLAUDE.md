@@ -104,7 +104,7 @@ Plain-text Telegram messages (no command prefix) are answered via `backend/rag/c
 
 ### Sync conflict healing
 
-The watcher also detects multi-device Syncthing conflict files (`*.sync-conflict-*.md` and device-suffixed variants) and auto-resolves them via line-level merge (preserving `- [x]` completion state), committing the result with `backend/utils/git.py`.
+The watcher also detects multi-device Syncthing conflict files (`*.sync-conflict-*.md` and device-suffixed variants). Conflicts on the task lists are union-merged by `backend/vault/task_merge.py` after backing up both copies and committing them via `backend/vault/task_history.py`; never make the healer trust one copy over the other, and never delete a conflict copy before the merged file is written.
 
 ### Multi-provider LLM abstraction
 

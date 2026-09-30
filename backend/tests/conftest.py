@@ -27,6 +27,10 @@ os.environ.setdefault("LLM_PROVIDER", "gemini")
 os.environ.setdefault("ENABLE_TELEGRAM_BOT", "false")
 os.environ.setdefault("ENABLE_GMAIL_POLLING", "false")
 os.environ.setdefault("ENABLE_OBSIDIAN_INBOX_POLLING", "false")
+os.environ["TASK_BACKUP_PATH"] = tempfile.mkdtemp(prefix="second_brain_test_backups_")
+# Tests write task files and run the dashboard straight away; don't treat that as a
+# fresh edit from another device.
+os.environ["TASK_SYNC_QUIET_SECONDS"] = "0"
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 

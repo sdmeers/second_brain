@@ -4,6 +4,8 @@ from backend.config import OBSIDIAN_VAULT_PATH
 
 # Every automated vault commit starts with this; /undo refuses anything else.
 ORCHESTRATOR_PREFIX = "[orchestrator]"
+# Automatic 01_Tasks/ snapshots. /undo looks past these so they never block it.
+TASK_SNAPSHOT_PREFIX = "[tasks]"
 
 
 def _git(args: list[str], vault_path: str) -> subprocess.CompletedProcess:
@@ -11,16 +13,26 @@ def _git(args: list[str], vault_path: str) -> subprocess.CompletedProcess:
 
 
 def get_last_commit_info(vault_path: str = None) -> dict | None:
-    """Returns {sha, subject, files, is_orchestrator} for the vault's HEAD, or None if there is no repo/commit."""
+    """Returns {sha, subject, files, is_orchestrator} for the latest non-snapshot commit, or None if there is none."""
     vault_path = vault_path or OBSIDIAN_VAULT_PATH
     if not vault_path or not os.path.exists(os.path.join(vault_path, ".git")):
         return None
     try:
-        sha, subject = _git(["log", "-1", "--format=%H%n%s"], vault_path).stdout.split("\n", 1)
-        files = _git(["show", "--name-only", "--format=", "HEAD"], vault_path).stdout.split()
-    except (subprocess.CalledProcessError, ValueError):
+        log = _git(["log", "-200", "--format=%H%x00%s"], vault_path).stdout.splitlines()
+    except subprocess.CalledProcessError:
         return None
-    subject = subject.strip()
+    # Task snapshots are made every time 01_Tasks/ settles, so the orchestrator commit
+    # the user means by "undo" is the latest one that isn't a snapshot.
+    entries = [line.split("\0", 1) for line in log if "\0" in line]
+    entries = [(sha, subject.strip()) for sha, subject in entries
+               if not subject.strip().startswith(TASK_SNAPSHOT_PREFIX)]
+    if not entries:
+        return None
+    sha, subject = entries[0]
+    try:
+        files = _git(["show", "--name-only", "--format=", sha], vault_path).stdout.split()
+    except subprocess.CalledProcessError:
+        return None
     return {
         "sha": sha.strip(),
         "subject": subject,
@@ -49,6 +61,27 @@ def revert_orchestrator_commit(expected_sha: str, vault_path: str = None) -> tup
         detail = (e.stderr or e.stdout or str(e)).strip()
         return False, f"git revert failed and was aborted: {detail[:300]}"
     return True, f"Reverted: {info['subject']}"
+
+def commit_paths(paths: list[str], message: str, vault_path: str = None) -> bool:
+    """Commits only ``paths`` (relative to the vault), leaving any other changes alone.
+
+    Returns True if a commit was made, False if there was nothing to commit, no repo,
+    or git failed. Never pushes: snapshots ride along with the next orchestrator push.
+    """
+    vault_path = vault_path or OBSIDIAN_VAULT_PATH
+    if not vault_path or not os.path.exists(os.path.join(vault_path, ".git")):
+        return False
+    try:
+        _git(["add", "-A", "--", *paths], vault_path)
+        if not _git(["status", "--porcelain", "--", *paths], vault_path).stdout.strip():
+            return False
+        _git(["commit", "-q", "-m", message, "--only", "--", *paths], vault_path)
+        print(f"Backend [Git]: Successfully committed: {message}")
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"Backend [Git]: Commit of {paths} failed: {(e.stderr or str(e)).strip()}")
+        return False
+
 
 def commit_vault_changes(commit_message: str):
     """Stages all changes in the vault, commits them, and optionally pushes to a remote repository."""

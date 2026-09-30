@@ -3,6 +3,7 @@ import re
 from datetime import datetime, timedelta
 from backend.config import TASKS_MD_FILE
 from backend.vault.writer import atomic_write
+from backend.vault import task_history
 from backend.vault.tasks import archive_completed_lines
 
 def parse_deadline(line: str) -> datetime:
@@ -146,6 +147,14 @@ def render_split_task_file(fname: str, items: list) -> str:
     content += ("\n".join(professional) + "\n") if professional else "*None*\n"
     return content
 
+CAPTURED_HEADER = ("# 📥 Captured\n\n> Raw thoughts and voice captures awaiting clarification via "
+                   "`/clarify`.\n\n---\n\n## 📥 Captured Items\n\n")
+CAPTURED_EMPTY = "🎉 *Inbox Zero! No captured items awaiting clarification.*\n"
+
+def render_captured_file(items: list) -> str:
+    """Renders Captured.md: a flat list, since items haven't been categorised yet."""
+    return CAPTURED_HEADER + ("\n".join(items) + "\n" if items else CAPTURED_EMPTY)
+
 def ensure_category_tag(task_line: str, category: str = None, project_name: str = None) -> str:
     """Ensures task_line has either #personal or #professional tag."""
     line = task_line.strip()
@@ -169,19 +178,13 @@ def ensure_category_tag(task_line: str, category: str = None, project_name: str 
         return f"{line} {cat_tag}"
 
 def append_gtd_item(filepath: str, item_line: str):
-    """Appends an item to a GTD task file, automatically stripping any clear messages."""
-    from backend.vault.writer import atomic_write
+    """Appends an item to a GTD task file, automatically stripping any clear messages.
+
+    Writes the same layout maintain_tasks_dashboard() produces, so the dashboard doesn't
+    rewrite the file a second time moments later. Every extra write is another chance
+    to collide with an edit syncing in from another device.
+    """
     fname = os.path.basename(filepath)
-    if fname == "Captured.md":
-        header = "# 📥 Captured\n\n> Raw thoughts and voice captures awaiting clarification via `/clarify`.\n\n---\n\n## 📥 Captured Items\n\n"
-    elif fname == "Next_Actions.md":
-        header = "# ⚡ Next Actions\n\n> Flexible, context-tagged action list. Filter in Telegram using `/next @context`.\n\n---\n\n## ⚡ Next Actions\n\n"
-    elif fname == "Waiting_For.md":
-        header = "# ⏳ Waiting For\n\n> Delegated actions and items owed to you by others. View in Telegram using `/waiting`.\n\n---\n\n## ⏳ Waiting For\n\n"
-    elif fname == "Someday_Maybe.md":
-        header = "# 💡 Someday / Maybe\n\n> Future ideas, uncommitted desires, and projects to review during `/reflect`.\n\n---\n\n## 💡 Someday / Maybe\n\n"
-    else:
-        header = None
 
     existing_items = []
     if os.path.exists(filepath):
@@ -193,16 +196,22 @@ def append_gtd_item(filepath: str, item_line: str):
                 if fname == "Captured.md":
                     if s.startswith("- "):
                         existing_items.append(s)
-                else:
-                    if s.startswith("- ["):
-                        existing_items.append(s)
+                elif s.startswith("- ["):
+                    if fname in SPLIT_FILES and s[3:4] == " ":
+                        s = ensure_category_tag(s)
+                    existing_items.append(s)
 
     clean_item = item_line.strip()
     if fname in SPLIT_FILES:
         clean_item = ensure_category_tag(clean_item)
-
     existing_items.append(clean_item)
-    content = (header or "") + "\n".join(existing_items) + "\n"
+
+    if fname in SPLIT_FILES:
+        content = render_split_task_file(fname, existing_items)
+    elif fname == "Captured.md":
+        content = render_captured_file(existing_items)
+    else:
+        content = "\n".join(existing_items) + "\n"
     atomic_write(filepath, content)
 
 async def maintain_tasks_dashboard():
@@ -230,8 +239,14 @@ async def maintain_tasks_dashboard():
             ("Captured.md", CAPTURED_MD_FILE)
         ]
 
+        skipped = set()
         for fname, fpath in all_task_files:
             if not os.path.exists(fpath):
+                continue
+            # Another device changed this file moments ago; rewriting it now is how
+            # Syncthing conflicts start. Pick it up on a later pass instead.
+            if task_history.edited_elsewhere_recently(fpath):
+                skipped.add(fname)
                 continue
 
             with open(fpath, encoding="utf-8") as f:
@@ -263,9 +278,7 @@ async def maintain_tasks_dashboard():
 
             # Captured.md stays flat and category-agnostic (items aren't clarified yet)
             if fname == "Captured.md":
-                header = "# 📥 Captured\n\n> Raw thoughts and voice captures awaiting clarification via `/clarify`.\n\n---\n\n## 📥 Captured Items\n\n"
-                clear_msg = "🎉 *Inbox Zero! No captured items awaiting clarification.*\n"
-                content = header + ("\n".join(file_active) + "\n" if file_active else clear_msg)
+                content = render_captured_file(file_active)
                 with open(fpath, encoding="utf-8") as rf:
                     curr_raw = rf.read()
                 if curr_raw.strip() != content.strip():
@@ -294,6 +307,8 @@ async def maintain_tasks_dashboard():
         # Rebuild Next_Actions.md, Waiting_For.md, Someday_Maybe.md, each split into
         # Personal / Professional sections ordered overdue -> due today -> upcoming -> backlog
         for fname, fpath in split_file_paths.items():
+            if fname in skipped:
+                continue
             new_content = render_split_task_file(fname, active_by_file.get(fname, []))
             if os.path.exists(fpath):
                 with open(fpath, encoding="utf-8") as f:

@@ -72,6 +72,17 @@ WAITING_FOR_MD_FILE = os.path.join(TASKS_PATH, "Waiting_For.md")
 SOMEDAY_MAYBE_MD_FILE = os.path.join(TASKS_PATH, "Someday_Maybe.md")
 CAPTURED_MD_FILE = os.path.join(TASKS_PATH, "Captured.md")
 
+# Copies of task files taken before the sync-conflict healer merges them. Deliberately
+# outside the vault so Syncthing never propagates (or conflicts on) the backups.
+TASK_BACKUP_PATH = os.getenv(
+    "TASK_BACKUP_PATH", os.path.join(os.path.dirname(os.path.abspath(__file__)), "state", "task_backups"))
+TASK_BACKUP_RETENTION_DAYS = int(os.getenv("TASK_BACKUP_RETENTION_DAYS", "30"))
+# The dashboard leaves a task file alone for this long after another device edits it, so
+# its reformatting write can't race the edit and create a Syncthing conflict.
+TASK_SYNC_QUIET_SECONDS = float(os.getenv("TASK_SYNC_QUIET_SECONDS", "30"))
+# Server-side writes to 01_Tasks/ are committed to the vault's git once they settle.
+TASK_COMMIT_DELAY_SECONDS = float(os.getenv("TASK_COMMIT_DELAY_SECONDS", "60"))
+
 # System internal paths
 INTERNAL_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "00_System", "Internal")
 

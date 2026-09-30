@@ -800,6 +800,88 @@ def is_sync_conflict_file(filename: str, directory: str = None) -> bool:
         return False
     return os.path.exists(os.path.join(directory, f"{m.group('base')}.md"))
 
+# Task-file conflicts the healer refused to merge; left for the user, never retried.
+_refused_task_heals: set = set()
+
+
+def _archive_new_completions(lines: list[str]) -> int:
+    """Archives completed lines that aren't already in z_Completed.md under today's date."""
+    from backend.config import COMPLETED_TASKS_MD_FILE
+    from backend.vault.tasks import archive_completed_lines, format_completed_line
+    existing = set()
+    if os.path.exists(COMPLETED_TASKS_MD_FILE):
+        with open(COMPLETED_TASKS_MD_FILE, encoding="utf-8") as f:
+            existing = {line.strip() for line in f}
+    fresh = [line for line in lines if format_completed_line(line) not in existing]
+    return archive_completed_lines(fresh)
+
+
+async def heal_task_file_conflict(rel_path: str, full_path: str, target_path: str, fname: str) -> bool:
+    """Union-merges a conflict copy of a GTD task file into the original.
+
+    Both copies are backed up outside the vault and committed to git *before* anything
+    is written, and the conflict copy is removed only after the merged file is on disk.
+    If the merge would drop an open task it is refused and both files are left alone.
+    """
+    from backend.vault import task_history
+    from backend.vault.task_merge import merge_task_file
+    from backend.vault.writer import atomic_write
+
+    if rel_path in _refused_task_heals:
+        return False
+    print(f"Backend [Auto-Healer]: Merging task conflict file {rel_path}...")
+
+    with open(full_path, encoding="utf-8") as f:
+        conflict_text = f.read()
+    original_text, original_mtime = "", None
+    if os.path.exists(target_path):
+        original_mtime = os.stat(target_path).st_mtime_ns
+        with open(target_path, encoding="utf-8") as f:
+            original_text = f.read()
+
+    backup_dir = await asyncio.to_thread(
+        task_history.backup_files, [target_path, full_path], f"conflict-{fname}")
+    await asyncio.to_thread(task_history.commit_task_snapshot, f"Before merging {rel_path}")
+
+    result = merge_task_file(fname, original_text, conflict_text)
+    if result.lost:
+        _refused_task_heals.add(rel_path)
+        print(f"Backend [Auto-Healer]: Refusing to merge {rel_path}: would drop {len(result.lost)} task(s).")
+        preview = "\n".join(f"- {line}" for line in result.lost[:10])
+        await notify_via_telegram(
+            f"⚠️ **Task Sync Conflict Needs You**\n"
+            f"Merging `{rel_path}` would have dropped {len(result.lost)} open task(s), so I left "
+            f"both files untouched:\n{preview}\n\nBackup: `{backup_dir}`"
+        )
+        return False
+
+    # Syncthing may have replaced the original while we were merging; if so, start over
+    # on the next pass rather than overwrite what just arrived.
+    current_mtime = os.stat(target_path).st_mtime_ns if os.path.exists(target_path) else None
+    if current_mtime != original_mtime:
+        print(f"Backend [Auto-Healer]: {fname} changed during merge; retrying next pass.")
+        return False
+
+    archived = _archive_new_completions(result.completed)
+    if result.content.strip() != original_text.strip():
+        atomic_write(target_path, result.content)
+    os.remove(full_path)
+    await asyncio.to_thread(task_history.commit_task_snapshot, f"Merged {rel_path}")
+
+    print(f"Backend [Auto-Healer]: Task conflict {rel_path} merged "
+          f"({len(result.open_items)} open, {len(result.recovered)} recovered, {archived} archived).")
+    lines = [f"🧠⚡ **Merged Task Sync Conflict** in `{fname}`",
+             f"• {len(result.open_items)} open task(s) kept"]
+    if result.recovered:
+        lines.append(f"• {len(result.recovered)} only in the other device's copy, now restored:")
+        lines += [f"   - {line}" for line in result.recovered[:10]]
+    if archived:
+        lines.append(f"• {archived} completed task(s) moved to z_Completed.md")
+    lines.append(f"Both copies backed up to `{backup_dir}`.")
+    await notify_via_telegram("\n".join(lines))
+    return True
+
+
 async def auto_heal_syncthing_conflict(rel_path: str, full_path: str) -> bool:
     """Attempts to automatically resolve and merge Syncthing conflict files without data loss.
     Returns True if fully resolved and deleted, False if manual user intervention is needed.
@@ -809,67 +891,20 @@ async def auto_heal_syncthing_conflict(rel_path: str, full_path: str) -> bool:
         base_name = os.path.basename(full_path)
         
         # Determine the target original file name (e.g. Next_Actions.md from Next_Actions.sync-conflict-*.md or Next_Actions-OROPVGA.md)
-        target_name = re.sub(r'\.sync-conflict-\d+-\w+', '', base_name)
+        target_name = re.sub(r'\.sync-conflict-\d+-\d+-\w+', '', base_name)
+        target_name = re.sub(r'\.sync-conflict-\d+-\w+', '', target_name)
         target_name = re.sub(r'-[A-Z0-9]{7}(?=\.md$)', '', target_name)
         target_path = os.path.join(dir_name, target_name)
-        
-        # Case A: Conflict is on Next_Actions.md
-        if target_name.lower() == "next_actions.md":
-            print(f"Backend [Auto-Healer]: Auto-resolving task conflict file {rel_path}...")
-            
-            with open(full_path, encoding="utf-8") as f:
-                conflict_text = f.read()
-                
-            master_text = ""
-            if os.path.exists(target_path):
-                with open(target_path, encoding="utf-8") as f:
-                    master_text = f.read()
-                    
-            # Extract all checked off tasks from conflict file and master file
-            checked_pattern = re.compile(r'^\s*-\s*\[[xX]\]\s*(.*)$', re.MULTILINE)
-            checked_in_conflict = checked_pattern.findall(conflict_text)
-            
-            # Archive checked off items to the canonical completed-tasks archive
-            if checked_in_conflict:
-                from backend.config import COMPLETED_TASKS_MD_FILE
-                completed_file = COMPLETED_TASKS_MD_FILE
-                today_str = datetime.now().strftime("%Y-%m-%d")
-                existing_archive = ""
-                if os.path.exists(completed_file):
-                    with open(completed_file, encoding="utf-8") as f:
-                        existing_archive = f.read()
-                        
-                new_archives = []
-                for item in checked_in_conflict:
-                    cleaned_item = item.strip()
-                    if cleaned_item not in existing_archive:
-                        new_archives.append(f"- [x] ~~ {cleaned_item} ~~ (Completed on {today_str})\n")
-                        
-                if new_archives:
-                    from backend.vault.writer import atomic_write
-                    atomic_write(completed_file, existing_archive + "".join(new_archives))
-                    
-            # Now build clean active tasks list for Next_Actions.md
-            if master_text:
-                master_lines = master_text.splitlines()
-                clean_lines = [line for line in master_lines
-                               if not line.strip().lower().startswith("- [x]")]
-                from backend.vault.writer import atomic_write
-                atomic_write(target_path, "\n".join(clean_lines) + "\n")
-            else:
-                from backend.vault.writer import atomic_write
-                atomic_write(target_path, conflict_text)
-                
-            os.remove(full_path)
-            print(f"Backend [Auto-Healer]: Tasks conflict {rel_path} successfully auto-resolved!")
-            await notify_via_telegram(
-                f"🧠⚡ **Auto-Resolved Task Sync Conflict**\n"
-                f"Merged task updates from `{rel_path}` into `Next_Actions.md` & `z_Completed.md` without data loss."
-            )
-            return True
-            
+
+        # Case A: Conflict is on one of the GTD task lists in 01_Tasks/
+        from backend.config import TASKS_PATH
+        from backend.vault.task_merge import canonical_task_file_name
+        task_fname = canonical_task_file_name(target_name)
+        if task_fname and os.path.abspath(dir_name) == os.path.abspath(TASKS_PATH):
+            return await heal_task_file_conflict(rel_path, full_path, target_path, task_fname)
+
         # Case B: Target file does not exist on disk
-        elif not os.path.exists(target_path):
+        if not os.path.exists(target_path):
             print(f"Backend [Auto-Healer]: Restoring missing file {target_name} from conflict {rel_path}...")
             shutil.move(full_path, target_path)
             await notify_via_telegram(f"🧠⚡ **Auto-Restored File**: Restored `[{target_name}]` from `{rel_path}`.")
@@ -995,7 +1030,11 @@ async def watch_inbox_loop():
                 await maintain_tasks_dashboard()
             except Exception as dashboard_e:
                 print(f"Backend [Watcher]: Error running tasks dashboard maintenance: {dashboard_e}")
-                
+
+            # Commit 01_Tasks/ to the vault's git once the server's writes have settled
+            from backend.vault.task_history import maybe_commit_task_changes
+            await maybe_commit_task_changes()
+
         except Exception as e:
             print(f"Backend [Watcher]: Error in watch loop iteration: {e}")
             

@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import httpx
 from backend.config import OBSIDIAN_VAULT_PATH
 from backend.utils.sessions import SessionStore
+from backend.vault.writer import atomic_write
 from backend.vault.tasks import (
     append_project_step,
     archive_completed_lines,
@@ -271,11 +272,9 @@ async def handle_done_command(chat_id: int, text: str, token: str, http_client: 
                 fname = os.path.basename(fp)
                 from backend.utils.tasks_dashboard import render_split_task_file, SPLIT_FILES
                 if fname in SPLIT_FILES:
-                    with open(fp, "w", encoding="utf-8") as f:
-                        f.write(render_split_task_file(fname, []))
+                    atomic_write(fp, render_split_task_file(fname, []))
                     break
-            with open(fp, "w", encoding="utf-8") as f:
-                f.writelines(new_lines)
+            atomic_write(fp, "".join(new_lines))
             break
             
     if not found:
@@ -534,7 +533,6 @@ async def handle_tickle_callback(callback_query: dict, token: str, http_client: 
                 new_lines.append(line)
 
             if found_file:
-                from backend.vault.writer import atomic_write
                 atomic_write(fp, "".join(new_lines))
                 break
 

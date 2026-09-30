@@ -46,6 +46,10 @@ def atomic_write(file_path: str, content, is_binary: bool = False):
             pass
         raise
 
+    from backend.vault import task_history
+    if task_history.is_task_file(file_path):
+        task_history.note_own_write(file_path)
+
 def save_source_material(safe_title: str, is_binary: bool, url: str, content_text: str, file_bytes: bytes = None, custom_sources_path: str = None, extension: str = None) -> tuple[str, str]:
     """Saves raw text or binary source to vault/Sources. Returns (filename, absolute_path)."""
     target_path = custom_sources_path or SOURCES_PATH

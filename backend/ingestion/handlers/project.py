@@ -6,6 +6,7 @@ from backend.config import GEMINI_MODEL
 from google.genai import types
 from pydantic import BaseModel, Field
 from backend.utils.sanitize import sanitize_filename
+from backend.prompts import load_prompt
 
 class ProjectMatchResult(BaseModel):
     matched_project: str = Field(description="The exact name of the project folder matched, or 'None'.")
@@ -40,14 +41,7 @@ async def process_project_item(content_text: str, source_info: str, category: st
 
     # 2. Use Gemini to find the matching project if not pre-matched
     if not (matched_project and matched_title):
-        system_instruction = f"""You are a personal information librarian.
-Analyze the incoming note and map it to exactly ONE of the active projects list: {active_projects}.
-
-If the note is clearly about one of these projects (e.g. mentions coding tasks for 'VibeCook', RAID/Dstl work for 'Task Force RAID', or second brain/sync updates for 'Second Brain'), return that project name.
-If it does not fit any active project, return 'None'.
-
-Also, generate a clean, brief note title (3 to 6 words) summarizing the content. Do not use quotes or special characters in the title.
-"""
+        system_instruction = load_prompt("project_match", active_projects=active_projects)
         
         try:
             config = types.GenerateContentConfig(

@@ -4,6 +4,7 @@ from backend.utils.gemini import call_gemini_with_retry
 from backend.config import GEMINI_MODEL
 from google.genai import types
 from pydantic import BaseModel, Field
+from backend.prompts import load_prompt
 
 class ExtractedTask(BaseModel):
     task_description: str = Field(description="The clean action item text.")
@@ -19,13 +20,7 @@ async def process_task_item(content_text: str, source_info: str) -> str:
     tasks_file = TASKS_MD_FILE
     
     # 1. Use Gemini to extract structured tasks
-    system_instruction = """You are a productivity organizer.
-Analyze the input text and extract all distinct actionable tasks.
-For each task, provide:
-- A clean, clear description starting with a verb.
-- An explicit deadline if mentioned (e.g. "by Monday", "2026-07-15"), otherwise "None".
-- Any context or tag (like #work, #personal, #coding). If the task is relevant to a specific project (such as Hermes, Second Brain, Weather_Cloud, etc.), make sure to include the project name as a tag (e.g., #Hermes or #Second_Brain).
-"""
+    system_instruction = load_prompt("task_extract")
     try:
         config = types.GenerateContentConfig(
             system_instruction=system_instruction,

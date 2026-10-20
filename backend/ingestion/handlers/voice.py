@@ -3,6 +3,7 @@ from backend.utils.gemini import call_gemini_with_retry
 from google.genai import types
 from pydantic import BaseModel, Field
 from backend.ingestion.queue import add_to_queue
+from backend.prompts import load_prompt
 
 class SplitVoiceItem(BaseModel):
     category: str = Field(description="Must be one of: 'quick_note', 'task', 'idea', 'project_note'.")
@@ -16,18 +17,7 @@ async def process_voice_dump_item(content_text: str, source_info: str) -> str:
     """Splits a multi-topic voice dump transcription into separate tasks/notes and re-queues them."""
     print("Voice Splitter: Analyzing voice note transcription...")
     
-    system_instruction = """You are a digital organization librarian.
-Analyze this voice note transcription, which contains multiple separate thoughts, tasks, ideas, or reminders spoken by the user.
-Surgically split this transcription into separate, independent items.
-
-For each item:
-1. Determine its category:
-   - 'task': A specific action item (e.g., 'remind me to write the raid brief tomorrow').
-   - 'quick_note': A personal status update, thought, or log (e.g. 'walked the beagles, they did well').
-   - 'idea': A conceptual spark or creative project proposal.
-   - 'project_note': An update, summary, or note about an active project.
-2. Clean and rewrite the transcription into a coherent, professionally written note or task. Correct any spoken stuttering, transcription glitches, or repetitive phrasing.
-"""
+    system_instruction = load_prompt("voice_split")
 
     try:
         config = types.GenerateContentConfig(

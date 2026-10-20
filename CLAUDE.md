@@ -106,6 +106,10 @@ Plain-text Telegram messages (no command prefix) are answered via `backend/rag/c
 
 The watcher also detects multi-device Syncthing conflict files (`*.sync-conflict-*.md` and device-suffixed variants). Conflicts on the task lists are union-merged by `backend/vault/task_merge.py` after backing up both copies and committing them via `backend/vault/task_history.py`; never make the healer trust one copy over the other, and never delete a conflict copy before the merged file is written.
 
+### Prompts
+
+All LLM prompts live in `backend/prompts/*.md` and are loaded with `backend.prompts.load_prompt(name, **vars)` (`${var}` placeholders, `string.Template`). Don't add inline prompt strings in Python; add a file there instead. `tests/test_prompts.py` fails if a call site and its template disagree on variables. Prompt edits need a service restart like any other backend change.
+
 ### Multi-provider LLM abstraction
 
 `backend/utils/llm_client.py` and `backend/utils/gemini.py` abstract over the three supported providers; Gemini-specific code paths use context caching (`get_or_create_context_cache`) to keep extraction prompts cheap across repeated calls (book mode, research ingestion, brain-node generation).

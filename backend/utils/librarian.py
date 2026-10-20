@@ -9,6 +9,7 @@ from backend.utils.gemini import call_gemini_with_retry
 from backend.config import GEMINI_MODEL, WIKILINK_SIMILARITY_THRESHOLD
 from backend.utils.sanitize import sanitize_filename
 from backend.vault.writer import atomic_write
+from backend.prompts import load_prompt
 
 class WikilinkResult(BaseModel):
     related: list[str] = Field(description='List of genuinely related note titles to link as [[Wikilinks]].')
@@ -104,7 +105,7 @@ async def enrich_note_metadata(saved_file_path: str, note_text: str, classificat
     
     wikilinks = []
     if candidate_titles:
-        prompt = f"Given this note content, which of these existing notes are genuinely conceptually related? Only include strong, meaningful connections. Return an empty list if none are truly relevant. Candidates: {candidate_titles}\n\nNote content: {note_text}"
+        prompt = load_prompt("wikilinks", candidate_titles=candidate_titles, note_text=note_text)
         
         try:
             from google.genai import types
@@ -195,24 +196,7 @@ class PARADestination(BaseModel):
     )
     reasoning: str = Field(description="Brief explanation of why this PARA location was chosen.")
 
-PARA_SYSTEM_PROMPT = """You are the AI Librarian for Steven's Second Brain system, adhering strictly to Tiago Forte's P.A.R.A Method.
-
-Determine the exact target P.A.R.A folder for the given note or document based on these strict guidelines:
-
-1. '02_Projects': Active short-term efforts with a specific goal and deadline (e.g. Personal/Garage, Personal/Doors, Personal/Second Brain, Professional/TF RAID).
-
-2. '03_Areas': Personal operational roles, responsibilities, standards, and personal records that Steven personally maintains on an ongoing basis.
-   - Allowed subfolders: 'Family', 'Health', 'House', 'Home_Server', 'Work', 'Finance_and_legal', 'Coding', 'Cookery', 'Learning', 'Running', 'Music', 'Reading'.
-   - Examples: Personal driving license, family packing lists, NHS records, home server systemd configs, house invoices, personal reading lists (Books to read.md).
-   - CRITICAL: Do NOT file external book summaries, research papers, software cheat sheets, newsletters, or equipment manuals under 03_Areas!
-
-3. '04_Resources': External reference material, learning resources, manuals, articles, and research.
-   - 'Manuals_and_Equipment': Equipment manuals, appliance guides, hardware specs, datasheets (e.g. Kärcher pressure washer, appliance guides).
-   - 'Articles_and_News': Web articles, newsletters, blog posts, tech news clippings.
-   - 'Cheatsheets_and_Guides': Software cheat sheets, tool reference guides, syntax sheets (e.g. Obsidian cheatsheet, git guides).
-   - 'Books_and_Media': Book summaries, novel reviews, video transcripts, podcast notes (e.g. The Expanse, Good Strategy Bad Strategy summary).
-   - 'Research_Brain': Academic papers, scientific studies, AI governance whitepapers, deep technical research.
-"""
+PARA_SYSTEM_PROMPT = load_prompt("para_librarian")
 
 async def determine_para_destination(title: str, text: str, is_pdf: bool = False) -> tuple[str, str]:
     """Determines the exact vault directory for a given title and content using P.A.R.A rules."""

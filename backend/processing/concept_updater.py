@@ -3,6 +3,7 @@ from backend.config import ATLAS_PATH, CONCEPTS_PATH, GEMINI_MODEL
 from backend.utils.sanitize import sanitize_filename
 from backend.utils.gemini import call_gemini_with_retry
 from backend.utils.logger import log_action
+from backend.prompts import load_prompt
 
 def resolve_concept_path(directory: str, clean_concept: str) -> str:
     """Resolves target concept filepath, matching existing files case-insensitively."""
@@ -29,16 +30,14 @@ async def update_concept_page(concept_name: str, new_summary: str, source_title:
         with open(target_path, encoding="utf-8") as f:
             existing_content = f.read()
             
-        preserve_msg = "\n\nCRITICAL: This is an Atlas Map of Content. DO NOT modify the '# Map of Content' section or any Dataview queries. Only update the definition and discussion sections above it." if is_atlas else ""
+        preserve_msg = "\n\n" + load_prompt("concept_atlas_guard") if is_atlas else ""
             
-        prompt = f"""Here is the existing {'atlas theme' if is_atlas else 'concept'} page for '{clean_concept}':
-{existing_content}
-
-Here is a new source summary that references it:
-{new_summary}
-
-Please update the page to integrate any new information, note contradictions, and add a backlink to the new source ([[{source_title}]]). Return the complete updated Markdown.{preserve_msg}
-"""
+        prompt = load_prompt(
+            "concept_update",
+            page_kind="atlas theme" if is_atlas else "concept", concept=clean_concept,
+            existing_content=existing_content, new_summary=new_summary,
+            source_title=source_title, atlas_guard=preserve_msg,
+        )
         try:
             response = await call_gemini_with_retry(
                 model=GEMINI_MODEL,
@@ -61,11 +60,7 @@ Please update the page to integrate any new information, note contradictions, an
             print(f"Backend [Concept]: Failed to update [[{clean_concept}]]: {e}")
     else:
         print(f"Backend [Concept]: Creating new concept [[{clean_concept}]]")
-        prompt = f"""Generate a baseline definition and concept page for '{clean_concept}' based on its usage in this new source summary:
-{new_summary}
- 
-Please include a backlink to the source: [[{source_title}]]. Return the Markdown.
-"""
+        prompt = load_prompt("concept_create", concept=clean_concept, new_summary=new_summary, source_title=source_title)
         try:
             response = await call_gemini_with_retry(
                 model=GEMINI_MODEL,

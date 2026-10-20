@@ -4,6 +4,7 @@ from backend.config import GEMINI_MODEL
 from backend.utils.gemini import call_gemini_with_retry
 from backend.rag.embeddings import get_embedding
 from backend.rag.vectorstore import search_similar_chunks
+from backend.prompts import load_prompt
 
 async def query_brain(user_query: str, chat_history: list = None, top_k: int = 5) -> dict:
     """Performs vector search on the vault context and uses Gemini to answer a conversational query."""
@@ -94,15 +95,7 @@ async def query_brain(user_query: str, chat_history: list = None, top_k: int = 5
     from datetime import datetime
     current_date_str = datetime.now().strftime("%A, %B %d, %Y")
     
-    system_instruction = f"""You are Steven's personal knowledge librarian.
-Today's date is {current_date_str}.
-Your goal is to answer Steven's question accurately using only the provided context chunks from his personal Obsidian vault.
-
-CRITICAL RULES:
-1. TRUTHFULNESS: Only answer based on the retrieved context. If the context does not contain enough information to answer the question, state politely that you couldn't find the answer in his notes.
-2. CITATIONS: Always cite the source files you used to answer the question. Cite them using Obsidian wikilinks format: [[Filename]] (omit the .md extension and directory paths, e.g. [[Syncthing IDs for Second Brain]]).
-3. TONE: Be direct, structured, and concise. No fluff.
-"""
+    system_instruction = load_prompt("rag_chat", today=current_date_str)
 
 
     context_str = ""

@@ -28,6 +28,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 from backend.config import (  # noqa: E402  (must follow load_dotenv above)
     LLM_PROVIDER, GEMINI_MODEL
 )
+from backend.prompts import load_prompt  # noqa: E402
 
 if not VAULT_PATH:
     raise RuntimeError("Missing OBSIDIAN_VAULT_PATH in config")
@@ -268,14 +269,7 @@ def run_brain_cleaner():
                     combined_content += f"\n\n--- Content from {f.name} ---\n\n"
                     combined_content += file_obj.read()
                     
-            prompt = f"""You are an expert knowledge manager. Merge the following concept pages into a single, comprehensive canonical page.
-You must retain all unique insights, theories, related concepts, and source links (e.g., `[[📄 Source Name]]`). 
-Resolve any contradictions gracefully, eliminate repetition, and structure the output with clear Markdown headings. 
-Do not output anything outside of the Markdown content.
-
-Here are the concept pages to merge:
-{combined_content}
-"""
+            prompt = load_prompt("cleaner_merge", pages=combined_content)
             try:
                 response = call_gemini_with_retry(
                     model=GEMINI_MODEL,
@@ -407,12 +401,7 @@ Here are the concept pages to merge:
             concept_path = os.path.join(CONCEPTS_DIR, f"{safe_topic}.md")
             
             snippets_str = "\n".join([f"- \"{s}\"" for s in data['snippets'][:5]])
-            prompt = f"""You are building a 'Second Brain'. 
-Generate a concept page for '{topic}' based on its usage in the following context snippets from the user's vault:
-
-{snippets_str}
-
-Please return the content formatted as Markdown. Include a definition, and synthesize how it's being used based on the snippets."""
+            prompt = load_prompt("cleaner_stub", topic=topic, snippets=snippets_str)
             
             try:
                 response = call_gemini_with_retry(
@@ -447,17 +436,7 @@ Please return the content formatted as Markdown. Include a definition, and synth
         if os.path.getsize(f) > 2000 and current_hash != last_hash:
             print(f"  [REFACTORING] {f.name}")
             
-            prompt = f"""Refactor and organize this concept page. 
-
-CRITICAL INSTRUCTIONS:
-1. PRESERVE NUANCE: Do not 'smooth out' the content. Maintain all specific terminology, unique theories, and internal contradictions discovered across different sources.
-2. GRAPH INTEGRITY: Maintain all existing wikilinks [[Topic]] and source links [[📄 Source Name]].
-3. STRUCTURE: Improve readability with clear Markdown headings (##, ###).
-4. NO DELETIONS: Do not remove information unless it is an exact duplicate of another paragraph in the same file.
-
-Here is the concept page content:
-{content}
-"""
+            prompt = load_prompt("cleaner_refactor", content=content)
             try:
                 response = call_gemini_with_retry(
                     model=GEMINI_MODEL,

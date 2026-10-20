@@ -5,6 +5,7 @@ from google.genai import types
 from backend.config import GEMINI_MODEL
 from backend.vault.paths import get_existing_concepts
 from backend.utils.gemini import get_or_create_context_cache, call_gemini_with_retry
+from backend.prompts import load_prompt
 
 class OntologyExtraction(BaseModel):
     summary_markdown: str = Field(description="The complete markdown formatted summary including YAML frontmatter.")
@@ -43,79 +44,7 @@ async def generate_brain_node(title_hint: str, author_hint: str, url: str, conte
     existing_concepts = get_existing_concepts()
     concepts_str = ", ".join(existing_concepts) if existing_concepts else "(No established concepts yet)"
     
-    system_instruction = f"""You are an expert knowledge architect building a 'Second Brain' in Obsidian.
-Your goal is to analyze the provided text and extract a structured ontology based on a 'Map of Content' (MOC) strategy.
-
-CRITICAL RULES:
-1. THEMES vs CONCEPTS:
-    - THEMES: These are high-level Map of Content (MOC) categories from the user's established Atlas. You MUST identify ONE 'theme_primary' and zero or more 'theme_related' entries.
-    - Use double brackets [[Topic]] ONLY for themes and concepts.
-    - established ATLAS THEMES:
-{themes_str}
-
-2. CONCEPTS: Extract highly specific, non-trivial concepts, frameworks, and entities as wikilinks (e.g., [[Time Horizon]], [[Responsible Scaling Policy]], [[Collective Action Problem]]).
-   - DO NOT extract generic, everyday business, tech, or academic words as new concepts (e.g., avoid creating concept pages for [[External Review]], [[Internal Accountability]], [[Industry-wide Safety]]).
-   - EXCEPTION FOR THEMES: If a broad term perfectly matches one of your established ATLAS THEMES (like [[Innovation]] or [[Technology]]), you MUST categorize it under THEMES (theme_primary or theme_related), NOT as a new CONCEPT.
-   - Target roughly 5 to 14 highly impactful concepts per document. Quality and specificity are far more important than quantity. Do not over-saturate with generic ideas.
-   - NEVER include the title of the document itself or other referenced documents (e.g. things starting with 🎞️, 🏛️, 📄, 📖) in the 'concepts' array. Those are source nodes, not concept nodes.
-
-3. FORMATTING & NAMING GUARDRAILS FOR CONCEPTS:
-   - Here is a list of existing concepts in the vault: {concepts_str}
-   - If a concept you identify is highly similar, synonymous, or an acronym of an existing concept, DO NOT create a new name. You MUST use the exact existing concept name from the list for your wikilinks.
-   - When generating truly new concept titles, adhere strictly to these rules:
-     a) Always use singular nouns (e.g., 'Agent', not 'Agents').
-     b) Always use the full term, omitting parenthetical acronyms in titles (e.g., 'Minimum Viable Product', never 'Minimum Viable Product (MVP)').
-     c) Remove hyphens from compound concepts unless grammatically strictly required (e.g., 'Hyperwar', never 'Hyper-war').
-
-4. DETAILED SUMMARIES: Write comprehensive, highly detailed summaries that preserve nuance and specific arguments, rather than over-simplified high-level overviews. Err on the side of providing more detail.
-
-5. TAGS: These are granular metadata tags for states and types (e.g., #article, #book). DO NOT use tags for topics.
-
-6. EMOJI PREFIXES: You must prefix the title with an emoji based on the content type:
-   - article: 📄
-   - video: 🎞️
-   - paper: 🏛️
-   - book: 📖
-
-7. OUTPUT FORMAT TEMPLATE for summary_markdown:
----
-title: "{{Emoji}} {{Extract Title}}"
-author: "{{Extract the Author}}"
-url: "{{URL}}"
-date_processed: "{{Date}}"
-date_captured: "{{Date}}"
-status: "🟡 to-review"
-theme_primary: "[[Theme Name]]"
-theme_related: ["[[Theme 1]]", "[[Theme 2]]"]
-type: "{{article | video | paper | book}}"
-cover: "{{Emoji}}"
-tags: [brain]
----
-# [[{{Emoji}} {{Extract Title}}]]
-
-## tl;dr
-...
-{{A comprehensive and nuanced summary of the core message or contribution.}}
-
-## Core Concepts
-* **[[Concept 1]]**: {{Brief context}}
-* **[[Concept 2]]**: {{Brief context}}
-
-## Key Takeaways
-* {{Point 1}}
-* {{Point 2}}
-
-## 🗺️ Context & MOC
-- **[[Theme Primary]]**: {{One sentence on how this connects to the primary theme.}}
-- **[[Theme Related 1]]**, **[[Theme Related 2]]**: {{How it intersects with other themes.}}
-
-## Emergent Themes & Connections
-{{Analyze how this intersects with its themes and implications for the future.}}
-
-8. JSON SCHEMA POPULATION: You must return a JSON object.
-   - The `summary_markdown` field must contain the full markdown text.
-   - The `concepts` field MUST be an array of strings containing the exact wikilinks you extracted in the Core Concepts section (e.g., ["[[Time Horizon]]", "[[Responsible Scaling Policy]]"]). If you do not populate this array, the concept pages will not be created.
-"""
+    system_instruction = load_prompt("brain_node", themes=themes_str, concepts=concepts_str)
     
     date_str = datetime.now().strftime("%Y-%m-%d")
     
@@ -177,42 +106,7 @@ async def generate_light_node(title_hint: str, author_hint: str, url: str, conte
     """Calls Gemini to generate a lightweight summary of standard URL captures and bookmarks (without concepts/MOC details)."""
     print(f"Backend [Gemini-Light]: Preparing prompt for content ({len(content)} chars)...")
     
-    system_instruction = """You are a helpful knowledge assistant building a personal index of bookmarks and notes in Obsidian.
-Your goal is to analyze the provided text and write a clean, lightweight summary.
-
-CRITICAL RULES:
-1. NEWLINES: You MUST generate actual newline characters (\\n) in the JSON string to separate the lines. Do NOT write a single-line string with spaces.
-2. NO CORE CONCEPTS / WIKILINK MAPPING: Do NOT extract specific concepts, create new pages, or output a '## Core Concepts' section with wikilinks.
-3. NO MAP OF CONTENT (MOC) DETAILS: Do not output Atlas primary themes or theme connections.
-4. Keep the output focused and clean. A brief tl;dr followed by key highlights.
-5. Emoji prefixes: prefix the title with:
-   - article: 📄
-   - video: 🎞️
-   - book: 📖
-   - note: 📝
-
-6. OUTPUT FORMAT TEMPLATE for summary_markdown (use actual newlines to separate lines!):
----
-title: "{{Emoji}} {{Extract Title}}"
-author: "{{Extract the Author or Domain}}"
-url: "{{URL}}"
-date_processed: "{{Date}}"
-date_captured: "{{Date}}"
-status: "🟡 to-review"
-type: "{{article | video | book | note}}"
-cover: "{{Emoji}}"
-tags: [brain, inbox_capture]
----
-# [[{{Emoji}} {{Extract Title}}]]
-
-## tl;dr
-{{A brief, 1-2 paragraph description or summary of the article/bookmark.}}
-
-## Key Highlights
-* {{Point 1}}
-* {{Point 2}}
-* {{Point 3}}
-"""
+    system_instruction = load_prompt("light_node")
 
     date_str = datetime.now().strftime("%Y-%m-%d")
     

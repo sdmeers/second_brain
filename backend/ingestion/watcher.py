@@ -32,6 +32,7 @@ from backend.ingestion.gmail import poll_gmail
 from backend.ingestion.handlers.task import process_task_item
 from backend.ingestion.handlers.project import process_project_item
 from backend.ingestion.handlers.voice import process_voice_dump_item
+from backend.prompts import load_prompt
 
 
 async def scan_and_process_import():
@@ -194,16 +195,9 @@ async def _extract_image_text(file_path: str, caption: str) -> str:
     image_part = types.Part.from_bytes(data=img_bytes, mime_type=mime_type)
 
     if caption.strip():
-        prompt = (
-            f"Analyze the image and follow this instruction: {caption.strip()}\n"
-            "Return only the extracted information requested."
-        )
+        prompt = load_prompt("image_instruction", caption=caption.strip())
     else:
-        prompt = (
-            "You are an OCR and document extraction system. Read this image and extract all text inside it.\n"
-            "If it is an ID card, driving license, passport, receipt, or document, extract and list all fields clearly.\n"
-            "Return only the extracted text, keeping the layout logical."
-        )
+        prompt = load_prompt("image_ocr")
 
     response = await call_gemini_with_retry(model=GEMINI_MODEL, contents=[image_part, prompt])
     return response.text.strip()
@@ -406,16 +400,8 @@ async def match_para_folder(text: str) -> tuple[PARARoutingResult, list[str], di
                 full_path = os.path.join(root, d)
                 active_areas_map[d] = os.path.relpath(full_path, areas_dir)
 
-    system_instruction = (
-        f"You are a personal information librarian for Steven's Second Brain.\n"
-        f"Your task is to analyze the incoming note and map it to exactly ONE of the active Projects or Areas if it fits.\n\n"
-        f"Active Projects (cased exactly): {active_projects}\n"
-        f"Active Areas (cased exactly): {list(active_areas_map.keys())}\n\n"
-        f"CRITICAL INSTRUCTION:\n"
-        f"- If the note is about an ongoing area of life or a domain of interest (e.g., family/Rosie, cookery, health, music, finance/legal, server administration, coding, or work domains TF RAID, Dstl, Southampton), map it to 'area' with the matched area name.\n"
-        f"- If the note is about a specific temporary project with a deadline/goal (e.g., 'Second Brain', 'Hermes', 'VibeCook'), map it to 'project' with the matched project name.\n"
-        f"- If it doesn't clearly fit any of these, set matched_type to 'None'.\n"
-        f"- Generatively produce a clean, brief note title (3 to 6 words) in note_title (do not use quotes or special characters)."
+    system_instruction = load_prompt(
+        "para_matcher", active_projects=active_projects, active_areas=list(active_areas_map.keys())
     )
 
     try:

@@ -347,6 +347,8 @@ changing dependencies or the timers will run against a stale environment.
 | `JIRA_USER_EMAIL` | *Optional* | User email for Jira API basic auth. |
 | `JIRA_API_TOKEN` | *Optional* | Atlassian API token for Jira ticket creation. |
 
+**LLM prompts** are not configured through the environment: every system prompt lives as a Markdown file in [`backend/prompts/`](backend/prompts/) (`router.md`, `para_librarian.md`, `brain_node.md`, …). Edit the file, then restart the service.
+
 ---
 
 ## 📖 Documentation Index

@@ -1,7 +1,38 @@
 import os
 import re
-from backend.config import SUMMARIES_PATH, ATLAS_PATH, CONCEPTS_PATH
+from backend.config import OBSIDIAN_VAULT_PATH, SUMMARIES_PATH, ATLAS_PATH, CONCEPTS_PATH
 from backend.utils.urls import normalize_url
+
+def list_active_projects() -> dict[str, str]:
+    """Active project name -> path relative to 02_Projects (e.g. 'Garage' -> 'Personal/Garage').
+
+    Projects are nested one level under Personal/ and Professional/; listing 02_Projects
+    directly only ever returned those two category folders, so no note could match a real
+    project.
+    """
+    from backend.vault.tasks import iter_projects, projects_root
+    root = projects_root()
+    return {p.name: os.path.relpath(os.path.dirname(p.path), root) for p in iter_projects()}
+
+
+def list_areas() -> dict[str, str]:
+    """Area folder name -> path relative to 03_Areas, top level plus one nested level
+    (e.g. 'Car' -> 'Car', 'Dstl' -> 'Work/Dstl'). Read live so prompts never drift from
+    the vault the way the old hard-coded Area lists did."""
+    areas_dir = os.path.join(OBSIDIAN_VAULT_PATH, "03_Areas")
+    areas = {}
+    if not os.path.isdir(areas_dir):
+        return areas
+    for top in sorted(os.listdir(areas_dir)):
+        top_path = os.path.join(areas_dir, top)
+        if top.startswith(".") or not os.path.isdir(top_path):
+            continue
+        areas[top] = top
+        for sub in sorted(os.listdir(top_path)):
+            if not sub.startswith(".") and sub != "Sources" and os.path.isdir(os.path.join(top_path, sub)):
+                areas.setdefault(sub, f"{top}/{sub}")
+    return areas
+
 
 def get_atlas_themes() -> list[str]:
     """Reads the Atlas folder and returns a list of themes as wikilinks."""

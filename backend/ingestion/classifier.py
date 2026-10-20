@@ -8,7 +8,8 @@ class ClassificationResult(BaseModel):
     category: str = Field(
         description="The classified category of the input. Must be one of: "
                     "'quick_note', 'task', 'meeting_transcript', 'deep_research', "
-                    "'reference', 'voice_dump', 'url_capture', 'idea', 'instruction'."
+                    "'reference', 'voice_dump', 'url_capture', 'idea', 'instruction', "
+                    "'personal_record'."
     )
     confidence: float = Field(
         description="Confidence score for this classification, between 0.0 and 1.0."

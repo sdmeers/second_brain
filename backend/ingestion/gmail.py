@@ -13,42 +13,44 @@ from backend.ingestion.queue import add_to_queue
 async def _ingest_email(subject: str, body: str, attachments: list):
     print(f"Backend [Gmail Watcher]: Queuing email: '{subject}'")
     
-    # Staging path in vault for incoming files
-    from backend.config import INBOX_PATH
-    os.makedirs(INBOX_PATH, exist_ok=True)
-    
-    saved_attachments = []
+    # Stage attachments outside the vault. They used to be written into INBOX_PATH, which
+    # the drop-folder scanner also watches, so each one was ingested a second time as a
+    # file_drop. The queue worker deletes staged files once processed.
+    from backend.config import STAGING_PATH
+    os.makedirs(STAGING_PATH, exist_ok=True)
+
     try:
-        for att in attachments:
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        saved_attachments = []
+        for index, att in enumerate(attachments):
             filename = sanitize_filename(att["filename"])
-            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            unique_filename = f"email_{timestamp}_{filename}"
-            file_path = os.path.join(INBOX_PATH, unique_filename)
-            
+            unique_filename = f"email_{timestamp}_{index}_{filename}"
+            file_path = os.path.join(STAGING_PATH, unique_filename)
+
             with open(file_path, "wb") as f:
                 f.write(att["bytes"])
-                
+
             saved_attachments.append({
                 "filename": filename,
-                "unique_filename": unique_filename,
                 "content_type": att["content_type"],
                 "file_path": file_path
             })
-            
-        payload = {
-            "subject": subject,
-            "attachments": saved_attachments
-        }
-        
-        # If there's an attachment, let's link the primary file_path to the first attachment
-        primary_file_path = saved_attachments[0]["file_path"] if saved_attachments else None
-        
-        add_to_queue(
-            source_type="email",
-            raw_payload=payload,
-            content_text=body,
-            file_path=primary_file_path
-        )
+
+        # One queue item per attachment (only the first was ever processed before; the
+        # rest were picked up by accident via the inbox scanner). Bodies with no
+        # attachment are queued as text.
+        for att in saved_attachments or [None]:
+            payload = {"subject": subject}
+            if att:
+                # The body rides in the payload: the worker treats content_text on a
+                # document item as already-extracted text and would skip the PDF.
+                payload.update(filename=att["filename"], content_type=att["content_type"], body=body)
+            add_to_queue(
+                source_type="email",
+                raw_payload=payload,
+                content_text="" if att else body,
+                file_path=att["file_path"] if att else None
+            )
         
         print(f"Backend [Gmail Watcher]: Successfully queued email '{subject}'")
         await notify_via_telegram(f"📧 Inbound Email Queued: '{subject}'")

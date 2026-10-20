@@ -130,6 +130,8 @@ async def enrich_note_metadata(saved_file_path: str, note_text: str, classificat
         type_tag = "#type/task"
     elif classification_category == "meeting_transcript":
         type_tag = "#type/meeting_transcript"
+    elif classification_category == "personal_record":
+        type_tag = "#type/record"
     elif classification_category in ["reference", "url_capture"]:
         type_tag = "#type/reference"
     elif classification_category == "voice_dump":
@@ -189,14 +191,24 @@ ALLOWED_PARA_CATEGORIES = {"02_Projects", "03_Areas", "04_Resources"}
 class PARADestination(BaseModel):
     category: str = Field(description="Must be one of: '02_Projects', '03_Areas', '04_Resources'")
     subfolder: str = Field(
-        description="The exact target subfolder. "
-                    "For 02_Projects: 'Personal/<ProjectName>' or 'Professional/<ProjectName>'. "
-                    "For 03_Areas: 'Family', 'Health', 'House', 'Home_Server', 'Work', 'Finance_and_legal', 'Coding', 'Cookery', 'Learning', 'Running', 'Music', 'Reading'. "
-                    "For 04_Resources: 'Articles_and_News', 'Books_and_Media', 'Cheatsheets_and_Guides', 'Manuals_and_Equipment', 'Research_Brain'."
+        description="The exact target subfolder, chosen from the allowed subfolders listed in the "
+                    "instructions for the chosen category (e.g. 'Personal/Garage', 'Car', 'Articles_and_News')."
     )
     reasoning: str = Field(description="Brief explanation of why this PARA location was chosen.")
 
-PARA_SYSTEM_PROMPT = load_prompt("para_librarian")
+RESOURCE_FOLDERS = ("Articles_and_News", "Books_and_Media", "Cheatsheets_and_Guides",
+                    "Manuals_and_Equipment", "Research_Brain")
+
+
+def _allowed_subfolders() -> dict[str, list[str]]:
+    """The folders the librarian may file into, read from the vault each time so the
+    prompt never drifts from reality (the old hard-coded list was missing Car)."""
+    from backend.vault.paths import list_active_projects, list_areas
+    return {
+        "02_Projects": sorted(list_active_projects().values()),
+        "03_Areas": sorted(list_areas().values()),
+        "04_Resources": list(RESOURCE_FOLDERS),
+    }
 
 async def determine_para_destination(title: str, text: str, is_pdf: bool = False) -> tuple[str, str]:
     """Determines the exact vault directory for a given title and content using P.A.R.A rules."""
@@ -206,19 +218,24 @@ async def determine_para_destination(title: str, text: str, is_pdf: bool = False
         CHEATSHEETS_PATH
     )
     
-    # Fast path for known types
+    # Fast path for known types. (Every PDF used to short-circuit to Manuals here.)
     lower_title = title.lower()
-    if is_pdf or "manual" in lower_title or "user guide" in lower_title or "specifications" in lower_title:
+    if "manual" in lower_title or "user guide" in lower_title or "specifications" in lower_title:
         return MANUALS_AND_EQUIPMENT_PATH, MANUALS_SOURCES_PATH
     if "cheatsheet" in lower_title or "cheat sheet" in lower_title or "quick reference" in lower_title:
         return CHEATSHEETS_PATH, os.path.join(CHEATSHEETS_PATH, "Sources")
     if "summary" in lower_title and ("book" in lower_title or "novel" in lower_title or "edition" in lower_title):
         return BOOKS_AND_MEDIA_PATH, os.path.join(BOOKS_AND_MEDIA_PATH, "Sources")
 
+    allowed = _allowed_subfolders()
     try:
         from google.genai import types
         config = types.GenerateContentConfig(
-            system_instruction=PARA_SYSTEM_PROMPT,
+            system_instruction=load_prompt(
+                "para_librarian",
+                projects=", ".join(allowed["02_Projects"]) or "(none)",
+                areas=", ".join(allowed["03_Areas"]) or "(none)",
+            ),
             temperature=0.1,
             response_mime_type="application/json",
             response_schema=PARADestination,
@@ -242,6 +259,9 @@ async def determine_para_destination(title: str, text: str, is_pdf: bool = False
         segments = [seg for seg in segments if seg and seg not in (".", "..")]
         if not segments or len(segments) > 2:
             raise ValueError(f"Model returned unusable PARA subfolder: {dest.subfolder!r}")
+        # Only file into folders that already exist, rather than inventing new ones
+        if "/".join(segments) not in allowed[dest.category] and segments[0] not in allowed[dest.category]:
+            raise ValueError(f"Model returned unknown {dest.category} subfolder: {dest.subfolder!r}")
 
         target_dir = os.path.join(OBSIDIAN_VAULT_PATH, dest.category, *segments)
 

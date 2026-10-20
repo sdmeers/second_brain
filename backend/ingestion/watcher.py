@@ -162,7 +162,24 @@ RESEARCH_TRIGGERS = (
     "/centaur", "add to centaur brain", "#centaur", "centaur brain",
 )
 
-PARA_NOTE_CATEGORIES = ("quick_note", "idea", "reference", "meeting_transcript", "project_note")
+PARA_NOTE_CATEGORIES = ("quick_note", "idea", "reference", "personal_record", "meeting_transcript", "project_note")
+
+
+def build_routing_text(content: str, raw_payload: dict, file_path: str = None) -> str:
+    """Prefix the content with its provenance (email subject, original filename, email
+    body) so the classifier and PARA matcher can use it. Not saved into the note."""
+    header = []
+    if raw_payload.get("subject"):
+        header.append(f"Subject: {raw_payload['subject']}")
+    filename = raw_payload.get("filename") or (os.path.basename(file_path) if file_path else "")
+    if filename:
+        header.append(f"Filename: {filename}")
+    body = (raw_payload.get("body") or "").strip()
+    if body:
+        header.append(f"Email note: {body[:1000]}")
+    if not header:
+        return content
+    return "\n".join(header) + "\n\n" + content
 
 
 def cache_content_text(item_id: int, text: str):
@@ -382,23 +399,10 @@ async def match_para_folder(text: str) -> tuple[PARARoutingResult, list[str], di
 
     from backend.config import GEMINI_MODEL
     from backend.utils.gemini import call_gemini_with_retry
+    from backend.vault.paths import list_active_projects, list_areas
 
-    projects_dir = os.path.join(OBSIDIAN_VAULT_PATH, "02_Projects")
-    active_projects = []
-    if os.path.exists(projects_dir):
-        active_projects = [
-            d for d in os.listdir(projects_dir)
-            if os.path.isdir(os.path.join(projects_dir, d)) and not d.startswith(".")
-        ]
-
-    areas_dir = os.path.join(OBSIDIAN_VAULT_PATH, "03_Areas")
-    active_areas_map = {}
-    if os.path.exists(areas_dir):
-        for root, dirs, _ in os.walk(areas_dir):
-            dirs[:] = [d for d in dirs if not d.startswith(".")]
-            for d in dirs:
-                full_path = os.path.join(root, d)
-                active_areas_map[d] = os.path.relpath(full_path, areas_dir)
+    active_projects = list(list_active_projects())
+    active_areas_map = list_areas()
 
     system_instruction = load_prompt(
         "para_matcher", active_projects=active_projects, active_areas=list(active_areas_map.keys())
@@ -429,13 +433,22 @@ async def match_para_folder(text: str) -> tuple[PARARoutingResult, list[str], di
     return match, active_projects, active_areas_map
 
 
-async def route_para_note(item_id: int, classification, classification_input: str, clean_input: str,
-                          url: str, file_path: str, raw_payload: dict, source_label: str) -> tuple[str, str]:
-    """Route a quick_note/idea/reference/meeting/project_note to its PARA home.
+# Where an unmatched personal record lands. Records must never fall through to the
+# Research_Brain/Resources capture pipeline (that is how an insurance schedule ended up in
+# Research_Brain/Summaries with its policy details merged into concept pages).
+PERSONAL_RECORD_DEFAULT_AREA = "Finance_and_legal"
 
-    Returns (result_title, saved_file_path).
+
+async def route_para_note(item_id: int, classification, classification_input: str, clean_input: str,
+                          url: str, file_path: str, raw_payload: dict, source_label: str,
+                          routing_text: str = None) -> tuple[str, str, str]:
+    """Route a quick_note/idea/reference/personal_record/meeting/project_note to its PARA home.
+
+    routing_text is what the matcher sees (the content plus Subject/Filename context);
+    clean_input is what gets saved. Returns (result_title, saved_file_path, pipeline).
     """
-    match, active_projects, active_areas_map = await match_para_folder(classification_input)
+    match, active_projects, active_areas_map = await match_para_folder(routing_text or classification_input)
+    print(f"Backend [Queue Worker]: PARA match: {match.matched_type} '{match.matched_name}' ({match.reasoning})")
 
     # 1. Matched an active project -> save inside the project folder
     if match.matched_type == "project" and match.matched_name in active_projects:
@@ -444,18 +457,27 @@ async def route_para_note(item_id: int, classification, classification_input: st
             category=classification.category, raw_file_path=file_path,
             matched_project=match.matched_name, matched_title=match.note_title
         )
-        return result.get("title"), result.get("file_path")
+        return result.get("title"), result.get("file_path"), f"PARA Project ({match.matched_name})"
 
-    # 2. Matched an area -> save inside the area folder
-    if match.matched_type == "area" and match.matched_name in active_areas_map:
-        target_dir = os.path.join(OBSIDIAN_VAULT_PATH, "03_Areas", active_areas_map[match.matched_name])
+    area = match.matched_name if match.matched_type == "area" else None
+    if area not in active_areas_map:
+        area = None
+    if area is None and classification.category == "personal_record":
+        area = PERSONAL_RECORD_DEFAULT_AREA
+
+    # 2. Matched an area (or an unmatched personal record) -> save inside the area folder
+    if area:
+        relpath = active_areas_map.get(area, area)
+        target_dir = os.path.join(OBSIDIAN_VAULT_PATH, "03_Areas", relpath)
+        tags = ["area", area.lower().replace(" ", "_")]
+        if classification.category == "personal_record":
+            tags.append("record")
         dest = write_para_note(
             target_dir, match.note_title, clean_input,
-            tags=["area", match.matched_name.lower().replace(" ", "_")],
-            source_label=source_label, file_path=file_path,
-            extra_frontmatter={"area": match.matched_name},
+            tags=tags, source_label=source_label, file_path=file_path,
+            extra_frontmatter={"area": area},
         )
-        return match.note_title, dest
+        return match.note_title, dest, f"PARA Area ({relpath})"
 
     # 3. Unmatched idea -> park it in the project ideas folder
     if classification.category == "idea":
@@ -465,9 +487,9 @@ async def route_para_note(item_id: int, classification, classification_input: st
             tags=["future_project", "idea"],
             source_label=source_label, file_path=file_path,
         )
-        return match.note_title, dest
+        return match.note_title, dest, "PARA Ideas"
 
-    # 4. Otherwise fall back to a lightweight reference summary
+    # 4. Otherwise fall back to a lightweight reference summary in 04_Resources
     target_url = url or f"https://local.brain/bookmark/{item_id}"
     target_title = raw_payload.get("title") or match.note_title or "Bookmark Capture"
     notes_clean = clean_input.replace(target_url, "").strip() if target_url in clean_input else clean_input
@@ -479,12 +501,12 @@ async def route_para_note(item_id: int, classification, classification_input: st
         file_path=file_path,
         deep_extraction=False
     )
-    return result.get("title", target_title), result.get("node_path")
+    return result.get("title", target_title), result.get("node_path"), "Light reference (04_Resources)"
 
 
 async def finalise_item(item_id: int, classification, result_title: str, saved_file_path: str,
                         source_type: str, clean_input: str, research_requested: bool,
-                        instruction_msg: str = None):
+                        instruction_msg: str = None, pipeline: str = None):
     """Post-processing shared by every successful ingest: log, commit, index, enrich, notify.
 
     Each step is independently guarded -- a failure in indexing must not lose the note.
@@ -583,6 +605,7 @@ async def finalise_item(item_id: int, classification, result_title: str, saved_f
     await notify_via_telegram(
         f"🧠✅ Processed: [[{result_title}]]\n"
         f"Category: {classification.category} (conf: {classification.confidence})\n"
+        f"Pipeline: {pipeline or 'Unknown'}\n"
         f"Location: {location_str}\n"
         f"Reason: {classification.reasoning}",
         reply_markup=reply_markup
@@ -655,21 +678,32 @@ async def _process_one_item(item):
         if file_path and not classification_input:
             classification_input = f"File: {os.path.basename(file_path)}"
 
+        # What the classifier and PARA matcher see: the content plus where it came from.
+        # The subject line ("Insurance schedule") was previously never shown to either.
+        routing_text = build_routing_text(classification_input, raw_payload, file_path)
+
         # 2. Classify
         research_requested = detect_research_request(
             classification_input, str(raw_payload.get("subject", ""))
         )
-        classification = await classify_item(classification_input, research_requested)
+        classification = await classify_item(routing_text, research_requested)
 
-        # 3. Route
+        # 3. Route. The classifier decides; a file merely being a PDF no longer forces the
+        # Deep Research pipeline (that sent an insurance schedule classified 'reference'
+        # into Research_Brain). Only explicit /research or a 'deep_research' verdict goes
+        # deep -- plus a bare document URL, which the classifier can only call url_capture.
         urls = re.findall(r'(https?://[^\s)\]\n]+)', classification_input)
         url = urls[0] if urls else None
         source_label = f"{source_type.title()} Input"
         clean_input = strip_research_triggers(classification_input)
         instruction_msg = None
+        is_document_file = bool(file_path) and file_path.lower().endswith(DOC_EXTS)
 
-        if research_requested or classification.category == "deep_research" \
-                or await looks_like_document(url, file_path):
+        go_deep = research_requested or classification.category == "deep_research"
+        if not go_deep and classification.category == "url_capture" and url and not file_path:
+            go_deep = await looks_like_document(url, None)
+
+        if go_deep:
             # Full Research / Document Deep Extraction workflow
             target_url = url or f"https://local.brain/deep-research/{item_id}"
             target_title = raw_payload.get("title") or (
@@ -683,28 +717,34 @@ async def _process_one_item(item):
             )
             result_title = result.get("title", target_title)
             saved_file_path = result.get("node_path")
+            pipeline = "Deep Research"
+
+        elif is_document_file or classification.category in PARA_NOTE_CATEGORIES:
+            # A document is always filed so the file itself is kept, even when the
+            # classifier calls it a task or instruction (those paths only keep text).
+            result_title, saved_file_path, pipeline = await route_para_note(
+                item_id, classification, classification_input, clean_input,
+                url, file_path, raw_payload, source_label, routing_text=routing_text
+            )
 
         elif classification.category == "task":
             await process_task_item(classification_input, source_label)
             result_title = "Tasks"
             saved_file_path = TASKS_MD_FILE
+            pipeline = "Task"
 
         elif classification.category == "voice_dump":
             await process_voice_dump_item(classification_input, source_label)
             result_title = "Split Voice Dump"
             saved_file_path = None
+            pipeline = "Voice dump split"
 
         elif classification.category == "instruction":
             from backend.ingestion.handlers.instruction import process_vault_instruction
             instruction_msg = await process_vault_instruction(classification_input, source_label)
             result_title = "Vault Instruction Executed"
             saved_file_path = None
-
-        elif classification.category in PARA_NOTE_CATEGORIES:
-            result_title, saved_file_path = await route_para_note(
-                item_id, classification, classification_input, clean_input,
-                url, file_path, raw_payload, source_label
-            )
+            pipeline = "Instruction"
 
         elif classification.category == "url_capture" or url:
             target_url = url or f"https://local.brain/bookmark/{item_id}"
@@ -716,6 +756,7 @@ async def _process_one_item(item):
             )
             result_title = result.get("title", target_title)
             saved_file_path = result.get("node_path")
+            pipeline = "Light reference (URL)"
 
         else:
             target_url = f"https://local.brain/fallback/{item_id}"
@@ -726,11 +767,14 @@ async def _process_one_item(item):
             )
             result_title = result.get("title", target_title)
             saved_file_path = result.get("node_path")
+            pipeline = "Fallback capture"
+
+        print(f"Backend [Queue Worker]: Routed item {item_id} via {pipeline}")
 
         # 4. Log, commit, index, enrich, notify
         await finalise_item(
             item_id, classification, result_title, saved_file_path,
-            source_type, clean_input, research_requested, instruction_msg
+            source_type, clean_input, research_requested, instruction_msg, pipeline
         )
 
     except DuplicateURLError as e:

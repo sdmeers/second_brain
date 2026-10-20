@@ -60,6 +60,11 @@ INBOX_PATH = os.path.join(OBSIDIAN_VAULT_PATH, "00_System", "Inbox")
 INBOX_ARCHIVE_PATH = os.path.join(INBOX_PATH, "Archive")
 
 IMPORT_PATH = INBOX_PATH
+
+# Transient attachments from Telegram and Gmail, outside the vault. The queue worker deletes
+# a staged file once its item is processed. Gmail previously wrote into INBOX_PATH, which the
+# drop-folder scanner also watches, so every emailed attachment was ingested twice.
+STAGING_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "staging")
 INBOX_MD_FILE = os.path.join(IMPORT_PATH, "Inbox.md")
 COMPLETED_MD_FILE = os.path.join(IMPORT_PATH, "Completed.md")
 FAILED_MD_FILE = os.path.join(IMPORT_PATH, "Failed.md")

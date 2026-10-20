@@ -17,14 +17,12 @@ async def process_project_item(content_text: str, source_info: str, category: st
     """Classifies a project-related note, matches it to an active project folder, and saves it there under the correct subfolder."""
     projects_dir = os.path.join(OBSIDIAN_VAULT_PATH, "02_Projects")
     
-    # 1. Resolve list of active projects from the filesystem
-    active_projects = []
-    if os.path.exists(projects_dir):
-        active_projects = [
-            d for d in os.listdir(projects_dir)
-            if os.path.isdir(os.path.join(projects_dir, d)) and not d.startswith(".")
-        ]
-        
+    # 1. Resolve active projects (nested under Personal/ and Professional/). Listing
+    # 02_Projects directly only ever found those two category folders.
+    from backend.vault.paths import list_active_projects
+    project_dirs = list_active_projects()
+    active_projects = list(project_dirs)
+
     print(f"Project Router: Detected active projects: {active_projects}")
     
     if matched_project and matched_title:
@@ -33,12 +31,6 @@ async def process_project_item(content_text: str, source_info: str, category: st
             note_title=matched_title,
             reasoning="Pre-matched by watcher router"
         )
-    elif not active_projects:
-        # Fallback to Second Brain project or root of Projects if none exists
-        default_proj = "Second Brain"
-        os.makedirs(os.path.join(projects_dir, default_proj), exist_ok=True)
-        active_projects = [default_proj]
-
     # 2. Use Gemini to find the matching project if not pre-matched
     if not (matched_project and matched_title):
         system_instruction = load_prompt("project_match", active_projects=active_projects)
@@ -61,13 +53,16 @@ async def process_project_item(content_text: str, source_info: str, category: st
         except Exception as e:
             print(f"Project Router: Error matching project via Gemini: {e}")
             match = ProjectMatchResult(
-                matched_project="Second Brain",
+                matched_project="None",
                 note_title="Inbox Project Update",
                 reasoning=f"Fallback due to error: {e}"
             )
 
     # 3. Determine the correct subfolder under the project directory based on category
-    target_project = match.matched_project if match.matched_project in active_projects else "Second Brain"
+    # Unmatched notes go to 02_Projects/Ideas; this used to create a phantom top-level
+    # "02_Projects/Second Brain" folder.
+    target_project = match.matched_project if match.matched_project in project_dirs else None
+    project_dir = os.path.join(projects_dir, project_dirs[target_project] if target_project else "Ideas")
     subfolder_name = "Notes"
     if category == "meeting_transcript":
         subfolder_name = "Meetings"
@@ -76,7 +71,7 @@ async def process_project_item(content_text: str, source_info: str, category: st
     elif category in ["deliverable", "output"]:
         subfolder_name = "Outputs"
         
-    note_dir = os.path.join(projects_dir, target_project, subfolder_name)
+    note_dir = os.path.join(project_dir, subfolder_name)
     os.makedirs(note_dir, exist_ok=True)
     
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -114,14 +109,16 @@ async def process_project_item(content_text: str, source_info: str, category: st
         source_link = source_info
         
     # Save the note with simple, clean metadata
-    file_content = f"""---
-title: "{match.note_title}"
-project: "{target_project}"
-date_created: "{timestamp}"
-source: "{source_link}"
-tags: [project, {target_project.lower().replace(' ', '_')}]
----
-# {match.note_title}
+    from backend.vault.tasks import dump_frontmatter
+    project_tag = (target_project or "ideas").lower().replace(" ", "_")
+    frontmatter = dump_frontmatter({
+        "title": match.note_title,
+        "project": target_project or "None",
+        "date_created": timestamp,
+        "source": source_link,
+        "tags": ["project", project_tag],
+    })
+    file_content = f"""{frontmatter}# {match.note_title}
 
 *Created on {timestamp} via {source_link}*
 

@@ -187,7 +187,8 @@ async def process_telegram_message(message: dict, token: str, http_client):
     photo = message.get("photo")
     document = message.get("document")
     
-    staging_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "staging")
+    from backend.config import STAGING_PATH
+    staging_path = STAGING_PATH
     os.makedirs(staging_path, exist_ok=True)
 
     try:

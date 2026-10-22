@@ -83,3 +83,7 @@ extension/config.js
 
 # Task-file backups written by the sync-conflict healer
 backend/state/
+
+# Local screenshots (may contain personal info)
+docs/screenshots/syncting_screenshot*
+docs/screenshots/*.log

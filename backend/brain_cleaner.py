@@ -44,6 +44,34 @@ if GEMINI_API_KEY:
     except Exception:
         pass
 
+def _safe_topic(topic: str) -> str:
+    return re.sub(r'[\\/*?:"<>|]', "", topic).strip()
+
+
+def find_missing_concepts(links_data: dict, dirs: list) -> dict:
+    """Return the links that have no note in any of `dirs`.
+
+    The check ignores case. Obsidian resolves [[dual-use x]] to "Dual-Use X.md",
+    so a link that differs only by case is not missing. Creating a second file
+    whose name differs only by case breaks Syncthing on Android, Windows and
+    macOS, where the filesystem can't hold both.
+    """
+    existing = set()
+    for d in dirs:
+        if os.path.isdir(d):
+            existing.update(name.lower() for name in os.listdir(d))
+
+    missing = {}
+    for key, data in links_data.items():
+        topic = data.get('topic', key)
+        # Skip source/summary links (links starting with emojis or non-alphanumeric chars)
+        if not topic or not topic[0].isalnum():
+            continue
+        if f"{_safe_topic(topic)}.md".lower() not in existing:
+            missing[key] = data
+    return missing
+
+
 class SyncMockResponse:
     def __init__(self, text):
         self.text = text
@@ -360,29 +388,19 @@ def run_brain_cleaner():
                 if not topic or topic.endswith(('.pdf', '.md', '_raw')):
                     continue
                     
-                if topic not in links_data:
-                    links_data[topic] = {'count': 0, 'snippets': []}
+                # Group links case-insensitively: [[Dual-use X]] and [[Dual-Use X]]
+                # are the same note, and Android/Windows can't store both files.
+                key = topic.lower()
+                if key not in links_data:
+                    links_data[key] = {'topic': topic, 'count': 0, 'snippets': []}
                 
-                links_data[topic]['count'] += 1
-                if len(links_data[topic]['snippets']) < 5:
+                links_data[key]['count'] += 1
+                if len(links_data[key]['snippets']) < 5:
                     snippets = extract_snippets(content, topic)
-                    links_data[topic]['snippets'].extend(snippets)
+                    links_data[key]['snippets'].extend(snippets)
 
     # Check which links are missing a file in CONCEPTS_DIR, ATLAS_DIR, or SUMMARIES_DIR
-    missing_concepts = {}
-    
-    for topic, data in links_data.items():
-        # Skip source/summary links (links starting with emojis or non-alphanumeric chars)
-        if not topic or not topic[0].isalnum():
-            continue
-            
-        safe_topic = re.sub(r'[\\/*?:"<>|]', "", topic).strip()
-        concept_path = os.path.join(CONCEPTS_DIR, f"{safe_topic}.md")
-        atlas_path = os.path.join(ATLAS_DIR, f"{safe_topic}.md")
-        summary_path = os.path.join(SUMMARIES_DIR, f"{safe_topic}.md")
-        
-        if not any(os.path.exists(p) for p in [concept_path, atlas_path, summary_path]):
-            missing_concepts[topic] = data
+    missing_concepts = find_missing_concepts(links_data, [CONCEPTS_DIR, ATLAS_DIR, SUMMARIES_DIR])
             
     # 3. Auto-Healing
     # Sort missing concepts by count descending
@@ -393,11 +411,12 @@ def run_brain_cleaner():
     if top_n > 0:
         print(f"🏥 Auto-healing top {top_n} missing concepts...")
         for topic, data in sorted_missing[:top_n]:
+            topic = data.get('topic', topic)
             if api_calls >= MAX_API_CALLS_PER_RUN:
                 print("⏳ Reached API limit. Stopping early.")
                 return
             print(f"  [HEALING] [[{topic}]] ({data['count']} mentions)")
-            safe_topic = re.sub(r'[\\/*?:"<>|]', "", topic).strip()
+            safe_topic = _safe_topic(topic)
             concept_path = os.path.join(CONCEPTS_DIR, f"{safe_topic}.md")
             
             snippets_str = "\n".join([f"- \"{s}\"" for s in data['snippets'][:5]])

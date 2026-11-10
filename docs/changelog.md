@@ -1,5 +1,20 @@
 # 📋 Changelog
 
+## Actions Web App — November 2026 (`feat/actions-api`)
+
+An installable web app for working with Captured, Next, Waiting For and Someday/Maybe
+from a laptop or phone, served by the backend at `/app`. See README "Actions Web App"
+and technical_implementation.md §10.
+
+**Behaviour change:** the task files are no longer re-sorted by due date every 15
+seconds. The order of the lines is now your priority order, set by dragging in the app
+(or by moving lines in Obsidian), and `/next` in Telegram lists them in that order.
+Due and overdue dates are shown as badges in the app instead.
+
+Also fixed along the way: the dashboard sweeper awaited a Telegram call between reading
+the task files and rewriting them, so a change written in that gap could be overwritten.
+It now writes first and prompts afterwards.
+
 ## Code Review Remediation — August 2026 (`refactor/code-review-fixes`)
 
 A full review of the ~10k-line backend. No functionality was removed; four features that

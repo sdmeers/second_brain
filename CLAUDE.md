@@ -54,6 +54,8 @@ journalctl --user -u second-brain.service -f   # tail logs
 
 After editing backend code, restart the service (and check its status/logs) before telling the user a change is live or asking them to test it.
 
+The actions web app (`webapp/`) is React 18 + TypeScript + Vite + Tailwind. `npm run build` (type-checks, then builds to `webapp/dist`, which the backend serves at `/app` — restart the service after building) and `npm run lint`. Its backend is `backend/api/actions.py` (HTTP) and `backend/vault/actions.py` (list operations); it identifies tasks by their exact line text, so never reformat task lines on read without going through the same normalisation the sweeper applies.
+
 The Chrome extension (`extension/`) is a plain Manifest V3 extension (no build step) using vendored `Readability.js`/`turndown.js` in `extension/lib/`. `extension/package.json`'s `test` script is a stub.
 
 ## Architecture

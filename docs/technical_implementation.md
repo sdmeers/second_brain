@@ -377,6 +377,7 @@ no network calls.
 | `test_vault_writes.py` | `atomic_write`, filename sanitising, YAML frontmatter with awkward titles, archive format. |
 | `test_queue_worker.py` | The helpers split out of the queue worker, plus retry/backoff tiers. |
 | `test_gtd_flows.py` | Dashboard maintenance and project-note resolution end to end. |
+| `test_actions_api.py` | In-place line edits, the actions web app's list operations (stale lines, reorder, moves) and its HTTP API. |
 | `test_regressions.py` | One test per confirmed historical bug. |
 | `test_urls.py` | URL normalisation for duplicate-capture detection. |
 | `test_embedding_resilience.py` | Texts-per-minute pacing, `retryDelay` handling, and a failed embed leaving the existing index intact. |
@@ -396,6 +397,9 @@ Ruff's `F` rules matter most here: undefined names had silently broken `/tickle`
 | `/process` | POST | optional | Chrome-extension capture ingestion. |
 | `/query` | POST | optional | RAG question answering. |
 | `/health` | GET | never | Disk usage and queue counts (kept open for monitoring). |
+| `/api/actions` | GET | optional | Every GTD list, in file (priority) order. |
+| `/api/actions/ops` | POST | optional | Ordered batch of `complete` / `edit` / `move` / `reorder` operations. |
+| `/app/` | GET | never | The built actions web app (`webapp/dist`), if present. |
 
 The server binds `0.0.0.0` so the Chrome extension can reach it over Tailscale/LAN.
 Setting `API_AUTH_TOKEN` in `backend/.env` requires callers to send
@@ -404,6 +408,44 @@ previous behaviour. The extension reads the matching value from `extension/confi
 
 The FastAPI app uses a `lifespan` context manager (not the deprecated
 `@app.on_event("startup")`) to own the background watcher task.
+
+### Actions Web App (`webapp/`, `backend/api/actions.py`, `backend/vault/actions.py`)
+
+A React + TypeScript + Vite + Tailwind PWA, built to `webapp/dist` and mounted by
+`mount_webapp()` at `/app`. There is still no database: the app edits the same Markdown
+files as Telegram and Obsidian.
+
+- **Identity is the line text.** Task lines have no IDs, so each operation names its
+  target by the exact line (`raw`) the client last saw. If that line was changed or
+  removed elsewhere, the operation is **skipped** (`reason: not_found`) rather than
+  matched fuzzily, and the response carries fresh state. This is what makes replaying
+  edits queued offline safe.
+- **File order is priority order.** `reorder` rewrites one category of one list in the
+  order given. The dashboard sweeper used to re-sort every list by due date each tick;
+  `render_split_task_file()` now preserves the order it is given. Lines the client did
+  not know about keep their relative order after the ones it placed.
+- **In-place edits.** `update_task_line()` changes only the named fields and carries
+  over `#waiting(Name)`, `(Captured ...)` and the source link, which
+  `render_task_line()` cannot express.
+- **Captured is read-and-reword only.** `complete`, `move` and `reorder` are refused for
+  `Captured.md`; `edit` accepts only the description. Clarifying stays in `/clarify`.
+- **Moves.** Into Waiting For adds `#waiting(Name)` and optionally a 🔔 follow-up date;
+  out of it drops the tag. A moved line lands at the top of its category.
+- **Batches.** Within one batch, a later op that names a line by its pre-edit text is
+  redirected to the text an earlier op produced, so an offline edit-then-complete works.
+  Results are remembered by `op_id` (in memory), so a batch resent after a lost response
+  is not applied twice.
+- **No interleaving.** The endpoints are `async def` with no `await` between reading and
+  writing a file, so a batch runs as one step on the event loop. For the same reason
+  `maintain_tasks_dashboard()` now writes every file *before* awaiting the Telegram
+  project-promotion prompt.
+- **Completing** archives through `archive_completed_lines()` and, for a
+  `#project/` action, fires the same step-promotion prompt as `/done`.
+
+On the client, the screen is always *last server state + unsent operations replayed
+locally* (`webapp/src/optimistic.ts`). The outbox and last state persist in IndexedDB;
+the service worker caches the app shell. A completion is held for 5 seconds before it is
+sent, which is the Undo window.
 
 ### Chrome Extension Configuration
 

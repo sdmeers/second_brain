@@ -89,6 +89,14 @@ The **Second Brain** operates on the **"Agent-as-Librarian"** paradigm: an intel
 * `01_Tasks/` is also committed to Git (`[tasks] …` commits, which `/undo` skips over) about a minute after the server changes it, only when something changed.
 * Recommended: enable Syncthing *Staggered File Versioning* on the vault folder so edits made on other devices are versioned too.
 
+### 8. 📱 Actions Web App
+* An installable web app (laptop and phone) for working through your lists: pick **Personal** or **Professional**, then **Next**, **Waiting**, **Someday** or **Captured**.
+* Drag actions into priority order, tick them off (with Undo), edit text, context and dates, and move them between Next / Waiting For / Someday.
+* The order you drag is the order of the lines in the Markdown file, so Obsidian and Telegram show the same priorities.
+* Captured items can be read and their wording fixed; sorting them stays with `/clarify` in Telegram.
+* Works offline: changes queue on the device and replay when it reconnects. An action that was changed elsewhere in the meantime is skipped and flagged rather than overwritten.
+* Served by the backend at `/app` — see [Actions Web App setup](#6-actions-web-app-optional).
+
 ---
 
 ## 🤖 Telegram Command Reference
@@ -322,6 +330,36 @@ The scheduled briefings are separate units, not part of the daemon. Templates ar
 They call `backend/.venv/bin/python3` directly rather than `uv run`, so run `uv sync` after
 changing dependencies or the timers will run against a stale environment.
 
+### 6. Actions Web App (optional)
+
+The app is a static build served by the backend itself, so it needs no hosting of its own.
+
+```bash
+# 1. Build it (Node 20+). Re-run after pulling changes to webapp/.
+cd webapp
+npm install
+npm run build
+
+# 2. Restart the backend so it picks up webapp/dist
+systemctl --user restart second-brain.service
+```
+
+It is now at `http://<server>:8080/app/`. To use it from your phone, away from home, and
+offline, it needs HTTPS — browsers only allow install-to-home-screen and offline caching
+on secure origins. With [Tailscale](https://tailscale.com) on the server and your devices:
+
+```bash
+# On the server: publish port 8080 to your tailnet over HTTPS (not to the internet)
+tailscale serve --bg 8080
+```
+
+Then open `https://<server>.<tailnet>.ts.net/app/` on any device signed in to your
+tailnet and choose **Install** / **Add to Home Screen**. Set `API_AUTH_TOKEN` in
+`backend/.env` and the app asks for it once per device.
+
+For frontend development, `npm run dev` in `webapp/` serves the app with hot reload and
+proxies `/api` to a backend on `localhost:8080`.
+
 ---
 
 ## ⚙️ Configuration Reference
@@ -342,7 +380,7 @@ changing dependencies or the timers will run against a stale environment.
 | `TELEGRAM_ALLOWED_CHAT_IDS` | *Optional* | Comma-separated list of authorized Telegram chat IDs. |
 | `ENABLE_TELEGRAM_BOT` | `true` | Enables unified Telegram bot polling loop. |
 | `ENABLE_GMAIL_POLLING` | `false` | Enables IMAP polling for incoming attachments. |
-| `API_AUTH_TOKEN` | *Optional* | Shared secret for `/process` and `/query`. When set, callers must send `Authorization: Bearer <token>`. Unset leaves the API open. |
+| `API_AUTH_TOKEN` | *Optional* | Shared secret for `/process`, `/query` and `/api/actions`. When set, callers must send `Authorization: Bearer <token>`. Unset leaves the API open. |
 | `JIRA_URL` | *Optional* | Base URL for Atlassian Jira instance. |
 | `JIRA_USER_EMAIL` | *Optional* | User email for Jira API basic auth. |
 | `JIRA_API_TOKEN` | *Optional* | Atlassian API token for Jira ticket creation. |
@@ -369,6 +407,10 @@ cd backend
 uv run pytest              # ~320 tests, ~2s — no vault, API key or network required
 uv run ruff check .        # lint; must pass clean
 uv run ruff check . --fix  # apply safe autofixes
+
+cd ../webapp
+npm run build              # type-check and build the actions web app
+npm run lint
 ```
 
 Tests build a throwaway vault in `tests/conftest.py`, so they never touch your real one.

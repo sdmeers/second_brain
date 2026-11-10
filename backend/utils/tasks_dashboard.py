@@ -149,14 +149,6 @@ def is_placeholder_line(stripped: str) -> bool:
     return ("🎉" in stripped or "Inbox Zero" in stripped or "All clear" in stripped
             or "List clear" in stripped or "*None*" in stripped)
 
-CAPTURED_HEADER = ("# 📥 Captured\n\n> Raw thoughts and voice captures awaiting clarification via "
-                   "`/clarify`.\n\n---\n\n## 📥 Captured Items\n\n")
-CAPTURED_CLEAR_MSG = "🎉 *Inbox Zero! No captured items awaiting clarification.*\n"
-
-def render_captured_file(items: list) -> str:
-    """Renders Captured.md: flat and category-agnostic, since items aren't clarified yet."""
-    return CAPTURED_HEADER + ("\n".join(items) + "\n" if items else CAPTURED_CLEAR_MSG)
-
 def render_split_task_file(fname: str, items: list) -> str:
     """Renders one of SPLIT_FILES as Markdown, split into Personal / Professional.
 

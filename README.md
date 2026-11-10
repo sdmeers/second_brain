@@ -344,13 +344,13 @@ npm run build
 systemctl --user restart second-brain.service
 ```
 
-It is now at `http://<server>:8080/app/`. To use it from your phone, away from home, and
+It is now at `http://<server>:<PORT>/app/` (`PORT` from `backend/.env`, default 8080). To use it from your phone, away from home, and
 offline, it needs HTTPS — browsers only allow install-to-home-screen and offline caching
 on secure origins. With [Tailscale](https://tailscale.com) on the server and your devices:
 
 ```bash
-# On the server: publish port 8080 to your tailnet over HTTPS (not to the internet)
-tailscale serve --bg 8080
+# On the server: publish the backend's port to your tailnet over HTTPS (not to the internet)
+tailscale serve --bg 8080   # use your PORT if it isn't 8080
 ```
 
 Then open `https://<server>.<tailnet>.ts.net/app/` on any device signed in to your

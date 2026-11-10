@@ -100,7 +100,10 @@ FILE_META = {
 
 def order_tasks_by_due(tasks: list, today=None) -> list:
     """Orders task lines overdue -> due today -> upcoming (7d) -> backlog, resolving
-    relative 📅 today/tomorrow markers to absolute dates along the way."""
+    relative 📅 today/tomorrow markers to absolute dates along the way.
+
+    For due-date *views* only. The task files themselves are kept in the user's manual
+    priority order -- see render_split_task_file()."""
     today = today or datetime.now().date()
     overdue_tasks, due_today_tasks, upcoming_tasks, backlog_tasks = [], [], [], []
     for task in tasks:
@@ -130,12 +133,40 @@ def split_by_category(items: list) -> tuple:
     professional = [i for i in items if "#professional" in i]
     return personal, professional
 
+def resolve_relative_due(task: str) -> str:
+    """Rewrites a relative ``📅 today`` / ``📅 tomorrow`` marker as an absolute date."""
+    if not re.search(r'📅\s*(today|tomorrow)', task, re.IGNORECASE):
+        return task
+    due_date = parse_deadline(task)
+    if not due_date:
+        return task
+    due_date_str = due_date.strftime("%Y-%m-%d")
+    task = re.sub(r'📅\s*tomorrow', f'📅 {due_date_str}', task, flags=re.IGNORECASE)
+    return re.sub(r'📅\s*today', f'📅 {due_date_str}', task, flags=re.IGNORECASE)
+
+def is_placeholder_line(stripped: str) -> bool:
+    """True for the "all clear" filler lines written into empty lists."""
+    return ("🎉" in stripped or "Inbox Zero" in stripped or "All clear" in stripped
+            or "List clear" in stripped or "*None*" in stripped)
+
+CAPTURED_HEADER = ("# 📥 Captured\n\n> Raw thoughts and voice captures awaiting clarification via "
+                   "`/clarify`.\n\n---\n\n## 📥 Captured Items\n\n")
+CAPTURED_CLEAR_MSG = "🎉 *Inbox Zero! No captured items awaiting clarification.*\n"
+
+def render_captured_file(items: list) -> str:
+    """Renders Captured.md: flat and category-agnostic, since items aren't clarified yet."""
+    return CAPTURED_HEADER + ("\n".join(items) + "\n" if items else CAPTURED_CLEAR_MSG)
+
 def render_split_task_file(fname: str, items: list) -> str:
-    """Renders one of SPLIT_FILES as Markdown, ordering each category by due date."""
+    """Renders one of SPLIT_FILES as Markdown, split into Personal / Professional.
+
+    Items keep the order they are given in: the order of the lines in the file *is* the
+    user's priority order (set by dragging in the actions web app), so nothing here
+    re-sorts by due date. Use order_tasks_by_due() explicitly where a due-date view is
+    wanted.
+    """
     meta = FILE_META[fname]
-    personal, professional = split_by_category(items)
-    personal = order_tasks_by_due(personal)
-    professional = order_tasks_by_due(professional)
+    personal, professional = split_by_category([resolve_relative_due(i) for i in items])
 
     if not personal and not professional:
         return (f"{meta['title']}\n\n{meta['desc']}\n\n---\n\n"
@@ -191,7 +222,7 @@ def append_gtd_item(filepath: str, item_line: str):
         with open(filepath, encoding="utf-8") as f:
             for raw_line in f:
                 s = raw_line.strip()
-                if "🎉" in s or "Inbox Zero" in s or "All clear" in s or "List clear" in s or "*None*" in s:
+                if is_placeholder_line(s):
                     continue
                 if fname == "Captured.md":
                     if s.startswith("- "):
@@ -213,6 +244,23 @@ def append_gtd_item(filepath: str, item_line: str):
     else:
         content = "\n".join(existing_items) + "\n"
     atomic_write(filepath, content)
+
+async def _prompt_promotion_for(completed_lines: list):
+    """Offers the next project step in Telegram for the first project-tagged line."""
+    from backend.config import TELEGRAM_ALLOWED_CHAT_IDS, TELEGRAM_BOT_TOKEN
+    if not (TELEGRAM_BOT_TOKEN and TELEGRAM_ALLOWED_CHAT_IDS):
+        return
+    primary_chat_id = TELEGRAM_ALLOWED_CHAT_IDS[0]
+    for task_str in completed_lines:
+        m_proj = re.search(r'#project/([a-zA-Z0-9_\-]+)', task_str)
+        if m_proj:
+            proj_tag = m_proj.group(1)
+            try:
+                from backend.ingestion.handlers.engage import prompt_project_step_promotion
+                await prompt_project_step_promotion(primary_chat_id, proj_tag)
+            except Exception as pe:
+                print(f"Tasks Dashboard: Error prompting project promotion for {proj_tag}: {pe}")
+            break
 
 async def maintain_tasks_dashboard():
     """Scans all task files (Next_Actions.md, Waiting_For.md, Someday_Maybe.md, Captured.md),
@@ -257,7 +305,7 @@ async def maintain_tasks_dashboard():
 
             for line in lines:
                 stripped = line.strip()
-                if "🎉" in stripped or "Inbox Zero" in stripped or "All clear" in stripped or "List clear" in stripped or "*None*" in stripped:
+                if is_placeholder_line(stripped):
                     continue
                 if fname == "Captured.md":
                     if stripped.startswith("- "):
@@ -289,23 +337,9 @@ async def maintain_tasks_dashboard():
             archive_completed_lines(newly_completed)
             print(f"Tasks Dashboard: Moved {len(newly_completed)} completed tasks to z_Completed.md")
 
-            # Check newly completed tasks for #project/<tag> and prompt Telegram promotion
-            from backend.config import TELEGRAM_ALLOWED_CHAT_IDS, TELEGRAM_BOT_TOKEN
-            if TELEGRAM_BOT_TOKEN and TELEGRAM_ALLOWED_CHAT_IDS:
-                primary_chat_id = TELEGRAM_ALLOWED_CHAT_IDS[0] if isinstance(TELEGRAM_ALLOWED_CHAT_IDS, list) else int(str(TELEGRAM_ALLOWED_CHAT_IDS).split(",")[0].strip())
-                for task_str in newly_completed:
-                    m_proj = re.search(r'#project/([a-zA-Z0-9_\-]+)', task_str)
-                    if m_proj:
-                        proj_tag = m_proj.group(1)
-                        try:
-                            from backend.ingestion.handlers.engage import prompt_project_step_promotion
-                            await prompt_project_step_promotion(primary_chat_id, proj_tag)
-                        except Exception as pe:
-                            print(f"Tasks Dashboard: Error prompting project promotion for {proj_tag}: {pe}")
-                        break
-
         # Rebuild Next_Actions.md, Waiting_For.md, Someday_Maybe.md, each split into
-        # Personal / Professional sections ordered overdue -> due today -> upcoming -> backlog
+        # Personal / Professional sections. File order is preserved (it is the user's
+        # priority order).
         for fname, fpath in split_file_paths.items():
             if fname in skipped:
                 continue
@@ -317,6 +351,12 @@ async def maintain_tasks_dashboard():
                     continue
             atomic_write(fpath, new_content)
             print(f"Tasks Dashboard: Regenerated and categorized {fname} successfully.")
+
+        # Only now, with every file written, prompt for project step promotion. This
+        # awaits the Telegram API, and nothing may await between reading the task files
+        # and rewriting them: an edit made through the actions API in that gap would be
+        # overwritten by the stale copy read above.
+        await _prompt_promotion_for(newly_completed)
 
     except Exception as e:
         print(f"Tasks Dashboard: Error maintaining task list: {e}")

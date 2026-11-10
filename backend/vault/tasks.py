@@ -229,6 +229,99 @@ def archive_completed_lines(lines: list[str], when: date = None) -> int:
     return len(formatted)
 
 
+# --- In-place edits ------------------------------------------------------------------
+
+UNSET = object()
+"""Sentinel for :func:`update_task_line`: "leave this field as it is"."""
+
+_TRAILER_RES = (CAPTURED_RE, SOURCE_RE, COMPLETED_ON_RE)
+_TOKEN_RES = (CONTEXT_RE, PROJECT_RE, CATEGORY_RE, WAITING_RE, DUE_RE, TICKLER_RE)
+
+
+def _split_line(raw: str) -> tuple[str, str, str]:
+    """Split a task or bullet line into ``(prefix, main, trailer)``.
+
+    ``trailer`` is the run of ``(Captured ...)`` / ``(Source: [[...]])`` suffixes, which
+    edits must carry over untouched.
+    """
+    text = raw.strip()
+    m = CHECKBOX_RE.match(text)
+    if m:
+        prefix, body = f"- [{m.group('mark')}] ", m.group("body")
+    else:
+        m = BULLET_RE.match(text)
+        if not m:
+            raise ValueError(f"Not a task or bullet line: {raw!r}")
+        prefix, body = "- ", m.group("body")
+
+    starts = [hit.start() for hit in (rx.search(body) for rx in _TRAILER_RES) if hit]
+    cut = min(starts) if starts else len(body)
+    return prefix, body[:cut].strip(), body[cut:].strip()
+
+
+def update_task_line(
+    raw: str,
+    *,
+    description=UNSET,
+    contexts=UNSET,
+    category=UNSET,
+    waiting_on=UNSET,
+    due=UNSET,
+    tickler=UNSET,
+) -> str:
+    """Return ``raw`` with only the given fields changed.
+
+    Unlike parse-then-:func:`render_task_line`, this keeps everything the renderer has
+    no field for: ``#waiting(Name)``, the ``(Captured ...)`` suffix, the source link and
+    any other hashtags in the prose. Pass ``None`` to clear a field. Works on plain
+    ``- bullet`` lines too (``Captured.md``), where only ``description`` makes sense.
+    """
+    prefix, main, trailer = _split_line(raw)
+
+    prose = main
+    for rx in _TOKEN_RES:
+        prose = rx.sub("", prose)
+    prose = re.sub(r"\s{2,}", " ", prose).strip()
+
+    if description is not UNSET:
+        prose = re.sub(r"\s+", " ", description or "").strip()
+        if not prose:
+            raise ValueError("A task needs a description")
+
+    def current(rx):
+        m = rx.search(main)
+        return m.group(1) if m else None
+
+    if contexts is UNSET:
+        ctx_list = CONTEXT_RE.findall(main)
+    else:
+        ctx_list = [c if c.startswith("@") else f"@{c}" for c in (contexts or []) if c.strip("@ ")]
+
+    cat = current(CATEGORY_RE) if category is UNSET else category
+    waiting = current(WAITING_RE) if waiting_on is UNSET else waiting_on
+    due_val = current(DUE_RE) if due is UNSET else due
+    tick_val = current(TICKLER_RE) if tickler is UNSET else tickler
+    project = current(PROJECT_RE)
+
+    def iso(value) -> str:
+        return value if isinstance(value, str) else value.strftime("%Y-%m-%d")
+
+    parts = [prose, *ctx_list]
+    if project:
+        parts.append(f"#project/{project}")
+    if cat:
+        parts.append(f"#{cat.strip().lower()}")
+    if waiting and waiting.strip():
+        parts.append(f"#waiting({waiting.strip().replace(')', '')})")
+    if due_val:
+        parts.append(f"📅 {iso(due_val)}")
+    if tick_val:
+        parts.append(f"🔔 {iso(tick_val)}")
+    if trailer:
+        parts.append(trailer)
+    return prefix + " ".join(parts)
+
+
 # --- Project notes -------------------------------------------------------------------
 
 PROJECT_STEPS_RE = re.compile(r'## Project Steps\s*\n(.*?)(?=\n## |\Z)', re.DOTALL)

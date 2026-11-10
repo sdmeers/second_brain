@@ -1,7 +1,7 @@
 """GTD file maintenance and project resolution, exercised against a real temp vault."""
 
 import os
-
+from datetime import date
 
 from backend.utils.sessions import SessionStore
 from backend.utils.tasks_dashboard import append_gtd_item, ensure_category_tag, maintain_tasks_dashboard
@@ -87,14 +87,24 @@ class TestMaintainTasksDashboard:
         assert content.index("Home task") < content.index("## 💼 Professional")
         assert content.index("Work task") > content.index("## 💼 Professional")
 
-    async def test_orders_overdue_before_backlog(self, tasks_dir):
+    async def test_keeps_manual_order_regardless_of_due_dates(self, tasks_dir):
+        """File order is the priority order set in the actions app; the sweeper used to
+        re-sort overdue items to the top every 15 seconds, undoing any drag."""
         (tasks_dir / "Next_Actions.md").write_text(
             "# ⚡ Next Actions\n\n"
             "- [ ] No deadline @home #personal\n"
             "- [ ] Overdue thing @home #personal 📅 2020-01-01\n", encoding="utf-8")
         await maintain_tasks_dashboard()
         content = (tasks_dir / "Next_Actions.md").read_text(encoding="utf-8")
-        assert content.index("Overdue thing") < content.index("No deadline")
+        assert content.index("No deadline") < content.index("Overdue thing")
+
+    async def test_still_resolves_relative_due_markers(self, tasks_dir):
+        (tasks_dir / "Next_Actions.md").write_text(
+            "# ⚡ Next Actions\n\n- [ ] Ring the bank @phone #personal 📅 today\n", encoding="utf-8")
+        await maintain_tasks_dashboard()
+        content = (tasks_dir / "Next_Actions.md").read_text(encoding="utf-8")
+        assert "📅 today" not in content
+        assert f"📅 {date.today().isoformat()}" in content
 
     async def test_empty_list_gets_the_all_clear_message(self, tasks_dir):
         (tasks_dir / "Next_Actions.md").write_text("# ⚡ Next Actions\n\n", encoding="utf-8")

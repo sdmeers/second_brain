@@ -130,7 +130,7 @@ export default function App() {
     <div className="mx-auto flex min-h-dvh max-w-2xl flex-col">
       <header className="sticky top-0 z-20 bg-slate-50/85 px-4 pt-[max(0.75rem,env(safe-area-inset-top))] pb-3 backdrop-blur-md dark:bg-slate-950/85">
         <div className="flex items-center justify-between">
-          <h1 className="text-xl font-bold tracking-tight">Actions</h1>
+          <h1 className="text-xl font-bold tracking-tight">GTD</h1>
           <StatusPill status={statusOf(state)} pending={state.outbox.length} />
         </div>
 
@@ -318,7 +318,7 @@ function TokenPrompt() {
   };
   return (
     <form onSubmit={submit} className="mx-auto flex min-h-dvh max-w-sm flex-col justify-center gap-4 px-6">
-      <h1 className="text-2xl font-bold tracking-tight">Actions</h1>
+      <h1 className="text-2xl font-bold tracking-tight">GTD</h1>
       <p className="text-sm text-slate-500 dark:text-slate-400">
         Enter the API token from your Second Brain&apos;s <span className="font-mono">backend/.env</span>. It&apos;s kept on
         this device only.

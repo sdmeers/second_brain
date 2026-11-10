@@ -12,11 +12,11 @@ export default defineConfig({
     tailwindcss(),
     VitePWA({
       registerType: "autoUpdate",
-      includeAssets: ["icon-192.png", "icon-512.png"],
+      includeAssets: ["icon.svg", "icon-192.png", "icon-512.png", "icon-maskable-512.png", "apple-touch-icon.png"],
       manifest: {
-        name: "Second Brain Actions",
-        short_name: "Actions",
-        description: "Work with your Second Brain next actions",
+        name: "GTD",
+        short_name: "GTD",
+        description: "Getting Things Done: your Second Brain actions",
         start_url: "/app/",
         scope: "/app/",
         display: "standalone",
@@ -25,7 +25,7 @@ export default defineConfig({
         icons: [
           { src: "icon-192.png", sizes: "192x192", type: "image/png" },
           { src: "icon-512.png", sizes: "512x512", type: "image/png" },
-          { src: "icon-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
+          { src: "icon-maskable-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
         ],
       },
       workbox: { navigateFallback: "/app/index.html" },

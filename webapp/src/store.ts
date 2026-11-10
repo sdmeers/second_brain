@@ -1,0 +1,225 @@
+import { get, set } from "idb-keyval";
+import { useSyncExternalStore } from "react";
+import { applyOps, retarget } from "./optimistic";
+import type { Category, EditFields, ListName, Lists, Op, OpResult } from "./types";
+
+const UNDO_MS = 5000;
+const POLL_MS = 30_000;
+const TOKEN_KEY = "sb_actions_token";
+
+export type SyncStatus = "synced" | "syncing" | "pending" | "offline";
+
+export interface State {
+  /** Last lists received from the server; null until the first load (or cache hit). */
+  server: Lists | null;
+  /** Changes not yet acknowledged by the server, oldest first. Survives reloads. */
+  outbox: Op[];
+  /** How many ops at the head of the outbox are in a request right now. */
+  inFlight: number;
+  busy: boolean;
+  offline: boolean;
+  needToken: boolean;
+  /** One-line message about changes the server declined, shown until dismissed. */
+  notice: string | null;
+}
+
+class NeedTokenError extends Error {}
+class RejectedError extends Error {}
+
+const newId = () =>
+  typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+/** `notBefore` is the client's own Undo timer; the server has no use for it. */
+const forWire = (op: Op) => {
+  const copy = { ...op };
+  delete copy.notBefore;
+  return copy;
+};
+
+class ActionsStore {
+  private state: State = {
+    server: null,
+    outbox: [],
+    inFlight: 0,
+    busy: false,
+    offline: false,
+    needToken: false,
+    notice: null,
+  };
+  private listeners = new Set<() => void>();
+  private wake: ReturnType<typeof setTimeout> | null = null;
+
+  subscribe = (fn: () => void) => {
+    this.listeners.add(fn);
+    return () => this.listeners.delete(fn);
+  };
+  getState = () => this.state;
+
+  private update(patch: Partial<State>) {
+    this.state = { ...this.state, ...patch };
+    this.listeners.forEach((fn) => fn());
+    if (patch.outbox) void set("outbox", patch.outbox).catch(() => {});
+    if (patch.server) void set("server", patch.server).catch(() => {});
+  }
+
+  async start() {
+    // Show the last known lists (and any unsent changes) immediately, even offline.
+    try {
+      const [server, outbox] = await Promise.all([get<Lists>("server"), get<Op[]>("outbox")]);
+      this.update({ server: this.state.server ?? server ?? null, outbox: [...(outbox ?? []), ...this.state.outbox] });
+    } catch {
+      /* private mode or blocked storage: the app still works online */
+    }
+    window.addEventListener("online", () => void this.sync());
+    window.addEventListener("focus", () => void this.sync());
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") void this.sync();
+    });
+    setInterval(() => void this.sync(), POLL_MS);
+    void this.sync();
+  }
+
+  // --- Changes -----------------------------------------------------------------------
+
+  private enqueue(op: Op) {
+    this.update({ outbox: [...this.state.outbox, op] });
+    void this.sync();
+  }
+
+  /** Returns the op id, which `undo` accepts for the next few seconds. */
+  complete(list: ListName, raw: string): string {
+    const op_id = newId();
+    this.enqueue({ op_id, type: "complete", list, raw, notBefore: Date.now() + UNDO_MS });
+    return op_id;
+  }
+
+  undo(op_id: string) {
+    const at = this.state.outbox.findIndex((o) => o.op_id === op_id);
+    if (at < this.state.inFlight) return; // already sent (or gone)
+    this.update({ outbox: this.state.outbox.filter((o) => o.op_id !== op_id) });
+  }
+
+  edit(list: ListName, raw: string, fields: EditFields) {
+    if (Object.keys(fields).length === 0) return;
+    this.enqueue({ op_id: newId(), type: "edit", list, raw, fields });
+  }
+
+  move(list: ListName, raw: string, to: ListName, waiting_on?: string, follow_up?: string) {
+    this.enqueue({ op_id: newId(), type: "move", list, raw, to, waiting_on, follow_up });
+  }
+
+  reorder(list: ListName, category: Category, order: string[]) {
+    const { outbox, inFlight } = this.state;
+    const last = outbox[outbox.length - 1];
+    const op: Op = { op_id: newId(), type: "reorder", list, category, order };
+    // Several drags in a row only need the final order, unless the earlier one is
+    // already on its way.
+    if (last?.type === "reorder" && last.list === list && last.category === category && outbox.length > inFlight) {
+      this.update({ outbox: [...outbox.slice(0, -1), op] });
+      void this.sync();
+    } else {
+      this.enqueue(op);
+    }
+  }
+
+  // --- Sync --------------------------------------------------------------------------
+
+  setToken(token: string) {
+    localStorage.setItem(TOKEN_KEY, token.trim());
+    this.update({ needToken: false });
+    void this.sync();
+  }
+
+  dismissNotice() {
+    this.update({ notice: null });
+  }
+
+  private async request(path: string, body?: unknown): Promise<{ lists: Lists; results?: OpResult[] }> {
+    const token = localStorage.getItem(TOKEN_KEY);
+    const res = await fetch(path, {
+      method: body ? "POST" : "GET",
+      headers: {
+        ...(body ? { "Content-Type": "application/json" } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      cache: "no-store",
+    });
+    if (res.status === 401) throw new NeedTokenError();
+    if (res.status >= 400 && res.status < 500) throw new RejectedError(`${res.status}`);
+    if (!res.ok) throw new Error(`Server error ${res.status}`);
+    return res.json();
+  }
+
+  /** Send whatever is ready, or just refresh. Safe to call at any time. */
+  async sync() {
+    if (this.state.busy || this.state.needToken) return;
+
+    // Ops are order-dependent, so send the run up to the first one still in its Undo
+    // window and come back for the rest.
+    const now = Date.now();
+    const { outbox } = this.state;
+    const held = outbox.findIndex((o) => (o.notBefore ?? 0) > now);
+    const count = held < 0 ? outbox.length : held;
+    const sent = outbox.slice(0, count);
+    if (held >= 0) this.wakeAt(outbox[held].notBefore! - now + 50);
+
+    this.update({ busy: true, inFlight: count });
+    try {
+      const body =
+        count > 0
+          ? await this.request("/api/actions/ops", { ops: sent.map(forWire) })
+          : await this.request("/api/actions");
+      const results = body.results ?? [];
+      const skipped = results.filter((r) => r.status === "skipped").length;
+      this.update({
+        server: body.lists,
+        outbox: retarget(this.state.outbox.slice(count), sent, results),
+        offline: false,
+        notice: skipped
+          ? `${skipped} change${skipped > 1 ? "s" : ""} couldn't be applied — the action was changed elsewhere.`
+          : this.state.notice,
+      });
+    } catch (err) {
+      if (err instanceof NeedTokenError) {
+        this.update({ needToken: true });
+      } else if (err instanceof RejectedError) {
+        // The server will never accept this batch; keeping it would block the queue.
+        this.update({
+          outbox: this.state.outbox.slice(count),
+          notice: count ? "Some changes were rejected by the server and dropped." : this.state.notice,
+        });
+      } else {
+        this.update({ offline: true });
+        this.wakeAt(10_000);
+      }
+    } finally {
+      this.update({ busy: false, inFlight: 0 });
+    }
+    // Anything queued while that request was out goes next.
+    if (!this.state.offline && this.state.outbox.some((o) => (o.notBefore ?? 0) <= Date.now())) void this.sync();
+  }
+
+  private wakeAt(ms: number) {
+    if (this.wake) clearTimeout(this.wake);
+    this.wake = setTimeout(() => void this.sync(), Math.max(ms, 0));
+  }
+}
+
+export const store = new ActionsStore();
+
+export function useStore() {
+  const state = useSyncExternalStore(store.subscribe, store.getState);
+  return state;
+}
+
+export function viewOf(state: State): Lists | null {
+  return state.server ? applyOps(state.server, state.outbox) : null;
+}
+
+export function statusOf(state: State): SyncStatus {
+  if (state.offline) return "offline";
+  if (state.busy && state.inFlight > 0) return "syncing";
+  if (state.outbox.length > 0) return "pending";
+  return "synced";
+}

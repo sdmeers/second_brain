@@ -87,3 +87,7 @@ backend/state/
 # Local screenshots (may contain personal info)
 docs/screenshots/syncting_screenshot*
 docs/screenshots/*.log
+
+# Actions web app build output
+webapp/dist/
+webapp/dev-dist/

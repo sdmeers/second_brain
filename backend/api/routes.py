@@ -7,6 +7,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from backend.api.actions import mount_webapp
 from backend.api.actions import router as actions_router
 from backend.config import API_AUTH_TOKEN, OBSIDIAN_VAULT_PATH
 from backend.ingestion.queue import get_db_connection
@@ -69,6 +70,7 @@ async def require_api_token(authorization: str = Header(default="")):
 
 app.include_router(ingestion_router, dependencies=[Depends(require_api_token)])
 app.include_router(actions_router, dependencies=[Depends(require_api_token)])
+mount_webapp(app)
 
 
 class QueryRequest(BaseModel):

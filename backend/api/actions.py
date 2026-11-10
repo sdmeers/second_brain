@@ -5,15 +5,34 @@
 """
 
 import asyncio
+import os
 from collections import OrderedDict
 from typing import Literal
 
-from fastapi import APIRouter
+from fastapi import APIRouter, FastAPI
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from backend.vault import actions
 
 router = APIRouter(prefix="/api/actions", tags=["actions"])
+
+WEBAPP_DIST = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                           "webapp", "dist")
+
+
+def mount_webapp(app: FastAPI) -> bool:
+    """Serve the built actions web app at /app, if it has been built.
+
+    The static shell is deliberately outside the API token check: it holds no data, and
+    it is where the token gets entered. Returns False when ``webapp/dist`` is missing
+    (run ``npm run build`` in ``webapp/``) so the rest of the backend still starts.
+    """
+    if not os.path.isfile(os.path.join(WEBAPP_DIST, "index.html")):
+        print("Backend [Startup]: webapp/dist not found; the actions app is not being served.")
+        return False
+    app.mount("/app", StaticFiles(directory=WEBAPP_DIST, html=True), name="actions-app")
+    return True
 
 
 class Op(BaseModel):

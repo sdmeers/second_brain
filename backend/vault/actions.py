@@ -139,6 +139,7 @@ def _item_json(list_name: str, line: str) -> dict:
         "contexts": task.contexts,
         "project": task.project,
         "waiting_on": task.waiting_on,
+        "focus": task.focus,
         "due": task.due.isoformat() if task.due else None,
         "tickler": task.tickler.isoformat() if task.tickler else None,
         "deferred": task.is_deferred,
@@ -186,6 +187,8 @@ def _validate_fields(changes: dict) -> None:
             raise OpSkipped("bad_date")
     if "description" in changes and not isinstance(changes["description"], str):
         raise OpSkipped("invalid")
+    if "focus" in changes and not isinstance(changes["focus"], bool):
+        raise OpSkipped("invalid")
     if changes.get("waiting_on") is not None and not isinstance(changes["waiting_on"], str):
         raise OpSkipped("invalid")
     contexts = changes.get("contexts")
@@ -218,6 +221,8 @@ def edit_action(list_name: str, raw: str, fields: dict) -> OpResult:
         raise OpSkipped("unknown_list")
     allowed = {"description"} if list_name == CAPTURED else {
         "description", "contexts", "category", "waiting_on", "due", "tickler"}
+    if list_name == "next":
+        allowed = allowed | {"focus"}  # the star only means something on Next
     changes = {k: v for k, v in fields.items() if k in allowed}
     _validate_fields(changes)
 
@@ -264,6 +269,9 @@ def move_action(src: str, dst: str, raw: str, waiting_on: str | None = None,
                                 tickler=follow_up if follow_up else UNSET)
     elif src == "waiting":
         line = update_task_line(line, waiting_on=None)
+    if src == "next":
+        # "Doing this next" stops being true the moment it leaves Next.
+        line = update_task_line(line, focus=False)
 
     dst_items = _read(dst)
     dst_items.insert(0, line)

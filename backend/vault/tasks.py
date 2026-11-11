@@ -35,6 +35,8 @@ CONTEXT_RE = re.compile(r'(?<!\S)(@[A-Za-z][\w\-]*)')
 PROJECT_RE = re.compile(r'#project/([A-Za-z0-9_\-]+)')
 CATEGORY_RE = re.compile(r'#(personal|professional)\b', re.IGNORECASE)
 WAITING_RE = re.compile(r'#waiting\(([^)]*)\)')
+# The star in the GTD web app: "one of the few I'm doing next". Only meaningful on Next.
+FOCUS_RE = re.compile(r'(?<!\S)#focus\b', re.IGNORECASE)
 DUE_RE = re.compile(r'📅\s*(\d{4}-\d{2}-\d{2})')
 TICKLER_RE = re.compile(r'🔔\s*(\d{4}-\d{2}-\d{2})')
 SOURCE_RE = re.compile(r'\(Source:\s*\[\[(.*?)\]\]\)')
@@ -61,6 +63,7 @@ class Task:
     project: str | None = None
     category: str | None = None
     waiting_on: str | None = None
+    focus: bool = False
     due: date | None = None
     tickler: date | None = None
     source: str | None = None
@@ -83,6 +86,7 @@ class Task:
         text = PROJECT_RE.sub("", text)
         text = CATEGORY_RE.sub("", text)
         text = WAITING_RE.sub("", text)
+        text = FOCUS_RE.sub("", text)
         text = DUE_RE.sub("", text)
         text = TICKLER_RE.sub("", text)
         return re.sub(r'\s{2,}', " ", text).strip(" -–—")
@@ -150,6 +154,7 @@ def parse_task_line(line: str) -> Task | None:
         project=m_proj.group(1) if m_proj else None,
         category=m_cat.group(1).lower() if m_cat else None,
         waiting_on=m_wait.group(1) if m_wait else None,
+        focus=bool(FOCUS_RE.search(body)),
         due=_parse_iso(m_due.group(1)) if m_due else None,
         tickler=_parse_iso(m_tick.group(1)) if m_tick else None,
         source=m_src.group(1) if m_src else None,
@@ -200,7 +205,8 @@ def format_completed_line(line: str, when: date = None) -> str:
     when = when or datetime.now().date()
     if COMPLETED_ON_RE.search(line):
         return line.strip()
-    description = strip_task_metadata(line)
+    # A finished action is no longer one "to do next": don't carry the star into the log.
+    description = re.sub(r"\s{2,}", " ", FOCUS_RE.sub("", strip_task_metadata(line))).strip()
     return f"- [x] ~~{description}~~ (Completed on {when.strftime('%Y-%m-%d')})"
 
 
@@ -235,7 +241,7 @@ UNSET = object()
 """Sentinel for :func:`update_task_line`: "leave this field as it is"."""
 
 _TRAILER_RES = (CAPTURED_RE, SOURCE_RE, COMPLETED_ON_RE)
-_TOKEN_RES = (CONTEXT_RE, PROJECT_RE, CATEGORY_RE, WAITING_RE, DUE_RE, TICKLER_RE)
+_TOKEN_RES = (CONTEXT_RE, PROJECT_RE, CATEGORY_RE, WAITING_RE, FOCUS_RE, DUE_RE, TICKLER_RE)
 
 
 def _split_line(raw: str) -> tuple[str, str, str]:
@@ -266,6 +272,7 @@ def update_task_line(
     contexts=UNSET,
     category=UNSET,
     waiting_on=UNSET,
+    focus=UNSET,
     due=UNSET,
     tickler=UNSET,
 ) -> str:
@@ -301,6 +308,7 @@ def update_task_line(
     waiting = current(WAITING_RE) if waiting_on is UNSET else waiting_on
     due_val = current(DUE_RE) if due is UNSET else due
     tick_val = current(TICKLER_RE) if tickler is UNSET else tickler
+    starred = bool(FOCUS_RE.search(main)) if focus is UNSET else bool(focus)
     project = current(PROJECT_RE)
 
     def iso(value) -> str:
@@ -313,6 +321,8 @@ def update_task_line(
         parts.append(f"#{cat.strip().lower()}")
     if waiting and waiting.strip():
         parts.append(f"#waiting({waiting.strip().replace(')', '')})")
+    if starred:
+        parts.append("#focus")
     if due_val:
         parts.append(f"📅 {iso(due_val)}")
     if tick_val:

@@ -286,3 +286,56 @@ class TestApi:
 
     def test_unknown_op_type_is_rejected(self, client):
         assert client.post("/api/actions/ops", json={"ops": [op("1", "delete", raw=A)]}).status_code == 422
+
+
+class TestFocusStar:
+    """The star on next actions is a #focus tag on the line, so every device sees it."""
+
+    STARRED = "- [ ] Alpha @home #personal #focus"
+
+    def test_parses_and_is_hidden_from_the_display_text(self):
+        task = parse_task_line("- [ ] Ring the bank @phone #personal #focus 📅 2026-12-01")
+        assert task.focus is True
+        assert task.display == "Ring the bank"
+        assert parse_task_line(A).focus is False
+
+    def test_a_longer_tag_is_not_mistaken_for_the_star(self):
+        assert parse_task_line("- [ ] Thing #focusgroup #personal").focus is False
+
+    def test_set_clear_and_survive_an_unrelated_edit(self):
+        assert update_task_line(A, focus=True) == self.STARRED
+        assert update_task_line(self.STARRED, focus=False) == A
+        assert update_task_line(self.STARRED, description="Alpha prime") == "- [ ] Alpha prime @home #personal #focus"
+        assert update_task_line(self.STARRED, focus=True) == self.STARRED
+
+    def test_toggle_through_the_api_keeps_the_action_in_place(self, tasks_dir):
+        seed(tasks_dir, "Next_Actions.md", B, A)
+        result = actions.edit_action("next", A, {"focus": True})
+        assert result.new_raw == self.STARRED
+        items = actions.read_action_lists()["lists"]["next"]
+        assert [(i["text"], i["focus"]) for i in items] == [("Bravo", False), ("Alpha", True)]
+
+    def test_star_is_dropped_when_the_action_leaves_next(self, tasks_dir):
+        seed(tasks_dir, "Next_Actions.md", self.STARRED)
+        assert actions.move_action("next", "someday", self.STARRED).new_raw == A
+
+    def test_star_cannot_be_set_outside_next(self, tasks_dir):
+        seed(tasks_dir, "Someday_Maybe.md", A)
+        assert actions.edit_action("someday", A, {"focus": True}).new_raw == A
+
+    def test_sweeper_leaves_the_star_alone(self, tasks_dir):
+        import asyncio
+        seed(tasks_dir, "Next_Actions.md", self.STARRED, B)
+        asyncio.run(maintain_tasks_dashboard())
+        assert actions.read_action_lists()["lists"]["next"][0]["raw"] == self.STARRED
+
+    def test_completing_does_not_carry_the_star_into_the_archive(self, tasks_dir):
+        seed(tasks_dir, "Next_Actions.md", self.STARRED)
+        actions.complete_action("next", self.STARRED)
+        archive = (tasks_dir / "z_Completed.md").read_text(encoding="utf-8")
+        assert "~~Alpha @home #personal~~" in archive and "#focus" not in archive
+
+    def test_non_boolean_is_rejected(self, tasks_dir):
+        seed(tasks_dir, "Next_Actions.md", A)
+        with pytest.raises(actions.OpSkipped):
+            actions.edit_action("next", A, {"focus": "yes"})

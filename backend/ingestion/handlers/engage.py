@@ -6,6 +6,7 @@ from backend.config import OBSIDIAN_VAULT_PATH
 from backend.utils.sessions import SessionStore
 from backend.vault.writer import atomic_write
 from backend.vault.tasks import (
+    FOCUS_RE,
     append_project_step,
     archive_completed_lines,
     ensure_project_note,
@@ -95,6 +96,9 @@ async def send_next_actions(chat_id: int, token: str, http_client: httpx.AsyncCl
     msg = f"⚡ <b>Next Actions</b>{label}\n\n"
     for t in filtered_tasks:
         clean_t = re.sub(r'\[\[.*?\]\]', '', t).replace('(Source: )', '').replace('- [ ]', '•').strip()
+        # Starred in the GTD app: show the star rather than the tag behind it.
+        if FOCUS_RE.search(clean_t):
+            clean_t = "• ⭐ " + re.sub(r'\s{2,}', ' ', FOCUS_RE.sub('', clean_t)).lstrip('• ').strip()
         msg += f"{clean_t}\n"
 
     await _send_or_edit(chat_id, token, http_client, msg, edit_message_id)

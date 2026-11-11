@@ -110,7 +110,7 @@ export function ActionCard({ id, item, canComplete, canDrag, onOpen, onComplete 
                 </span>
               ))}
               {item.note && <span className="text-xs text-slate-400 dark:text-slate-500">{item.note}</span>}
-              {item.pending && <span className="text-xs text-slate-400 dark:text-slate-500">Saving…</span>}
+              {item.pending && !item.note && <span className="text-xs text-slate-400 dark:text-slate-500">Saving…</span>}
             </div>
           )}
         </button>

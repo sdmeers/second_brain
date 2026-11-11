@@ -15,7 +15,7 @@ import { CaptureBox } from "./CaptureBox";
 import { ClarifySheet } from "./ClarifySheet";
 import { EditSheet } from "./EditSheet";
 import { BoltIcon, BulbIcon, ChevronIcon, HourglassIcon, InboxIcon } from "./icons";
-import { statusOf, store, useStore, viewOf, type SyncStatus } from "./store";
+import { pendingCount, statusOf, store, useStore, viewOf, type SyncStatus } from "./store";
 import type { Category, Item, ListName } from "./types";
 
 const TABS: { id: ListName; label: string; icon: ReactNode; empty: string }[] = [
@@ -133,7 +133,7 @@ export default function App() {
       <header className="sticky top-0 z-20 bg-slate-50/85 px-4 pt-[max(0.75rem,env(safe-area-inset-top))] pb-3 backdrop-blur-md dark:bg-slate-950/85">
         <div className="flex items-center justify-between">
           <h1 className="text-xl font-bold tracking-tight">GTD</h1>
-          <StatusPill status={statusOf(state)} pending={state.outbox.length} />
+          <StatusPill status={statusOf(state)} pending={pendingCount(state)} />
         </div>
 
         <div className="mt-3 grid grid-cols-2 gap-1 rounded-2xl bg-slate-200/70 p-1 dark:bg-slate-800/80">

@@ -43,6 +43,9 @@ export const ChevronIcon = (p: SVGProps<SVGSVGElement>) => (
 export const PlusIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)} strokeWidth={2.5}><path d="M12 5v14M5 12h14" /></svg>
 );
+export const MicIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5.5 11a6.5 6.5 0 0013 0M12 17.5V21M8.5 21h7" /></svg>
+);
 export const CloseIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}><path d="M6 6l12 12M18 6L6 18" /></svg>
 );

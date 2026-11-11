@@ -149,6 +149,11 @@ class TestCaptureAudioEndpoint:
         # and it was not remembered as done, so the retry is attempted for real
         assert "u1" not in actions_api._recent
 
+    def test_unreadable_recording_is_refused_not_retried(self, client, heard):
+        """A 502 here made the app re-send a broken recording every 15 seconds, forever."""
+        assert upload(client, data=b"\x1a\x45\xdf\xa3 not really webm").status_code == 422
+        assert heard.calls == []
+
     def test_non_audio_upload_is_refused(self, client, heard):
         assert upload(client, mime="image/png").status_code == 415
         assert heard.calls == []

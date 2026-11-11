@@ -62,6 +62,13 @@ export type Op = OpBase &
     | { type: "clarify"; list: "captured"; raw: string; outcome: Outcome; fields: ClarifyFields }
   );
 
+/** A recording waiting to be uploaded and transcribed. */
+export interface VoiceNote {
+  id: string;
+  blob: Blob;
+  captured_at: string;
+}
+
 export interface OpResult {
   op_id: string;
   status: "applied" | "skipped";

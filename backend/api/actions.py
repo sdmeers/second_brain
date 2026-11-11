@@ -186,6 +186,11 @@ async def capture_audio(file: UploadFile, upload_id: str = Form(min_length=1, ma
     try:
         try:
             transcript = (await voice_capture.transcribe(data, file.content_type)).strip()
+        except voice_capture.UnreadableAudio as e:
+            # Unlike a transcriber hiccup this will never succeed, so say so: the client
+            # drops the recording instead of retrying it forever.
+            print(f"Backend [Actions]: Unreadable voice upload: {e}")
+            raise HTTPException(status_code=422, detail="That recording couldn't be read") from None
         except Exception as e:
             # Not the client's fault and worth retrying: it keeps the recording queued.
             print(f"Backend [Actions]: Voice transcription failed: {e}")

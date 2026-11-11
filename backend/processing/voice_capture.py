@@ -46,12 +46,21 @@ def extension_for(mime_type: str | None) -> str | None:
     return _EXTENSIONS.get(base_mime(mime_type))
 
 
+class UnreadableAudio(Exception):
+    """The upload could not be decoded as audio. Retrying the same bytes won't help."""
+
+
 def to_wav(file_bytes: bytes) -> bytes:
     """Decode any audio container PyAV understands to 16 kHz mono WAV."""
     import numpy as np
     from faster_whisper.audio import decode_audio
 
-    samples = decode_audio(io.BytesIO(file_bytes), sampling_rate=16000)
+    try:
+        samples = decode_audio(io.BytesIO(file_bytes), sampling_rate=16000)
+    except Exception as e:
+        raise UnreadableAudio(str(e)) from e
+    if len(samples) == 0:
+        raise UnreadableAudio("no audio in the recording")
     pcm = (np.clip(samples, -1.0, 1.0) * 32767).astype("<i2")
     out = io.BytesIO()
     with wave.open(out, "wb") as w:

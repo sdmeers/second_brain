@@ -1,7 +1,18 @@
 import { get, set } from "idb-keyval";
 import { useSyncExternalStore } from "react";
 import { applyOps, captureStamp, retarget, tidy } from "./optimistic";
-import type { Category, ClarifyFields, EditFields, ListName, Lists, Op, OpResult, Outcome, Projects } from "./types";
+import type {
+  Category,
+  ClarifyFields,
+  EditFields,
+  ListName,
+  Lists,
+  Op,
+  OpResult,
+  Outcome,
+  Projects,
+  VoiceNote,
+} from "./types";
 
 const UNDO_MS = 5000;
 const POLL_MS = 30_000;
@@ -16,6 +27,8 @@ export interface State {
   projects: Projects;
   /** Changes not yet acknowledged by the server, oldest first. Survives reloads. */
   outbox: Op[];
+  /** Recordings not yet transcribed by the server, oldest first. Survives reloads. */
+  voice: VoiceNote[];
   /** How many ops at the head of the outbox are in a request right now. */
   inFlight: number;
   busy: boolean;
@@ -43,6 +56,7 @@ class ActionsStore {
     server: null,
     projects: { personal: [], professional: [] },
     outbox: [],
+    voice: [],
     inFlight: 0,
     busy: false,
     offline: false,
@@ -51,6 +65,7 @@ class ActionsStore {
   };
   private listeners = new Set<() => void>();
   private wake: ReturnType<typeof setTimeout> | null = null;
+  private voiceBusy = false;
 
   subscribe = (fn: () => void) => {
     this.listeners.add(fn);
@@ -64,20 +79,23 @@ class ActionsStore {
     if (patch.outbox) void set("outbox", patch.outbox).catch(() => {});
     if (patch.server) void set("server", patch.server).catch(() => {});
     if (patch.projects) void set("projects", patch.projects).catch(() => {});
+    if (patch.voice) void set("voice", patch.voice).catch(() => {});
   }
 
   async start() {
     // Show the last known lists (and any unsent changes) immediately, even offline.
     try {
-      const [server, outbox, projects] = await Promise.all([
+      const [server, outbox, projects, voice] = await Promise.all([
         get<Lists>("server"),
         get<Op[]>("outbox"),
         get<Projects>("projects"),
+        get<VoiceNote[]>("voice"),
       ]);
       this.update({
         server: this.state.server ?? server ?? null,
         outbox: [...(outbox ?? []), ...this.state.outbox],
         ...(projects ? { projects } : {}),
+        voice: [...(voice ?? []), ...this.state.voice],
       });
     } catch {
       /* private mode or blocked storage: the app still works online */
@@ -123,6 +141,13 @@ class ActionsStore {
   capture(text: string) {
     if (!tidy(text)) return;
     this.enqueue({ op_id: newId(), type: "capture", text: tidy(text), captured_at: captureStamp() });
+  }
+
+  /** Queue a recording. It is kept on the device until the server has transcribed it,
+   *  so a note recorded with no signal is not lost. */
+  captureVoice(blob: Blob) {
+    this.update({ voice: [...this.state.voice, { id: newId(), blob, captured_at: captureStamp() }] });
+    void this.syncVoice();
   }
 
   /** File a captured item. Trashing is held for a few seconds so it can be undone;
@@ -235,6 +260,61 @@ class ActionsStore {
     }
     // Anything queued while that request was out goes next.
     if (!this.state.offline && this.state.outbox.some((o) => (o.notBefore ?? 0) <= Date.now())) void this.sync();
+    if (!this.state.offline) void this.syncVoice();
+  }
+
+  /** Upload queued recordings one at a time. Transcription takes a few seconds, so this
+   *  runs alongside the ordinary sync rather than holding it up. */
+  private async syncVoice() {
+    if (this.voiceBusy || this.state.needToken) return;
+    this.voiceBusy = true;
+    try {
+      while (this.state.voice.length > 0) {
+        const note = this.state.voice[0];
+        const drop = (notice?: string) =>
+          this.update({
+            voice: this.state.voice.filter((v) => v.id !== note.id),
+            ...(notice ? { notice } : {}),
+          });
+
+        const form = new FormData();
+        form.append("file", note.blob, "note");
+        form.append("upload_id", note.id);
+        form.append("captured_at", note.captured_at);
+        const token = localStorage.getItem(TOKEN_KEY);
+        let res: Response;
+        try {
+          res = await fetch("/api/actions/capture-audio", {
+            method: "POST",
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+            body: form,
+          });
+        } catch {
+          this.update({ offline: true });
+          this.wakeAt(10_000);
+          return;
+        }
+
+        if (res.status === 401) {
+          this.update({ needToken: true });
+          return;
+        }
+        if (res.ok) {
+          const body = await res.json();
+          this.update({ server: body.lists, offline: false, ...(body.projects ? { projects: body.projects } : {}) });
+          drop(body.status === "skipped" ? "Nothing could be heard in that recording, so it wasn't captured." : undefined);
+        } else if (res.status === 409 || res.status >= 500) {
+          // Still being transcribed from an earlier try, or the server/transcriber is
+          // having a moment. Keep the recording and come back.
+          this.wakeAt(15_000);
+          return;
+        } else {
+          drop("A voice note couldn't be processed and was discarded.");
+        }
+      }
+    } finally {
+      this.voiceBusy = false;
+    }
   }
 
   private wakeAt(ms: number) {
@@ -251,12 +331,25 @@ export function useStore() {
 }
 
 export function viewOf(state: State): Lists | null {
-  return state.server ? applyOps(state.server, state.outbox) : null;
+  if (!state.server) return null;
+  const lists = applyOps(state.server, state.outbox);
+  // Recordings still on the device get a stand-in so they are visibly not lost.
+  for (const note of state.voice) {
+    lists.captured.push({
+      raw: `voice:${note.id}`,
+      text: "Voice note",
+      note: state.offline ? "Waiting to upload" : "Transcribing…",
+      pending: true,
+    });
+  }
+  return lists;
 }
+
+export const pendingCount = (state: State) => state.outbox.length + state.voice.length;
 
 export function statusOf(state: State): SyncStatus {
   if (state.offline) return "offline";
   if (state.busy && state.inFlight > 0) return "syncing";
-  if (state.outbox.length > 0) return "pending";
+  if (state.outbox.length > 0 || state.voice.length > 0) return "pending";
   return "synced";
 }

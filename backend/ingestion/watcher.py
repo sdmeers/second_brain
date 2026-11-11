@@ -106,7 +106,11 @@ async def scan_and_process_inbox():
         f for f in os.listdir(INBOX_PATH) 
         if os.path.isfile(os.path.join(INBOX_PATH, f)) 
         and f not in ["Inbox.md", "Completed.md", "Failed.md"]
-        and not any(f.endswith(ext) for ext in ["_capture.md", "_voice.md", "_voice.ogg", "_voice.mp3"])
+        and not f.endswith("_capture.md")
+        # Recordings kept alongside a captured item (any format: Telegram sends .ogg, the
+        # web app .webm or .m4a). Their transcript is already in Captured.md; ingesting
+        # the audio as a dropped file would capture it a second time.
+        and "_voice." not in f
     ]
     
     if not files:

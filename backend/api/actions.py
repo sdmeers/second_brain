@@ -6,13 +6,15 @@
 
 import asyncio
 import os
+from datetime import datetime
 from collections import OrderedDict
 from typing import Literal
 
-from fastapi import APIRouter, FastAPI
+from fastapi import APIRouter, FastAPI, Form, HTTPException, UploadFile
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from backend.processing import voice_capture
 from backend.vault import actions
 
 router = APIRouter(prefix="/api/actions", tags=["actions"])
@@ -145,3 +147,58 @@ async def post_ops(payload: OpsRequest):
     for project in dict.fromkeys(projects):
         _prompt_project_promotion(project)
     return {"results": results, **state}
+
+
+MAX_AUDIO_BYTES = 25 * 1024 * 1024
+_uploads_in_progress: set[str] = set()
+
+
+@router.post("/capture-audio")
+async def capture_audio(file: UploadFile, upload_id: str = Form(min_length=1, max_length=64),
+                        captured_at: str | None = Form(default=None)):
+    """Voice capture from the web app: transcribe a recording and add it to Captured.
+
+    ``upload_id`` makes a resend harmless. Transcription can take a few seconds, long
+    enough for a phone to drop the connection and try again; without it the same note
+    would be captured twice.
+    """
+    if upload_id in _recent:
+        return {**_recent[upload_id], **actions.read_action_lists()}
+    if upload_id in _uploads_in_progress:
+        raise HTTPException(status_code=409, detail="This recording is still being transcribed")
+
+    ext = voice_capture.extension_for(file.content_type)
+    if not ext:
+        raise HTTPException(status_code=415, detail=f"Unsupported audio type: {file.content_type}")
+    when = None
+    if captured_at:
+        try:
+            when = datetime.strptime(captured_at, "%Y-%m-%d %H:%M")
+        except ValueError:
+            raise HTTPException(status_code=422, detail="captured_at must be YYYY-MM-DD HH:MM") from None
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=422, detail="Empty recording")
+    if len(data) > MAX_AUDIO_BYTES:
+        raise HTTPException(status_code=413, detail="Recording too large")
+
+    _uploads_in_progress.add(upload_id)
+    try:
+        try:
+            transcript = (await voice_capture.transcribe(data, file.content_type)).strip()
+        except Exception as e:
+            # Not the client's fault and worth retrying: it keeps the recording queued.
+            print(f"Backend [Actions]: Voice transcription failed: {e}")
+            raise HTTPException(status_code=502, detail="Transcription failed") from None
+
+        if not transcript:
+            result = {"op_id": upload_id, "status": "skipped", "reason": "silent"}
+        else:
+            line = voice_capture.save_voice_capture(data, ext, transcript, via="GTD app Voice", when=when)
+            result = {"op_id": upload_id, "status": "applied", "new_raw": line, "text": transcript}
+        _recent[upload_id] = result
+        while len(_recent) > _RECENT_MAX:
+            _recent.popitem(last=False)
+    finally:
+        _uploads_in_progress.discard(upload_id)
+    return {**result, **actions.read_action_lists()}

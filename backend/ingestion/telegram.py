@@ -364,25 +364,12 @@ async def process_telegram_message(message: dict, token: str, http_client):
             if is_question:
                 await handle_qa_query(transcript, chat_id, token, http_client)
             else:
-                from datetime import datetime
-                from backend.config import OBSIDIAN_VAULT_PATH
-                
-                timestamp_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-                filename = f"{timestamp_str}_voice.{ext}"
-                inbox_path = os.path.join(OBSIDIAN_VAULT_PATH, "00_System", "Inbox")
-                os.makedirs(inbox_path, exist_ok=True)
-                file_path = os.path.join(inbox_path, filename)
-                with open(file_path, "wb") as f:
-                    f.write(file_bytes)
-
                 # The transcript lives inline in Captured.md; no separate _voice.md is written.
+                # Shared with the GTD web app's mic button.
+                from backend.processing.voice_capture import save_voice_capture
                 full_transcript = transcript.replace('\n', ' ').strip()
-                captured_md = os.path.join(OBSIDIAN_VAULT_PATH, "01_Tasks", "Captured.md")
-                date_str = datetime.now().strftime("%Y-%m-%d %H:%M")
-                voice_item = f"- {full_transcript} (Captured on {date_str} via Telegram Voice) (Source: [[{filename}]])"
-                from backend.utils.tasks_dashboard import append_gtd_item
-                append_gtd_item(captured_md, voice_item)
-                
+                save_voice_capture(file_bytes, ext, full_transcript, via="Telegram Voice")
+
                 preview = full_transcript[:60] + ("..." if len(full_transcript) > 60 else "")
                 await http_client.post(
                     f"https://api.telegram.org/bot{token}/sendMessage",

@@ -78,6 +78,24 @@ When you run `/clarify`, unclarified items in `01_Tasks/Captured.md` are present
 
 ---
 
+## 📱 The GTD Web App
+
+Everything below can also be done from the GTD app (see the README for setup). It edits
+the same Markdown files, so the app, Telegram and Obsidian always agree.
+
+- **Capture:** tap **+**, then type, or tap the mic and speak. It lands in Captured.
+- **Clarify:** open the **Captured** tab and tap an item. Choose what it is; only the
+  questions that choice needs appear. Save, and tap the next one.
+- **Engage:** **Next**, **Waiting** and **Someday** list your actions in the order you
+  have dragged them. Tick to complete (Undo for five seconds), tap to edit or move.
+- **Projects:** the **Projects** tab shows each project and flags any that are *Stuck*
+  (nothing in Next or Waiting). Open one to see its actions and roadmap, add and reorder
+  steps, move a step up to Next, or archive the project when it is finished.
+- **Offline:** carry on as normal. Changes, including voice notes, are kept on the device
+  and sent when it reconnects; the pill at the top right shows what is waiting.
+
+---
+
 ## 🎯 Project Master Notes & Step Auto-Promotion
 
 ### Dedicated Project Folders (`02_Projects/`)

@@ -1,5 +1,30 @@
 # 📋 Changelog
 
+## GTD App: Capture, Clarify, Voice and Projects — November 2026 (`feat/app-clarify-projects`)
+
+The web app can now do what previously needed Telegram: capture (typed or spoken),
+clarify captured items on a single sheet, and manage projects and their roadmaps. See
+README "GTD Web App" and technical_implementation.md §10.
+
+The write side of `/clarify`, voice-note storage, `/archive` and step promotion moved out
+of the Telegram handlers into shared modules (`vault/clarify_ops.py`,
+`processing/voice_capture.py`, `vault/projects.py`) that both front ends call.
+
+**Behaviour changes in Telegram:**
+
+- `/archive` no longer deletes an existing archive folder of the same name to make room.
+  It refuses and tells you. It also edits the note's frontmatter through the YAML
+  helpers instead of a regex over `status:`.
+- Clarifying an item removes exactly its line from `Captured.md`. It used to
+  `str.replace` the text across the whole file, leaving a blank line each time and
+  cutting the same words out of any longer item that contained them.
+- Task lines written by `/clarify` now put tags in the canonical order
+  (`@context #project/… #category`); nothing that reads them depends on the order.
+
+**Also fixed:** the inbox scanner only excluded `_voice.ogg` and `_voice.mp3` from
+ingestion; any other voice recording left in the inbox would have been ingested as a
+dropped file. It now skips all `*_voice.*`.
+
 ## Actions Web App — November 2026 (`feat/actions-api`)
 
 An installable web app for working with Captured, Next, Waiting For and Someday/Maybe

@@ -377,7 +377,10 @@ no network calls.
 | `test_vault_writes.py` | `atomic_write`, filename sanitising, YAML frontmatter with awkward titles, archive format. |
 | `test_queue_worker.py` | The helpers split out of the queue worker, plus retry/backoff tiers. |
 | `test_gtd_flows.py` | Dashboard maintenance and project-note resolution end to end. |
-| `test_actions_api.py` | In-place line edits, the actions web app's list operations (stale lines, reorder, moves) and its HTTP API. |
+| `test_actions_api.py` | In-place line edits, the web app's list operations (stale lines, reorder, moves) and its HTTP API. |
+| `test_clarify_ops.py` | Every clarify outcome (shared by Telegram and the web app), capture, and removing items from Captured. |
+| `test_voice_capture.py` | Voice upload: format handling, storage, duplicate uploads, silence, retryable vs permanent failures. |
+| `test_projects.py` | Project listing and the stuck flag, roadmap edits, promotion, archive and restore. |
 | `test_regressions.py` | One test per confirmed historical bug. |
 | `test_urls.py` | URL normalisation for duplicate-capture detection. |
 | `test_embedding_resilience.py` | Texts-per-minute pacing, `retryDelay` handling, and a failed embed leaving the existing index intact. |
@@ -397,8 +400,9 @@ Ruff's `F` rules matter most here: undefined names had silently broken `/tickle`
 | `/process` | POST | optional | Chrome-extension capture ingestion. |
 | `/query` | POST | optional | RAG question answering. |
 | `/health` | GET | never | Disk usage and queue counts (kept open for monitoring). |
-| `/api/actions` | GET | optional | Every GTD list, in file (priority) order. |
-| `/api/actions/ops` | POST | optional | Ordered batch of `complete` / `edit` / `move` / `reorder` operations. |
+| `/api/actions` | GET | optional | Every GTD list in file (priority) order, plus active and archived projects. |
+| `/api/actions/ops` | POST | optional | Ordered batch of operations on actions, captured items, projects and roadmap steps. |
+| `/api/actions/capture-audio` | POST | optional | Multipart upload of a voice recording; transcribed and added to Captured. |
 | `/app/` | GET | never | The built actions web app (`webapp/dist`), if present. |
 
 The server binds `0.0.0.0` so the Chrome extension can reach it over Tailscale/LAN.
@@ -409,7 +413,7 @@ previous behaviour. The extension reads the matching value from `extension/confi
 The FastAPI app uses a `lifespan` context manager (not the deprecated
 `@app.on_event("startup")`) to own the background watcher task.
 
-### Actions Web App (`webapp/`, `backend/api/actions.py`, `backend/vault/actions.py`)
+### GTD Web App (`webapp/`, `backend/api/actions.py`, `backend/vault/{actions,clarify_ops,projects}.py`)
 
 A React + TypeScript + Vite + Tailwind PWA, built to `webapp/dist` and mounted by
 `mount_webapp()` at `/app`. There is still no database: the app edits the same Markdown
@@ -427,8 +431,33 @@ files as Telegram and Obsidian.
 - **In-place edits.** `update_task_line()` changes only the named fields and carries
   over `#waiting(Name)`, `(Captured ...)` and the source link, which
   `render_task_line()` cannot express.
-- **Captured is read-and-reword only.** `complete`, `move` and `reorder` are refused for
-  `Captured.md`; `edit` accepts only the description. Clarifying stays in `/clarify`.
+- **Capture.** `capture {text, captured_at}` appends to `Captured.md`. The line is
+  deterministic (`clarify_ops.captured_line`) and the client builds the same string, so
+  an item captured offline can be clarified before it has synced.
+- **Clarify.** `clarify {raw, outcome, fields}` files a captured item as `next`,
+  `waiting`, `someday`, `project_step`, `new_project`, `done`, `reference` or `trash`.
+  The writes live in `backend/vault/clarify_ops.py` and are the ones Telegram's
+  `/clarify` conversation calls, so the two front ends cannot drift. Differences by
+  design: the app refuses a project name that does not exist (Telegram's picker cannot
+  produce one), and a new project created in the app keeps its name as typed and is
+  given its first next action up front. `complete`, `move` and `reorder` are still
+  refused for `Captured.md`.
+- **Voice.** `POST /api/actions/capture-audio` shares `processing/voice_capture.py` with
+  the Telegram voice handler: the audio is kept as `00_System/Inbox/<ts>_voice.<ext>` and
+  the transcript goes inline into `Captured.md` with a `(Source: [[...]])` link.
+  Transcription is Gemini. Browser formats (WebM/Opus, MP4/AAC) are decoded to 16 kHz
+  WAV with PyAV first. Status codes are the client's retry policy: `502` (transcriber
+  failed) and `409` (same upload still in progress) mean keep the recording and retry;
+  `422`/`415` (unreadable or not audio) mean drop it. A client-supplied `upload_id`
+  makes a resend harmless. The inbox scanner skips every `*_voice.*` file.
+- **Projects.** `backend/vault/projects.py` lists active projects (outcome, due date,
+  roadmap steps, open Next/Waiting actions, `stuck` when there are none) and archived
+  ones, and implements `project_create` / `project_update` / `project_archive` /
+  `project_restore` and `step_add` / `step_edit` / `step_remove` / `step_reorder` /
+  `step_promote`. A project is addressed by name, a step by its exact text. Roadmap
+  rewrites keep each untouched step's original line, ticked steps and other lines in
+  the section. Telegram's `/archive` and step-promotion prompt call the same functions;
+  archiving never overwrites an existing archive entry of the same name.
 - **Moves.** Into Waiting For adds `#waiting(Name)` and optionally a 🔔 follow-up date;
   out of it drops the tag. A moved line lands at the top of its category.
 - **Batches.** Within one batch, a later op that names a line by its pre-edit text is

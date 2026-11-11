@@ -89,13 +89,15 @@ The **Second Brain** operates on the **"Agent-as-Librarian"** paradigm: an intel
 * `01_Tasks/` is also committed to Git (`[tasks] …` commits, which `/undo` skips over) about a minute after the server changes it, only when something changed.
 * Recommended: enable Syncthing *Staggered File Versioning* on the vault folder so edits made on other devices are versioned too.
 
-### 8. 📱 Actions Web App
-* An installable web app (laptop and phone) for working through your lists: pick **Personal** or **Professional**, then **Next**, **Waiting**, **Someday** or **Captured**.
+### 8. 📱 GTD Web App
+* An installable web app (laptop and phone) for working through your lists: pick **Personal** or **Professional**, then **Next**, **Waiting**, **Someday**, **Captured** or **Projects**.
+* **Capture** with the **+** button: type a thought, or tap the mic and say it. Voice notes are transcribed on the server and stored exactly as Telegram voice notes are.
+* **Clarify** a captured item on one sheet: fix the wording, choose what it is (next action, waiting for, someday, project step, new project, done, reference, trash), fill in only what that needs. The same outcomes as `/clarify`; use whichever is to hand.
+* **Projects**: see each project's outcome, open actions and roadmap; add, reorder and promote roadmap steps; create, archive and restore projects. A project with nothing in Next or Waiting is flagged **Stuck**. Completing a project's action offers its next roadmap step.
 * Drag actions into priority order, tick them off (with Undo), edit text, context and dates, and move them between Next / Waiting For / Someday.
 * The order you drag is the order of the lines in the Markdown file, so Obsidian and Telegram show the same priorities.
-* Captured items can be read and their wording fixed; sorting them stays with `/clarify` in Telegram.
 * Works offline: changes queue on the device and replay when it reconnects. An action that was changed elsewhere in the meantime is skipped and flagged rather than overwritten.
-* Served by the backend at `/app` — see [Actions Web App setup](#6-actions-web-app-optional).
+* Served by the backend at `/app` — see [GTD Web App setup](#6-gtd-web-app-optional).
 
 ---
 
@@ -330,7 +332,7 @@ The scheduled briefings are separate units, not part of the daemon. Templates ar
 They call `backend/.venv/bin/python3` directly rather than `uv run`, so run `uv sync` after
 changing dependencies or the timers will run against a stale environment.
 
-### 6. Actions Web App (optional)
+### 6. GTD Web App (optional)
 
 The app is a static build served by the backend itself, so it needs no hosting of its own.
 
@@ -356,6 +358,10 @@ tailscale serve --bg 8080   # use your PORT if it isn't 8080
 Then open `https://<server>.<tailnet>.ts.net/app/` on any device signed in to your
 tailnet and choose **Install** / **Add to Home Screen**. Set `API_AUTH_TOKEN` in
 `backend/.env` and the app asks for it once per device.
+
+Voice capture needs that HTTPS address too (browsers only allow the microphone on secure
+origins) and asks for microphone permission the first time. Recordings are transcribed
+with Gemini, as Telegram voice notes are.
 
 For frontend development, `npm run dev` in `webapp/` serves the app with hot reload and
 proxies `/api` to a backend on `localhost:8080`.

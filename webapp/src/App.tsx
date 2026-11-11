@@ -11,6 +11,8 @@ import { restrictToParentElement, restrictToVerticalAxis } from "@dnd-kit/modifi
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { ActionCard } from "./ActionCard";
+import { CaptureBox } from "./CaptureBox";
+import { ClarifySheet } from "./ClarifySheet";
 import { EditSheet } from "./EditSheet";
 import { BoltIcon, BulbIcon, ChevronIcon, HourglassIcon, InboxIcon } from "./icons";
 import { statusOf, store, useStore, viewOf, type SyncStatus } from "./store";
@@ -42,7 +44,7 @@ export default function App() {
   const [tab, setTab] = usePref<ListName>("sb_tab", "next");
   const [editing, setEditing] = useState<{ item: Item; list: ListName } | null>(null);
   const [showDeferred, setShowDeferred] = useState(false);
-  const [undo, setUndo] = useState<{ opId: string; text: string } | null>(null);
+  const [undo, setUndo] = useState<{ opId: string; text: string; verb: string } | null>(null);
 
   useEffect(() => {
     document.documentElement.dataset.category = category;
@@ -81,7 +83,7 @@ export default function App() {
     store.reorder(tab, category, [...moved, ...deferred].map((i) => i.raw));
   };
 
-  const complete = (item: Item) => setUndo({ opId: store.complete(tab, item.raw), text: item.text });
+  const complete = (item: Item) => setUndo({ opId: store.complete(tab, item.raw), text: item.text, verb: "Done" });
 
   if (state.needToken) return <TokenPrompt />;
 
@@ -167,7 +169,7 @@ export default function App() {
 
         {tab === "captured" && active.length > 0 && (
           <p className="mb-3 px-1 text-sm text-slate-500 dark:text-slate-400">
-            Waiting to be clarified in Telegram. Tap one to fix its wording.
+Tap an item to decide what it is and where it goes.
           </p>
         )}
 
@@ -198,9 +200,9 @@ export default function App() {
                       key={ids[i]}
                       id={ids[i]}
                       item={item}
-                      canComplete={canEditList}
-                      canDrag={canEditList && active.length > 1}
-                      onOpen={() => setEditing({ item, list: tab })}
+                      canComplete={canEditList && !item.pending}
+                      canDrag={canEditList && !item.pending && active.length > 1}
+                      onOpen={() => !item.pending && setEditing({ item, list: tab })}
                       onComplete={() => complete(item)}
                     />
                   ))}
@@ -226,9 +228,9 @@ export default function App() {
                         key={`d${i}:${item.raw}`}
                         id={`d${i}:${item.raw}`}
                         item={item}
-                        canComplete={canEditList}
+                        canComplete={canEditList && !item.pending}
                         canDrag={false}
-                        onOpen={() => setEditing({ item, list: tab })}
+                        onOpen={() => !item.pending && setEditing({ item, list: tab })}
                         onComplete={() => complete(item)}
                       />
                     ))}
@@ -249,7 +251,9 @@ export default function App() {
       {undo && (
         <div className="pointer-events-none fixed inset-x-0 bottom-20 z-30 flex justify-center px-4 sm:bottom-8">
           <div className="animate-rise pointer-events-auto flex max-w-md items-center gap-4 rounded-2xl bg-slate-900 py-3 pr-3 pl-4 text-sm text-white shadow-xl dark:bg-slate-100 dark:text-slate-900">
-            <span className="min-w-0 truncate">Done: {undo.text}</span>
+            <span className="min-w-0 truncate">
+              {undo.verb}: {undo.text}
+            </span>
             <button
               type="button"
               onClick={() => {
@@ -264,7 +268,20 @@ export default function App() {
         </div>
       )}
 
-      {editing && (
+      {!editing && <CaptureBox />}
+
+      {editing && editing.list === "captured" && (
+        <ClarifySheet
+          key={editing.item.raw}
+          item={editing.item}
+          category={category}
+          projects={state.projects}
+          knownContexts={knownContexts}
+          onClose={() => setEditing(null)}
+          onTrashed={(opId, text) => setUndo({ opId, text, verb: "Trashed" })}
+        />
+      )}
+      {editing && editing.list !== "captured" && (
         <EditSheet
           key={editing.item.raw}
           item={editing.item}

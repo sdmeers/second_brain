@@ -40,6 +40,9 @@ export const BellIcon = (p: SVGProps<SVGSVGElement>) => (
 export const ChevronIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}><path d="M9 6l6 6-6 6" /></svg>
 );
+export const PlusIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)} strokeWidth={2.5}><path d="M12 5v14M5 12h14" /></svg>
+);
 export const CloseIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}><path d="M6 6l12 12M18 6L6 18" /></svg>
 );

@@ -47,6 +47,8 @@ export function ActionCard({ id, item, canComplete, canDrag, onOpen, onComplete 
     >
       <div
         className={`flex items-stretch rounded-2xl bg-white ring-1 ring-slate-900/5 transition-all duration-300 dark:bg-slate-900 dark:ring-white/10 ${
+          item.pending ? "opacity-60" : ""
+        } ${
           isDragging ? "scale-[1.02] shadow-xl ring-(--accent)/40" : "shadow-sm"
         } ${leaving ? "translate-x-4 opacity-0" : ""}`}
       >
@@ -77,7 +79,7 @@ export function ActionCard({ id, item, canComplete, canDrag, onOpen, onComplete 
           <p className={`text-[15px] leading-snug break-words ${leaving ? "text-slate-400 line-through" : ""}`}>
             {item.text}
           </p>
-          {(due || item.waiting_on || item.tickler || item.project || item.contexts?.length || item.note) && (
+          {(due || item.waiting_on || item.tickler || item.project || item.contexts?.length || item.note || item.pending) && (
             <div className="mt-2 flex flex-wrap gap-1.5">
               {due && (
                 <span className={`${chip} ${dueTones[due.tone]}`}>
@@ -108,6 +110,7 @@ export function ActionCard({ id, item, canComplete, canDrag, onOpen, onComplete 
                 </span>
               ))}
               {item.note && <span className="text-xs text-slate-400 dark:text-slate-500">{item.note}</span>}
+              {item.pending && <span className="text-xs text-slate-400 dark:text-slate-500">Saving…</span>}
             </div>
           )}
         </button>

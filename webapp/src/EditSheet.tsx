@@ -22,7 +22,6 @@ interface Props {
 }
 
 export function EditSheet({ item, list, knownContexts, onClose }: Props) {
-  const captured = list === "captured";
   const [text, setText] = useState(item.text);
   const [contexts, setContexts] = useState<string[]>(item.contexts ?? []);
   const [category, setCategory] = useState<Category>(item.category ?? "personal");
@@ -52,7 +51,6 @@ export function EditSheet({ item, list, knownContexts, onClose }: Props) {
     const fields: EditFields = {};
     const clean = text.replace(/\s+/g, " ").trim();
     if (clean && clean !== item.text) fields.description = clean;
-    if (captured) return fields;
     if (contexts.join(" ") !== (item.contexts ?? []).join(" ")) fields.contexts = contexts;
     if (category !== (item.category ?? "personal")) fields.category = category;
     if (due !== (item.due ?? "")) fields.due = due || null;
@@ -84,7 +82,7 @@ export function EditSheet({ item, list, knownContexts, onClose }: Props) {
       <div className="animate-sheet relative flex max-h-[92dvh] w-full flex-col rounded-t-3xl bg-slate-50 shadow-2xl sm:max-w-lg sm:rounded-3xl dark:bg-slate-900">
         <div className="flex items-center justify-between px-5 pt-4 pb-2">
           <h2 className="text-sm font-semibold text-slate-500 dark:text-slate-400">
-            {captured ? "Captured item" : `Edit · ${LIST_LABEL[list]}`}
+            Edit · {LIST_LABEL[list]}
           </h2>
           <button type="button" onClick={onClose} aria-label="Close" className="-mr-2 rounded-full p-2 text-slate-400 hover:bg-slate-200/60 dark:hover:bg-slate-800">
             <CloseIcon className="size-5" />
@@ -101,14 +99,7 @@ export function EditSheet({ item, list, knownContexts, onClose }: Props) {
             className={`${input} resize-none overflow-hidden text-base leading-snug font-medium`}
           />
 
-          {captured ? (
-            <p className="text-sm text-slate-500 dark:text-slate-400">
-              Fix the wording here if the transcription missed. Sorting it into Next, Waiting or Someday happens in
-              Telegram with <span className="font-mono">/clarify</span>.
-              {item.note && <span className="mt-1 block text-xs text-slate-400">{item.note}</span>}
-            </p>
-          ) : (
-            <>
+          <>
               <div>
                 <span className={label}>Context</span>
                 <div className="flex flex-wrap gap-2">
@@ -205,8 +196,7 @@ export function EditSheet({ item, list, knownContexts, onClose }: Props) {
                   </div>
                 )}
               </div>
-            </>
-          )}
+          </>
         </div>
 
         <div className="flex gap-3 border-t border-slate-200 px-5 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] dark:border-slate-800">

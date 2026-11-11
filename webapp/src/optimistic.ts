@@ -1,9 +1,24 @@
-import type { Lists, Op, OpResult } from "./types";
+import type { Item, Lists, Op, OpResult } from "./types";
 
 export const todayISO = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
+
+const pad = (n: number) => String(n).padStart(2, "0");
+
+/** Local time as `YYYY-MM-DD HH:MM`, the stamp written into a captured line. */
+export const captureStamp = (d = new Date()) =>
+  `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+
+export const tidy = (text: string) => text.replace(/\s+/g, " ").trim();
+
+/**
+ * The exact line the server writes for a capture (`captured_line` in
+ * backend/vault/clarify_ops.py; keep the two in step). Knowing it here is what lets an
+ * item captured offline be clarified before it has ever reached the server.
+ */
+export const capturedLine = (text: string, stamp: string) => `- ${tidy(text)} (Captured on ${stamp} via GTD app)`;
 
 /**
  * What the lists look like once the queued changes land: the last state from the
@@ -23,6 +38,37 @@ export function applyOps(server: Lists, ops: Op[]): Lists {
   const today = todayISO();
 
   for (const op of ops) {
+    if (op.type === "capture") {
+      const raw = capturedLine(op.text, op.captured_at);
+      if (!lists.captured.some((i) => i.raw === raw)) {
+        lists.captured.push({ raw, text: tidy(op.text), note: `Captured on ${op.captured_at} via GTD app` });
+      }
+      continue;
+    }
+    if (op.type === "clarify") {
+      const at = lists.captured.findIndex((i) => i.raw === op.raw);
+      if (at < 0) continue;
+      const [item] = lists.captured.splice(at, 1);
+      const f = op.fields;
+      const filed: Item = {
+        raw: `pending:${op.op_id}`,
+        text: f.text ?? item.text,
+        category: f.category ?? "personal",
+        contexts: [],
+        pending: true,
+      };
+      if (op.outcome === "next") {
+        const tickler = f.tickler ?? null;
+        lists.next.push({ ...filed, contexts: f.contexts ?? [], project: f.project?.replace(/ /g, "_"), tickler, deferred: !!tickler && tickler > today });
+      } else if (op.outcome === "waiting") {
+        lists.waiting.push({ ...filed, waiting_on: f.waiting_on, project: f.project?.replace(/ /g, "_"), tickler: f.tickler ?? null });
+      } else if (op.outcome === "someday") {
+        lists.someday.push(filed);
+      } else if (op.outcome === "new_project" && f.first_action) {
+        lists.next.push({ ...filed, text: tidy(f.first_action), contexts: f.contexts ?? [], project: f.name?.replace(/ /g, "_") });
+      }
+      continue;
+    }
     const items = lists[op.list];
     if (op.type === "reorder") {
       const mine = items.filter((i) => i.category === op.category);
@@ -82,11 +128,12 @@ export function retarget(ops: Op[], sent: Op[], results: OpResult[]): Op[] {
   const renamed = new Map<string, string>();
   sent.forEach((op, i) => {
     const newRaw = results[i]?.new_raw;
-    if (op.type !== "reorder" && newRaw) renamed.set(op.raw, newRaw);
+    if (op.type !== "reorder" && op.type !== "capture" && newRaw) renamed.set(op.raw, newRaw);
   });
   if (renamed.size === 0) return ops;
   const fix = (raw: string) => renamed.get(raw) ?? raw;
-  return ops.map((op) =>
-    op.type === "reorder" ? { ...op, order: op.order.map(fix) } : { ...op, raw: fix(op.raw) },
-  );
+  return ops.map((op) => {
+    if (op.type === "capture") return op;
+    return op.type === "reorder" ? { ...op, order: op.order.map(fix) } : { ...op, raw: fix(op.raw) };
+  });
 }

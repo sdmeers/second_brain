@@ -1,7 +1,7 @@
 import { get, set } from "idb-keyval";
 import { useSyncExternalStore } from "react";
-import { applyOps, retarget } from "./optimistic";
-import type { Category, EditFields, ListName, Lists, Op, OpResult } from "./types";
+import { applyOps, captureStamp, retarget, tidy } from "./optimistic";
+import type { Category, ClarifyFields, EditFields, ListName, Lists, Op, OpResult, Outcome, Projects } from "./types";
 
 const UNDO_MS = 5000;
 const POLL_MS = 30_000;
@@ -12,6 +12,8 @@ export type SyncStatus = "synced" | "syncing" | "pending" | "offline";
 export interface State {
   /** Last lists received from the server; null until the first load (or cache hit). */
   server: Lists | null;
+  /** Active project names per area, for the pickers. */
+  projects: Projects;
   /** Changes not yet acknowledged by the server, oldest first. Survives reloads. */
   outbox: Op[];
   /** How many ops at the head of the outbox are in a request right now. */
@@ -39,6 +41,7 @@ const forWire = (op: Op) => {
 class ActionsStore {
   private state: State = {
     server: null,
+    projects: { personal: [], professional: [] },
     outbox: [],
     inFlight: 0,
     busy: false,
@@ -60,13 +63,22 @@ class ActionsStore {
     this.listeners.forEach((fn) => fn());
     if (patch.outbox) void set("outbox", patch.outbox).catch(() => {});
     if (patch.server) void set("server", patch.server).catch(() => {});
+    if (patch.projects) void set("projects", patch.projects).catch(() => {});
   }
 
   async start() {
     // Show the last known lists (and any unsent changes) immediately, even offline.
     try {
-      const [server, outbox] = await Promise.all([get<Lists>("server"), get<Op[]>("outbox")]);
-      this.update({ server: this.state.server ?? server ?? null, outbox: [...(outbox ?? []), ...this.state.outbox] });
+      const [server, outbox, projects] = await Promise.all([
+        get<Lists>("server"),
+        get<Op[]>("outbox"),
+        get<Projects>("projects"),
+      ]);
+      this.update({
+        server: this.state.server ?? server ?? null,
+        outbox: [...(outbox ?? []), ...this.state.outbox],
+        ...(projects ? { projects } : {}),
+      });
     } catch {
       /* private mode or blocked storage: the app still works online */
     }
@@ -108,6 +120,27 @@ class ActionsStore {
     this.enqueue({ op_id: newId(), type: "move", list, raw, to, waiting_on, follow_up });
   }
 
+  capture(text: string) {
+    if (!tidy(text)) return;
+    this.enqueue({ op_id: newId(), type: "capture", text: tidy(text), captured_at: captureStamp() });
+  }
+
+  /** File a captured item. Trashing is held for a few seconds so it can be undone;
+   *  the returned op id is what `undo` takes. */
+  clarify(raw: string, outcome: Outcome, fields: ClarifyFields): string {
+    const op_id = newId();
+    this.enqueue({
+      op_id,
+      type: "clarify",
+      list: "captured",
+      raw,
+      outcome,
+      fields,
+      ...(outcome === "trash" ? { notBefore: Date.now() + UNDO_MS } : {}),
+    });
+    return op_id;
+  }
+
   reorder(list: ListName, category: Category, order: string[]) {
     const { outbox, inFlight } = this.state;
     const last = outbox[outbox.length - 1];
@@ -134,7 +167,10 @@ class ActionsStore {
     this.update({ notice: null });
   }
 
-  private async request(path: string, body?: unknown): Promise<{ lists: Lists; results?: OpResult[] }> {
+  private async request(
+    path: string,
+    body?: unknown,
+  ): Promise<{ lists: Lists; projects?: Projects; results?: OpResult[] }> {
     const token = localStorage.getItem(TOKEN_KEY);
     const res = await fetch(path, {
       method: body ? "POST" : "GET",
@@ -174,6 +210,7 @@ class ActionsStore {
       const skipped = results.filter((r) => r.status === "skipped").length;
       this.update({
         server: body.lists,
+        ...(body.projects ? { projects: body.projects } : {}),
         outbox: retarget(this.state.outbox.slice(count), sent, results),
         offline: false,
         notice: skipped

@@ -171,7 +171,7 @@ class TestClarifyOp:
 
     def test_project_names_are_listed_for_the_picker(self):
         actions.clarify(TYPED, "new_project", {"name": "Dads Birthday", "category": "personal", "first_action": "Ask mum"})
-        assert actions.read_action_lists()["projects"] == {"personal": ["Dads Birthday"], "professional": []}
+        assert actions.active_project_names() == {"personal": ["Dads Birthday"], "professional": []}
 
     def test_capture_then_clarify_in_one_offline_batch(self, tasks_dir):
         from fastapi import FastAPI

@@ -153,7 +153,7 @@ def read_action_lists() -> dict:
         if name != CAPTURED:
             lines = [ln for ln in lines if _is_open(ln)]
         lists[name] = [_item_json(name, ln) for ln in lines]
-    return {"today": datetime.now().date().isoformat(), "lists": lists, "projects": active_project_names()}
+    return {"today": datetime.now().date().isoformat(), "lists": lists}
 
 
 def active_project_names() -> dict:
@@ -365,16 +365,17 @@ def clarify(raw: str, outcome: str, fields: dict) -> OpResult:
             clarify_ops.to_project_step(line, project=project, **common)
             new = None
         elif outcome == "new_project":
-            name = fields.get("name")
-            if not (isinstance(name, str) and name.strip()):
-                raise OpSkipped("invalid")
             for key in ("project_outcome", "first_action"):
                 if fields.get(key) is not None and not isinstance(fields[key], str):
                     raise OpSkipped("invalid")
-            clarify_ops.to_new_project(line, name=name, category=category,
-                                       outcome=fields.get("project_outcome"),
+            # Created here, name kept as typed; refused if a project of that name exists.
+            from backend.vault import projects
+            created = projects.create_project({"name": fields.get("name"), "category": category,
+                                               "outcome": fields.get("project_outcome")}).new_raw
+            note = os.path.join(projects.projects_root(), projects._title(category), created, f"{created}.md")
+            clarify_ops.to_new_project(line, name=created, category=category,
                                        first_action=fields.get("first_action"),
-                                       contexts=fields.get("contexts"), **common)
+                                       contexts=fields.get("contexts"), note_path=note, **common)
             new = None
         elif outcome == "done":
             clarify_ops.to_done(line, **common)

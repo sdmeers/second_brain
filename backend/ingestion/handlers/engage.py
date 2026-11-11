@@ -1,6 +1,5 @@
 import os
 import re
-import shutil
 from datetime import datetime, timedelta
 import httpx
 from backend.config import OBSIDIAN_VAULT_PATH
@@ -418,17 +417,13 @@ async def handle_promote_callback(callback_query: dict, token: str, http_client:
         
         clean_step = strip_task_metadata(selected_step)
         
-        # 1. Add to Next_Actions.md
-        task_str = f"- [ ] {clean_step} {chosen_ctx} #project/{project_tag} #{category.lower()}"
-        tasks_md = os.path.join(OBSIDIAN_VAULT_PATH, "01_Tasks", "Next_Actions.md")
-        
-        from backend.utils.tasks_dashboard import append_gtd_item
-        append_gtd_item(tasks_md, task_str)
-
-        # 2. Delete the promoted step from ## Project Steps in the project master note
+        # Add to Next_Actions.md and take it off the roadmap (shared with the GTD web app)
         if not proj_path or not os.path.exists(proj_path):
             proj_path = find_project_note(project_tag)
 
+        from backend.vault.projects import promote_project_step
+        promote_project_step(proj_path, project_tag, category, clean_step, [chosen_ctx])
+        # Belt and braces for a step whose roadmap line doesn't match its text exactly.
         remove_step_from_project(proj_path, clean_step)
 
 
@@ -702,34 +697,17 @@ async def handle_archive_project_command(chat_id: int, text: str, token: str, ht
     today_str = datetime.now().strftime("%Y-%m-%d")
     proj_name = os.path.basename(found_path).replace(".md", "")
 
-    # Update status in markdown note if single file or if folder has <ProjectName>.md
-    note_to_update = found_path if os.path.isfile(found_path) else os.path.join(found_path, f"{proj_name}.md")
-    if os.path.exists(note_to_update):
-        with open(note_to_update, encoding="utf-8") as f:
-            content = f.read()
-        
-        if "status:" in content:
-            content = re.sub(r'status:\s*"?.*?"?', 'status: "completed"', content)
-        else:
-            content = content.replace("---", f"---\nstatus: \"completed\"\ndate_completed: \"{today_str}\"", 1)
-
-        if "date_completed:" not in content:
-            content = re.sub(r'(status:\s*"completed")', r'\1\ndate_completed: "' + today_str + '"', content)
-
-        with open(note_to_update, "w", encoding="utf-8") as f:
-            f.write(content)
-
-    # Move filesystem entry to 05_Archive/02_Projects/<Category>/
-    archive_dir = os.path.join(OBSIDIAN_VAULT_PATH, "05_Archive", "02_Projects", category)
-    os.makedirs(archive_dir, exist_ok=True)
-    
-    dest_path = os.path.join(archive_dir, os.path.basename(found_path))
-    if os.path.exists(dest_path):
-        if os.path.isdir(dest_path):
-            shutil.rmtree(dest_path)
-        else:
-            os.remove(dest_path)
-    shutil.move(found_path, dest_path)
+    # Mark completed and move to 05_Archive/02_Projects/<Category>/ (shared with the GTD
+    # web app). An existing archive of the same name is left alone rather than replaced.
+    from backend.vault.projects import archive_project_path
+    try:
+        dest_path = archive_project_path(found_path, category)
+    except FileExistsError as exists:
+        rel_existing = os.path.relpath(str(exists), OBSIDIAN_VAULT_PATH)
+        await send_msg(chat_id, token, http_client,
+                       f"❌ <code>{rel_existing}</code> already exists in the archive, so "
+                       f"<b>{proj_name}</b> was not moved. Rename one of them and try again.")
+        return
 
     rel_dest = os.path.relpath(dest_path, OBSIDIAN_VAULT_PATH)
     

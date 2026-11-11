@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from backend.processing import voice_capture
-from backend.vault import actions
+from backend.vault import actions, projects
 
 router = APIRouter(prefix="/api/actions", tags=["actions"])
 
@@ -44,7 +44,11 @@ StrList = list[str]
 
 class Op(BaseModel):
     op_id: str = Field(min_length=1, max_length=64)
-    type: Literal["complete", "edit", "move", "reorder", "capture", "clarify"]
+    type: Literal[
+        "complete", "edit", "move", "reorder", "capture", "clarify",
+        "project_create", "project_update", "project_archive", "project_restore",
+        "step_add", "step_edit", "step_remove", "step_reorder", "step_promote",
+    ]
     list: str = "captured"
     raw: str | None = None
     # capture
@@ -52,6 +56,9 @@ class Op(BaseModel):
     captured_at: str | None = None
     # clarify: where the captured item goes; its details travel in `fields`
     outcome: str | None = None
+    # project_* and step_*: the project by name, a roadmap step by its exact text
+    project: str | None = None
+    step: str | None = None
     # edit: only the keys present are changed; null clears a field
     fields: dict | None = None
     # move
@@ -101,7 +108,32 @@ def _apply(op: Op, alias: dict[str, str]) -> actions.OpResult:
         return actions.reorder_actions(op.list, op.category or "", [current(r) for r in op.order or []])
     if op.type == "capture":
         return actions.capture(op.text or "", op.captured_at)
-    return actions.clarify(current(op.raw), op.outcome or "", op.fields or {})
+    if op.type == "clarify":
+        return actions.clarify(current(op.raw), op.outcome or "", op.fields or {})
+
+    name, fields = op.project or "", op.fields or {}
+    if op.type == "project_create":
+        return projects.create_project(fields)
+    if op.type == "project_update":
+        return projects.update_project(name, fields)
+    if op.type == "project_archive":
+        return projects.archive_project(name)
+    if op.type == "project_restore":
+        return projects.restore_project(name, op.category)
+    if op.type == "step_add":
+        return projects.add_step(name, op.text or "")
+    if op.type == "step_edit":
+        return projects.edit_step(name, op.step or "", op.text or "")
+    if op.type == "step_remove":
+        return projects.remove_step(name, op.step or "")
+    if op.type == "step_reorder":
+        return projects.reorder_steps(name, op.order or [])
+    return projects.promote_step(name, op.step or "", fields)
+
+
+def _state() -> dict:
+    """Everything the app shows, read in one go: the lists and the projects."""
+    return {**actions.read_action_lists(), "projects": projects.list_projects()}
 
 
 def _prompt_project_promotion(project: str) -> None:
@@ -115,7 +147,7 @@ def _prompt_project_promotion(project: str) -> None:
 
 @router.get("")
 async def get_actions():
-    return actions.read_action_lists()
+    return _state()
 
 
 @router.post("/ops")
@@ -124,16 +156,17 @@ async def post_ops(payload: OpsRequest):
     # step on the event loop, so the sweeper cannot rewrite a file halfway through.
     results = []
     alias: dict[str, str] = {}
-    projects = []
+    completed_in = []
     for op in payload.ops:
         if op.op_id in _recent:
             result = _recent[op.op_id]
         else:
             try:
                 done = _apply(op, alias)
-                result = {"op_id": op.op_id, "status": "applied", "new_raw": done.new_raw}
+                result = {"op_id": op.op_id, "status": "applied", "new_raw": done.new_raw,
+                          "project": done.project}
                 if done.project:
-                    projects.append(done.project)
+                    completed_in.append(done.project)
             except actions.OpSkipped as skip:
                 result = {"op_id": op.op_id, "status": "skipped", "reason": skip.reason}
             _recent[op.op_id] = result
@@ -143,8 +176,8 @@ async def post_ops(payload: OpsRequest):
             alias[op.raw.strip()] = result["new_raw"]
         results.append(result)
 
-    state = actions.read_action_lists()
-    for project in dict.fromkeys(projects):
+    state = _state()
+    for project in dict.fromkeys(completed_in):
         _prompt_project_promotion(project)
     return {"results": results, **state}
 
@@ -163,7 +196,7 @@ async def capture_audio(file: UploadFile, upload_id: str = Form(min_length=1, ma
     would be captured twice.
     """
     if upload_id in _recent:
-        return {**_recent[upload_id], **actions.read_action_lists()}
+        return {**_recent[upload_id], **_state()}
     if upload_id in _uploads_in_progress:
         raise HTTPException(status_code=409, detail="This recording is still being transcribed")
 
@@ -206,4 +239,4 @@ async def capture_audio(file: UploadFile, upload_id: str = Form(min_length=1, ma
             _recent.popitem(last=False)
     finally:
         _uploads_in_progress.discard(upload_id)
-    return {**result, **actions.read_action_lists()}
+    return {**result, **_state()}

@@ -161,7 +161,7 @@ def to_project_step(item_line: str, *, project: str, text: str | None = None) ->
 
 def to_new_project(item_line: str, *, name: str, category: str | None = None, outcome: str | None = None,
                    first_action: str | None = None, contexts: list[str] | None = None,
-                   text: str | None = None) -> str:
+                   text: str | None = None, note_path: str | None = None) -> str:
     """Create a project from a captured item.
 
     With ``first_action`` the project starts with that next action, so it is never left
@@ -174,14 +174,17 @@ def to_new_project(item_line: str, *, name: str, category: str | None = None, ou
     if not name:
         raise ValueError("A project needs a name")
     cat = _category(category)
-    note_path = ensure_project_note(name, category=cat.title(), outcome=(outcome or "").strip() or None)
+    # The app creates the note itself (keeping the name as typed) and passes its path;
+    # Telegram goes through ensure_project_note, which title-cases a new name.
+    note_path = note_path or ensure_project_note(name, category=cat.title(),
+                                                 outcome=(outcome or "").strip() or None)
 
     first_action = re.sub(r"\s+", " ", first_action or "").strip()
     if first_action:
         append_gtd_item(TASKS_MD_FILE, render_task_line(
             first_action, contexts=contexts, project=os.path.basename(note_path)[:-3], category=cat))
     else:
-        append_project_step(name, _wording(item_line, text))
+        append_project_step(os.path.basename(note_path)[:-3], _wording(item_line, text))
     remove_captured(item_line)
     return note_path
 

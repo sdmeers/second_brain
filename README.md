@@ -93,6 +93,8 @@ The **Second Brain** operates on the **"Agent-as-Librarian"** paradigm: an intel
 * An installable web app (laptop and phone) for working through your lists: pick **Personal** or **Professional**, then **Next**, **Waiting**, **Someday**, **Captured** or **Projects**.
 * **Capture** with the **+** button: type a thought, or tap the mic and say it. Voice notes are transcribed on the server and stored exactly as Telegram voice notes are.
 * **Clarify** a captured item on one sheet: fix the wording, choose what it is (next action, waiting for, someday, project step, new project, done, reference, trash), fill in only what that needs. The same outcomes as `/clarify`; use whichever is to hand.
+* **Star** the few next actions you are going to do next: the card turns gold, and the star is a `#focus` tag on the line, so it shows on every device and in Obsidian.
+* **Clarify all** steps through the whole Captured inbox one item after another, with Skip.
 * **Projects**: see each project's outcome, open actions and roadmap; add, reorder and promote roadmap steps; create, archive and restore projects. A project with nothing in Next or Waiting is flagged **Stuck**. Completing a project's action offers its next roadmap step.
 * Drag actions into priority order, tick them off (with Undo), edit text, context and dates, and move them between Next / Waiting For / Someday.
 * The order you drag is the order of the lines in the Markdown file, so Obsidian and Telegram show the same priorities.

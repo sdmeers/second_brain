@@ -127,6 +127,7 @@ export function applyOps(server: View, ops: Op[]): View {
           if (f.waiting_on !== undefined) next.waiting_on = f.waiting_on;
           if (f.due !== undefined) next.due = f.due;
           if (f.tickler !== undefined) next.tickler = f.tickler;
+          if (f.focus !== undefined) next.focus = f.focus;
           next.deferred = !!next.tickler && next.tickler > today;
           if (f.category !== undefined && f.category !== item.category) {
             next.category = f.category;
@@ -136,7 +137,7 @@ export function applyOps(server: View, ops: Op[]): View {
             items[at] = next;
           }
         } else {
-          const moved = { ...item };
+          const moved = { ...item, focus: false };
           if (op.to === "waiting") {
             moved.waiting_on = op.waiting_on || null;
             if (op.follow_up) moved.tickler = op.follow_up;

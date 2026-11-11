@@ -22,15 +22,17 @@ interface Props {
   item: Item;
   /** The area on screen; what the item is filed under unless changed here. */
   category: Category;
-  /** Active project names, per area. */
+  /** Active project names per area, the ones with open actions first. */
   projects: Record<Category, string[]>;
+  /** Set when stepping through the whole inbox ("Clarify all"). */
+  run?: { position: number; of: number; onSaved: () => void; onSkip: () => void };
   knownContexts: string[];
   onClose: () => void;
   onTrashed: (opId: string, text: string) => void;
 }
 
 /** One sheet that does what Telegram's /clarify does over several messages. */
-export function ClarifySheet({ item, category: initialCategory, projects, knownContexts, onClose, onTrashed }: Props) {
+export function ClarifySheet({ item, category: initialCategory, projects, knownContexts, run, onClose, onTrashed }: Props) {
   const [text, setText] = useState(item.text);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
   const [category, setCategory] = useState<Category>(initialCategory);
@@ -41,6 +43,7 @@ export function ClarifySheet({ item, category: initialCategory, projects, knownC
   const [name, setName] = useState("");
   const [projectOutcome, setProjectOutcome] = useState("");
   const [firstAction, setFirstAction] = useState("");
+  const [showAllProjects, setShowAllProjects] = useState(false);
   const textRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -94,7 +97,8 @@ export function ClarifySheet({ item, category: initialCategory, projects, knownC
     }
     const opId = store.clarify(item.raw, outcome, fields);
     if (outcome === "trash") onTrashed(opId, item.text);
-    onClose();
+    if (run) run.onSaved();
+    else onClose();
   };
 
   const contextChips = (
@@ -123,21 +127,44 @@ export function ClarifySheet({ item, category: initialCategory, projects, knownC
     </div>
   );
 
+  // Buttons, not a dropdown: one tap instead of open, scroll, pick. The list arrives
+  // with the projects in play first, and anything beyond ten sits behind "More".
+  const shown = showAllProjects || available.length <= 10 ? available : available.slice(0, 10);
   const projectPicker = (required: boolean) => (
-    <label className="block">
+    <div>
       <span className={label}>Project{required ? "" : " (optional)"}</span>
-      <select className={input} value={project} onChange={(e) => setProject(e.target.value)}>
-        <option value="">{required ? "Choose a project…" : "None"}</option>
-        {available.map((p) => (
-          <option key={p} value={p}>
-            {p.replace(/_/g, " ")}
-          </option>
-        ))}
-      </select>
-      {required && available.length === 0 && (
-        <span className="mt-1.5 block text-xs text-slate-400">No {category} projects yet. Choose “New project” instead.</span>
+      {available.length === 0 ? (
+        <p className="text-sm text-slate-400">
+          No {category} projects yet.{required ? " Choose “New project” instead." : ""}
+        </p>
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          {shown.map((p) => {
+            const on = project === p;
+            return (
+              <button
+                key={p}
+                type="button"
+                onClick={() => setProject(on ? "" : p)}
+                aria-pressed={on}
+                className={`max-w-full truncate rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
+                  on
+                    ? "bg-(--accent) text-white dark:text-slate-950"
+                    : "bg-white text-slate-600 ring-1 ring-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700"
+                }`}
+              >
+                {p.replace(/_/g, " ")}
+              </button>
+            );
+          })}
+          {shown.length < available.length && (
+            <button type="button" onClick={() => setShowAllProjects(true)} className="rounded-full px-3 py-1.5 text-sm font-medium text-(--accent)">
+              More… ({available.length - shown.length})
+            </button>
+          )}
+        </div>
       )}
-    </label>
+    </div>
   );
 
   const dateField = (title: string) => (
@@ -161,7 +188,14 @@ export function ClarifySheet({ item, category: initialCategory, projects, knownC
       <div className="absolute inset-0 bg-slate-950/40 backdrop-blur-[2px]" onClick={onClose} />
       <div className="animate-sheet relative flex max-h-[92dvh] w-full flex-col rounded-t-3xl bg-slate-50 shadow-2xl sm:max-w-lg sm:rounded-3xl dark:bg-slate-900">
         <div className="flex items-center justify-between px-5 pt-4 pb-2">
-          <h2 className="text-sm font-semibold text-slate-500 dark:text-slate-400">Clarify</h2>
+          <h2 className="text-sm font-semibold text-slate-500 dark:text-slate-400">
+            Clarify
+            {run && (
+              <span className="ml-2 font-medium text-(--accent)">
+                {run.position} of {run.of}
+              </span>
+            )}
+          </h2>
           <button type="button" onClick={onClose} aria-label="Close" className="-mr-2 rounded-full p-2 text-slate-400 hover:bg-slate-200/60 dark:hover:bg-slate-800">
             <CloseIcon className="size-5" />
           </button>
@@ -233,10 +267,8 @@ export function ClarifySheet({ item, category: initialCategory, projects, knownC
           {outcome === "next" && (
             <>
               {contextChips}
-              <div className="grid grid-cols-2 gap-3">
-                {projectPicker(false)}
-                {dateField("Hide until")}
-              </div>
+              {projectPicker(false)}
+              {dateField("Hide until (optional)")}
             </>
           )}
 
@@ -246,10 +278,8 @@ export function ClarifySheet({ item, category: initialCategory, projects, knownC
                 <span className={label}>Waiting on</span>
                 <input className={input} value={waitingOn} onChange={(e) => setWaitingOn(e.target.value)} placeholder="Who has it?" autoFocus />
               </label>
-              <div className="grid grid-cols-2 gap-3">
-                {projectPicker(false)}
-                {dateField("Follow up")}
-              </div>
+              {projectPicker(false)}
+              {dateField("Follow up (optional)")}
             </>
           )}
 
@@ -275,8 +305,8 @@ export function ClarifySheet({ item, category: initialCategory, projects, knownC
         </div>
 
         <div className="flex gap-3 border-t border-slate-200 px-5 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] dark:border-slate-800">
-          <button type="button" onClick={onClose} className="flex-1 rounded-xl py-3 text-sm font-medium text-slate-500">
-            Cancel
+          <button type="button" onClick={run ? run.onSkip : onClose} className="flex-1 rounded-xl py-3 text-sm font-medium text-slate-500">
+            {run ? "Skip" : "Cancel"}
           </button>
           <button
             type="button"
@@ -284,7 +314,7 @@ export function ClarifySheet({ item, category: initialCategory, projects, knownC
             disabled={!ready}
             className="flex-1 rounded-xl bg-(--accent) py-3 text-sm font-semibold text-white disabled:opacity-40 dark:text-slate-950"
           >
-            {outcome === "trash" ? "Trash it" : "Save"}
+            {outcome === "trash" ? "Trash it" : run && run.position < run.of ? "Save & next" : "Save"}
           </button>
         </div>
       </div>

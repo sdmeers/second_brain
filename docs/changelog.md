@@ -1,5 +1,15 @@
 # 📋 Changelog
 
+## GTD App: Star, Project Buttons, Clarify All — November 2026 (`feat/star-chips-clarify-all`)
+
+- **Star next actions.** A star on each Next card marks it as one to do next and turns
+  the card gold. Stored as a `#focus` tag on the line (see technical_implementation.md
+  §2); Telegram `/next` shows ⭐ in its place. Moving or completing the action drops it.
+- **Project buttons when clarifying.** The project dropdown in the clarify sheet is now
+  a row of buttons, projects with open actions first.
+- **Clarify all.** A button on the Captured tab steps through every captured item in
+  turn, with Skip.
+
 ## GTD App: Capture, Clarify, Voice and Projects — November 2026 (`feat/app-clarify-projects`)
 
 The web app can now do what previously needed Telegram: capture (typed or spoken),

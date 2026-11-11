@@ -52,6 +52,9 @@ export default function App() {
   const [openProject, setOpenProject] = useState<string | null>(null);
   /** Project whose roadmap is being offered after one of its actions was completed. */
   const [nextStepFor, setNextStepFor] = useState<string | null>(null);
+  /** "Clarify all": the captured lines to step through, and where we are. */
+  const [run, setRun] = useState<{ queue: string[]; at: number; filed: number } | null>(null);
+  const [flash, setFlash] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ item: Item; list: ListName } | null>(null);
   const [showDeferred, setShowDeferred] = useState(false);
   const [undo, setUndo] = useState<{ opId: string; text: string; verb: string } | null>(null);
@@ -59,6 +62,12 @@ export default function App() {
   useEffect(() => {
     document.documentElement.dataset.category = category;
   }, [category]);
+
+  useEffect(() => {
+    if (!flash) return;
+    const timer = setTimeout(() => setFlash(null), 3500);
+    return () => clearTimeout(timer);
+  }, [flash]);
 
   useEffect(() => {
     if (!undo) return;
@@ -111,10 +120,37 @@ export default function App() {
   const list: ListName = tab === "projects" ? "next" : tab;
   const shownProject = openProject ? view?.projects.active.find((p) => p.name === openProject) : undefined;
   const offered = nextStepFor ? view?.projects.active.find((p) => p.name === nextStepFor && p.steps.length > 0) : undefined;
-  const projectNames = {
-    personal: (view?.projects.active ?? []).filter((p) => p.category === "personal").map((p) => p.name),
-    professional: (view?.projects.active ?? []).filter((p) => p.category === "professional").map((p) => p.name),
+  // For the clarify sheet's project buttons: the projects in play (with open actions) first.
+  const namesIn = (c: Category) => {
+    const inArea = (view?.projects.active ?? []).filter((p) => p.category === c);
+    const busy = inArea.filter((p) => actionsOf(p).length > 0);
+    return [...busy, ...inArea.filter((p) => !busy.includes(p))].map((p) => p.name);
   };
+  const projectNames = { personal: namesIn("personal"), professional: namesIn("professional") };
+
+  // Clarify all: step through the inbox as it was when the run started, passing over
+  // anything that has since gone (clarified in Telegram, say).
+  const clarifiable = (view?.lists.captured ?? []).filter((i) => !i.pending);
+  const runItem = run ? clarifiable.find((i) => i.raw === run.queue[run.at]) : undefined;
+  const advance = (filedOne: boolean) => {
+    if (!run) return;
+    const filed = run.filed + (filedOne ? 1 : 0);
+    const next = run.queue.findIndex((raw, i) => i > run.at && clarifiable.some((c) => c.raw === raw));
+    if (next >= 0) {
+      setRun({ ...run, at: next, filed });
+    } else {
+      setRun(null);
+      const left = clarifiable.length - (filedOne ? 1 : 0);
+      setFlash(left > 0 ? `${filed} clarified · ${left} left in Captured` : "Inbox clear. Everything is clarified.");
+    }
+  };
+
+  // If the item the run is showing disappears underneath it, move on rather than leave
+  // the run open with nothing on screen.
+  useEffect(() => {
+    if (run && !runItem) advance(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [run, runItem]);
 
   if (state.needToken) return <TokenPrompt />;
 
@@ -199,9 +235,18 @@ export default function App() {
         )}
 
         {tab === "captured" && active.length > 0 && (
-          <p className="mb-3 px-1 text-sm text-slate-500 dark:text-slate-400">
-Tap an item to decide what it is and where it goes.
-          </p>
+          <div className="mb-3 flex items-center justify-between gap-3 px-1">
+            <p className="text-sm text-slate-500 dark:text-slate-400">Tap an item to decide what it is and where it goes.</p>
+            {clarifiable.length > 1 && (
+              <button
+                type="button"
+                onClick={() => setRun({ queue: clarifiable.map((i) => i.raw), at: 0, filed: 0 })}
+                className="shrink-0 rounded-full bg-(--accent) px-3.5 py-1.5 text-sm font-semibold text-white dark:text-slate-950"
+              >
+                Clarify all · {clarifiable.length}
+              </button>
+            )}
+          </div>
         )}
 
         {!view ? (
@@ -237,6 +282,7 @@ Tap an item to decide what it is and where it goes.
                       canDrag={canEditList && !item.pending && active.length > 1}
                       onOpen={() => !item.pending && setEditing({ item, list })}
                       onComplete={() => complete(item, list)}
+                      onToggleFocus={tab === "next" && !item.pending ? () => store.edit("next", item.raw, { focus: !item.focus }) : undefined}
                     />
                   ))}
                 </ul>
@@ -281,6 +327,15 @@ Tap an item to decide what it is and where it goes.
         {tabs}
       </nav>
 
+      {flash && (
+        <div
+          className={`pointer-events-none fixed inset-x-0 z-50 flex justify-center px-4 ${undo ? "bottom-36 sm:bottom-24" : "bottom-20 sm:bottom-8"}`}
+          role="status"
+        >
+          <div className="animate-rise rounded-2xl bg-slate-900 px-4 py-3 text-sm text-white shadow-xl dark:bg-slate-100 dark:text-slate-900">{flash}</div>
+        </div>
+      )}
+
       {undo && (
         <div className="pointer-events-none fixed inset-x-0 bottom-20 z-30 flex justify-center px-4 sm:bottom-8">
           <div className="animate-rise pointer-events-auto flex max-w-md items-center gap-4 rounded-2xl bg-slate-900 py-3 pr-3 pl-4 text-sm text-white shadow-xl dark:bg-slate-100 dark:text-slate-900">
@@ -318,7 +373,20 @@ Tap an item to decide what it is and where it goes.
         />
       )}
 
-      {!editing && !shownProject && <CaptureBox />}
+      {!editing && !shownProject && !runItem && <CaptureBox />}
+
+      {runItem && run && (
+        <ClarifySheet
+          key={runItem.raw}
+          item={runItem}
+          category={category}
+          projects={projectNames}
+          knownContexts={knownContexts}
+          run={{ position: run.at + 1, of: run.queue.length, onSaved: () => advance(true), onSkip: () => advance(false) }}
+          onClose={() => setRun(null)}
+          onTrashed={(opId, text) => setUndo({ opId, text, verb: "Trashed" })}
+        />
+      )}
 
       {editing && editing.list === "captured" && (
         <ClarifySheet

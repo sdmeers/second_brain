@@ -13,6 +13,8 @@ export interface Item {
   due?: string | null;
   tickler?: string | null;
   deferred?: boolean;
+  /** Starred on Next: one of the few to work on next (a `#focus` tag in the vault). */
+  focus?: boolean;
   /** Just filed from Captured and not yet confirmed by the server, so it has no real
    *  line to address yet: shown, but not editable until the next sync. */
   pending?: boolean;
@@ -72,6 +74,7 @@ export interface EditFields {
   waiting_on?: string | null;
   due?: string | null;
   tickler?: string | null;
+  focus?: boolean;
 }
 
 interface OpBase {

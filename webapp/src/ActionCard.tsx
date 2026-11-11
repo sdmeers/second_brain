@@ -2,7 +2,7 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useState } from "react";
 import { describeDue, shortDate, type DueTone } from "./dates";
-import { BellIcon, CalendarIcon, CheckIcon, GripIcon, HourglassIcon } from "./icons";
+import { BellIcon, CalendarIcon, CheckIcon, GripIcon, HourglassIcon, StarIcon } from "./icons";
 import type { Item } from "./types";
 
 const dueTones: Record<DueTone, string> = {
@@ -22,9 +22,11 @@ interface Props {
   canDrag: boolean;
   onOpen: () => void;
   onComplete: () => void;
+  /** Present on the Next list only: star or unstar this action. */
+  onToggleFocus?: () => void;
 }
 
-export function ActionCard({ id, item, canComplete, canDrag, onOpen, onComplete }: Props) {
+export function ActionCard({ id, item, canComplete, canDrag, onOpen, onComplete, onToggleFocus }: Props) {
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({
     id,
     disabled: !canDrag,
@@ -46,9 +48,11 @@ export function ActionCard({ id, item, canComplete, canDrag, onOpen, onComplete 
       className={`relative ${isDragging ? "z-10" : ""}`}
     >
       <div
-        className={`flex items-stretch rounded-2xl bg-white ring-1 ring-slate-900/5 transition-all duration-300 dark:bg-slate-900 dark:ring-white/10 ${
-          item.pending ? "opacity-60" : ""
-        } ${
+        className={`flex items-stretch rounded-2xl ring-1 transition-all duration-300 ${
+          item.focus
+            ? "bg-amber-50 ring-amber-300/80 dark:bg-amber-950/40 dark:ring-amber-500/40"
+            : "bg-white ring-slate-900/5 dark:bg-slate-900 dark:ring-white/10"
+        } ${item.pending ? "opacity-60" : ""} ${
           isDragging ? "scale-[1.02] shadow-xl ring-(--accent)/40" : "shadow-sm"
         } ${leaving ? "translate-x-4 opacity-0" : ""}`}
       >
@@ -74,7 +78,7 @@ export function ActionCard({ id, item, canComplete, canDrag, onOpen, onComplete 
         <button
           type="button"
           onClick={onOpen}
-          className={`min-w-0 flex-1 py-3.5 text-left ${canComplete ? "pl-2" : "pl-4"} ${canDrag ? "pr-1" : "pr-4"}`}
+          className={`min-w-0 flex-1 py-3.5 text-left ${canComplete ? "pl-2" : "pl-4"} ${canDrag || onToggleFocus ? "pr-1" : "pr-4"}`}
         >
           <p className={`text-[15px] leading-snug break-words ${leaving ? "text-slate-400 line-through" : ""}`}>
             {item.text}
@@ -114,6 +118,21 @@ export function ActionCard({ id, item, canComplete, canDrag, onOpen, onComplete 
             </div>
           )}
         </button>
+
+        {onToggleFocus && (
+          <button
+            type="button"
+            onClick={onToggleFocus}
+            aria-pressed={!!item.focus}
+            aria-label={`${item.focus ? "Unstar" : "Star"}: ${item.text}`}
+            title={item.focus ? "Starred: working on this next" : "Star to work on this next"}
+            className={`flex shrink-0 items-center px-2 transition-colors ${
+              item.focus ? "text-amber-500" : "text-slate-300 hover:text-amber-400 dark:text-slate-600"
+            } ${canDrag ? "" : "pr-3.5"}`}
+          >
+            <StarIcon filled={!!item.focus} className={`size-[22px] ${item.focus ? "animate-pop" : ""}`} />
+          </button>
+        )}
 
         {canDrag && (
           <button

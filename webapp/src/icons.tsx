@@ -46,6 +46,15 @@ export const PlusIcon = (p: SVGProps<SVGSVGElement>) => (
 export const MicIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5.5 11a6.5 6.5 0 0013 0M12 17.5V21M8.5 21h7" /></svg>
 );
+export const FolderIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}><path d="M3 7.5A2.5 2.5 0 015.5 5H9l2 2.5h7.5A2.5 2.5 0 0121 10v7.5a2.5 2.5 0 01-2.5 2.5h-13A2.5 2.5 0 013 17.5v-10z" /></svg>
+);
+export const ArrowUpIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}><path d="M12 19V5M6 11l6-6 6 6" /></svg>
+);
+export const TrashIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}><path d="M4 7h16M9 7V4.5h6V7M6.5 7l1 13h9l1-13M10 11v5.5M14 11v5.5" /></svg>
+);
 export const CloseIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}><path d="M6 6l12 12M18 6L6 18" /></svg>
 );

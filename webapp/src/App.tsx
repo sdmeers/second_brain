@@ -14,15 +14,22 @@ import { ActionCard } from "./ActionCard";
 import { CaptureBox } from "./CaptureBox";
 import { ClarifySheet } from "./ClarifySheet";
 import { EditSheet } from "./EditSheet";
-import { BoltIcon, BulbIcon, ChevronIcon, HourglassIcon, InboxIcon } from "./icons";
+import { BoltIcon, BulbIcon, ChevronIcon, FolderIcon, HourglassIcon, InboxIcon } from "./icons";
+import { NextStepPrompt } from "./NextStepPrompt";
+import { projectKey } from "./optimistic";
+import { ProjectScreen } from "./ProjectScreen";
+import { ProjectsTab } from "./ProjectsTab";
 import { pendingCount, statusOf, store, useStore, viewOf, type SyncStatus } from "./store";
-import type { Category, Item, ListName } from "./types";
+import type { Category, Item, ListName, Project } from "./types";
 
-const TABS: { id: ListName; label: string; icon: ReactNode; empty: string }[] = [
+type Tab = ListName | "projects";
+
+const TABS: { id: Tab; label: string; icon: ReactNode; empty: string }[] = [
   { id: "next", label: "Next", icon: <BoltIcon className="size-5" />, empty: "All clear. Nothing next on your plate." },
   { id: "waiting", label: "Waiting", icon: <HourglassIcon className="size-5" />, empty: "Nobody owes you anything right now." },
   { id: "someday", label: "Someday", icon: <BulbIcon className="size-5" />, empty: "No someday / maybe ideas parked here." },
-  { id: "captured", label: "Captured", icon: <InboxIcon className="size-5" />, empty: "Inbox zero. Capture something in Telegram." },
+  { id: "captured", label: "Captured", icon: <InboxIcon className="size-5" />, empty: "Inbox zero. Tap + to capture a thought." },
+  { id: "projects", label: "Projects", icon: <FolderIcon className="size-5" />, empty: "" },
 ];
 
 const DEFAULT_CONTEXTS = ["@home", "@computer", "@errands", "@phone", "@anywhere", "@office", "@WFH"];
@@ -41,7 +48,10 @@ function usePref<T extends string>(key: string, initial: T): [T, (v: T) => void]
 export default function App() {
   const state = useStore();
   const [category, setCategory] = usePref<Category>("sb_category", "personal");
-  const [tab, setTab] = usePref<ListName>("sb_tab", "next");
+  const [tab, setTab] = usePref<Tab>("sb_tab", "next");
+  const [openProject, setOpenProject] = useState<string | null>(null);
+  /** Project whose roadmap is being offered after one of its actions was completed. */
+  const [nextStepFor, setNextStepFor] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ item: Item; list: ListName } | null>(null);
   const [showDeferred, setShowDeferred] = useState(false);
   const [undo, setUndo] = useState<{ opId: string; text: string; verb: string } | null>(null);
@@ -58,9 +68,16 @@ export default function App() {
 
   const view = useMemo(() => viewOf(state), [state]);
   const inCategory = (list: ListName) =>
-    list === "captured" ? (view?.captured ?? []) : (view?.[list] ?? []).filter((i) => i.category === category);
+    list === "captured" ? (view?.lists.captured ?? []) : (view?.lists[list] ?? []).filter((i) => i.category === category);
+  const projects = (view?.projects.active ?? []).filter((p) => p.category === category);
+  const archived = (view?.projects.archived ?? []).filter((p) => p.category === category);
+  const actionsOf = (project: Project) =>
+    (["next", "waiting"] as const).flatMap((list) =>
+      (view?.lists[list] ?? []).filter((i) => i.project && projectKey(i.project) === projectKey(project.name)).map((i) => ({ ...i, list })),
+    );
+  const countOf = (t: Tab) => (t === "projects" ? projects.length : inCategory(t).filter((i) => !i.deferred).length);
 
-  const all = inCategory(tab);
+  const all = tab === "projects" ? [] : inCategory(tab);
   const active = all.filter((i) => !i.deferred);
   const deferred = all.filter((i) => i.deferred);
   // Two identical lines are possible in a Markdown file, so ids carry their position.
@@ -68,7 +85,7 @@ export default function App() {
 
   const knownContexts = useMemo(() => {
     const seen = new Set(DEFAULT_CONTEXTS);
-    for (const list of ["next", "waiting", "someday"] as const) view?.[list].forEach((i) => i.contexts?.forEach((c) => seen.add(c)));
+    for (const list of ["next", "waiting", "someday"] as const) view?.lists[list].forEach((i) => i.contexts?.forEach((c) => seen.add(c)));
     return [...seen];
   }, [view]);
 
@@ -78,20 +95,34 @@ export default function App() {
   );
 
   const onDragEnd = ({ active: dragged, over }: DragEndEvent) => {
-    if (!over || dragged.id === over.id) return;
+    if (!over || dragged.id === over.id || tab === "projects") return;
     const moved = arrayMove(active, ids.indexOf(String(dragged.id)), ids.indexOf(String(over.id)));
     store.reorder(tab, category, [...moved, ...deferred].map((i) => i.raw));
   };
 
-  const complete = (item: Item) => setUndo({ opId: store.complete(tab, item.raw), text: item.text, verb: "Done" });
+  const complete = (item: Item, list: ListName) => {
+    setUndo({ opId: store.complete(list, item.raw), text: item.text, verb: "Done" });
+    // Finishing a project's action is the moment to pick its next one. Inside the
+    // project screen the roadmap is already in front of you, so no prompt there.
+    const project = item.project && view?.projects.active.find((p) => projectKey(p.name) === projectKey(item.project));
+    setNextStepFor(project && project.steps.length > 0 && !openProject ? project.name : null);
+  };
+
+  const list: ListName = tab === "projects" ? "next" : tab;
+  const shownProject = openProject ? view?.projects.active.find((p) => p.name === openProject) : undefined;
+  const offered = nextStepFor ? view?.projects.active.find((p) => p.name === nextStepFor && p.steps.length > 0) : undefined;
+  const projectNames = {
+    personal: (view?.projects.active ?? []).filter((p) => p.category === "personal").map((p) => p.name),
+    professional: (view?.projects.active ?? []).filter((p) => p.category === "professional").map((p) => p.name),
+  };
 
   if (state.needToken) return <TokenPrompt />;
 
   const tabs = (
-    <ul className="mx-auto grid max-w-2xl grid-cols-4 sm:gap-1">
+    <ul className="mx-auto grid max-w-2xl grid-cols-5 sm:gap-1">
       {TABS.map((t) => {
         const on = t.id === tab;
-        const count = inCategory(t.id).filter((i) => !i.deferred).length;
+        const count = countOf(t.id);
         return (
           <li key={t.id}>
             <button
@@ -125,7 +156,7 @@ export default function App() {
     </ul>
   );
 
-  const canEditList = tab !== "captured";
+  const canEditList = tab !== "captured" && tab !== "projects";
   const current = TABS.find((t) => t.id === tab)!;
 
   return (
@@ -183,6 +214,8 @@ Tap an item to decide what it is and where it goes.
               ))}
             </ul>
           )
+        ) : tab === "projects" ? (
+          <ProjectsTab category={category} projects={projects} archived={archived} actionsOf={actionsOf} onOpen={setOpenProject} />
         ) : all.length === 0 ? (
           <Empty title={current.empty} />
         ) : (
@@ -202,8 +235,8 @@ Tap an item to decide what it is and where it goes.
                       item={item}
                       canComplete={canEditList && !item.pending}
                       canDrag={canEditList && !item.pending && active.length > 1}
-                      onOpen={() => !item.pending && setEditing({ item, list: tab })}
-                      onComplete={() => complete(item)}
+                      onOpen={() => !item.pending && setEditing({ item, list })}
+                      onComplete={() => complete(item, list)}
                     />
                   ))}
                 </ul>
@@ -230,8 +263,8 @@ Tap an item to decide what it is and where it goes.
                         item={item}
                         canComplete={canEditList && !item.pending}
                         canDrag={false}
-                        onOpen={() => !item.pending && setEditing({ item, list: tab })}
-                        onComplete={() => complete(item)}
+                        onOpen={() => !item.pending && setEditing({ item, list })}
+                        onComplete={() => complete(item, list)}
                       />
                     ))}
                   </ul>
@@ -259,6 +292,7 @@ Tap an item to decide what it is and where it goes.
               onClick={() => {
                 store.undo(undo.opId);
                 setUndo(null);
+                setNextStepFor(null);
               }}
               className="shrink-0 rounded-lg px-2 py-1 font-semibold text-teal-300 dark:text-teal-700"
             >
@@ -268,14 +302,30 @@ Tap an item to decide what it is and where it goes.
         </div>
       )}
 
-      {!editing && <CaptureBox />}
+      {offered && !editing && !shownProject && (
+        <NextStepPrompt key={offered.name} project={offered} knownContexts={knownContexts} onClose={() => setNextStepFor(null)} />
+      )}
+
+      {shownProject && (
+        <ProjectScreen
+          key={shownProject.name}
+          project={shownProject}
+          actions={actionsOf(shownProject)}
+          knownContexts={knownContexts}
+          onClose={() => setOpenProject(null)}
+          onOpenAction={(item, l) => setEditing({ item, list: l })}
+          onComplete={complete}
+        />
+      )}
+
+      {!editing && !shownProject && <CaptureBox />}
 
       {editing && editing.list === "captured" && (
         <ClarifySheet
           key={editing.item.raw}
           item={editing.item}
           category={category}
-          projects={state.projects}
+          projects={projectNames}
           knownContexts={knownContexts}
           onClose={() => setEditing(null)}
           onTrashed={(opId, text) => setUndo({ opId, text, verb: "Trashed" })}

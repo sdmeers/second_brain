@@ -18,7 +18,35 @@ export interface Item {
   pending?: boolean;
 }
 
-export type Projects = Record<Category, string[]>;
+export interface Project {
+  /** The note's filename. It is the project's identity. */
+  name: string;
+  category: Category;
+  outcome: string;
+  due: string | null;
+  /** Roadmap steps, in order. A step is identified by its exact text. */
+  steps: string[];
+}
+
+export interface ArchivedProject {
+  name: string;
+  category: Category;
+  outcome: string;
+  completed: string | null;
+}
+
+export interface Projects {
+  active: Project[];
+  archived: ArchivedProject[];
+}
+
+export interface ProjectFields {
+  name?: string;
+  category?: Category;
+  outcome?: string;
+  due_date?: string | null;
+  contexts?: string[];
+}
 
 export type Outcome = "next" | "waiting" | "someday" | "project_step" | "new_project" | "done" | "reference" | "trash";
 
@@ -60,7 +88,22 @@ export type Op = OpBase &
     | { type: "reorder"; list: ListName; category: Category; order: string[] }
     | { type: "capture"; text: string; captured_at: string }
     | { type: "clarify"; list: "captured"; raw: string; outcome: Outcome; fields: ClarifyFields }
+    | { type: "project_create"; fields: ProjectFields }
+    | { type: "project_update"; project: string; fields: ProjectFields }
+    | { type: "project_archive"; project: string }
+    | { type: "project_restore"; project: string; category: Category }
+    | { type: "step_add"; project: string; text: string }
+    | { type: "step_edit"; project: string; step: string; text: string }
+    | { type: "step_remove"; project: string; step: string }
+    | { type: "step_reorder"; project: string; order: string[] }
+    | { type: "step_promote"; project: string; step: string; fields: ProjectFields }
   );
+
+/** The ops that name an action line by its text. */
+export type LineOp = Extract<Op, { raw: string }>;
+
+/** An op as the UI hands it to the store, before it is given an id. */
+export type NewOp = Op extends infer O ? (O extends Op ? Omit<O, "op_id" | "notBefore"> : never) : never;
 
 /** A recording waiting to be uploaded and transcribed. */
 export interface VoiceNote {
@@ -74,4 +117,6 @@ export interface OpResult {
   status: "applied" | "skipped";
   reason?: string;
   new_raw?: string | null;
+  /** On a completed action: the project it belonged to, as a tag. */
+  project?: string | null;
 }

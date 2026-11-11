@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { CloseIcon } from "./icons";
 import { store } from "./store";
-import type { Category, ClarifyFields, Item, Outcome, Projects } from "./types";
+import type { Category, ClarifyFields, Item, Outcome } from "./types";
 
 const OUTCOMES: { id: Outcome; emoji: string; label: string; hint: string }[] = [
   { id: "next", emoji: "⚡", label: "Next", hint: "Something you can do" },
@@ -22,7 +22,8 @@ interface Props {
   item: Item;
   /** The area on screen; what the item is filed under unless changed here. */
   category: Category;
-  projects: Projects;
+  /** Active project names, per area. */
+  projects: Record<Category, string[]>;
   knownContexts: string[];
   onClose: () => void;
   onTrashed: (opId: string, text: string) => void;

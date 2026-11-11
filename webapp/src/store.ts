@@ -1,12 +1,13 @@
 import { get, set } from "idb-keyval";
 import { useSyncExternalStore } from "react";
-import { applyOps, captureStamp, retarget, tidy } from "./optimistic";
+import { applyOps, captureStamp, retarget, tidy, type View } from "./optimistic";
 import type {
   Category,
   ClarifyFields,
   EditFields,
   ListName,
   Lists,
+  NewOp,
   Op,
   OpResult,
   Outcome,
@@ -23,7 +24,7 @@ export type SyncStatus = "synced" | "syncing" | "pending" | "offline";
 export interface State {
   /** Last lists received from the server; null until the first load (or cache hit). */
   server: Lists | null;
-  /** Active project names per area, for the pickers. */
+  /** Projects as last received from the server. */
   projects: Projects;
   /** Changes not yet acknowledged by the server, oldest first. Survives reloads. */
   outbox: Op[];
@@ -54,7 +55,7 @@ const forWire = (op: Op) => {
 class ActionsStore {
   private state: State = {
     server: null,
-    projects: { personal: [], professional: [] },
+    projects: { active: [], archived: [] },
     outbox: [],
     voice: [],
     inFlight: 0,
@@ -94,7 +95,8 @@ class ActionsStore {
       this.update({
         server: this.state.server ?? server ?? null,
         outbox: [...(outbox ?? []), ...this.state.outbox],
-        ...(projects ? { projects } : {}),
+        // An older build cached project names in another shape; ignore that.
+        ...(projects && Array.isArray(projects.active) ? { projects } : {}),
         voice: [...(voice ?? []), ...this.state.voice],
       });
     } catch {
@@ -136,6 +138,11 @@ class ActionsStore {
 
   move(list: ListName, raw: string, to: ListName, waiting_on?: string, follow_up?: string) {
     this.enqueue({ op_id: newId(), type: "move", list, raw, to, waiting_on, follow_up });
+  }
+
+  /** Queue any change that needs no special handling (project and roadmap edits). */
+  send(op: NewOp) {
+    this.enqueue({ ...op, op_id: newId() } as Op);
   }
 
   capture(text: string) {
@@ -330,9 +337,10 @@ export function useStore() {
   return state;
 }
 
-export function viewOf(state: State): Lists | null {
+export function viewOf(state: State): View | null {
   if (!state.server) return null;
-  const lists = applyOps(state.server, state.outbox);
+  const view = applyOps({ lists: state.server, projects: state.projects }, state.outbox);
+  const lists = view.lists;
   // Recordings still on the device get a stand-in so they are visibly not lost.
   for (const note of state.voice) {
     lists.captured.push({
@@ -342,7 +350,7 @@ export function viewOf(state: State): Lists | null {
       pending: true,
     });
   }
-  return lists;
+  return view;
 }
 
 export const pendingCount = (state: State) => state.outbox.length + state.voice.length;

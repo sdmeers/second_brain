@@ -31,11 +31,13 @@ from backend.utils.tasks_dashboard import (
     render_split_task_file,
     resolve_relative_due,
 )
+from backend.vault import clarify_ops
 from backend.vault.tasks import (
     CAPTURED_RE,
     CHECKBOX_RE,
     UNSET,
     archive_completed_lines,
+    iter_projects,
     parse_task_line,
     strip_task_metadata,
     update_task_line,
@@ -151,7 +153,16 @@ def read_action_lists() -> dict:
         if name != CAPTURED:
             lines = [ln for ln in lines if _is_open(ln)]
         lists[name] = [_item_json(name, ln) for ln in lines]
-    return {"today": datetime.now().date().isoformat(), "lists": lists}
+    return {"today": datetime.now().date().isoformat(), "lists": lists, "projects": active_project_names()}
+
+
+def active_project_names() -> dict:
+    """Names of the projects an action can be attached to, per category."""
+    names: dict[str, list[str]] = {c: [] for c in CATEGORIES}
+    for project in iter_projects():
+        if project.status not in ("completed", "archived"):
+            names.setdefault(project.category.lower(), []).append(project.name)
+    return names
 
 
 # --- Operations ----------------------------------------------------------------------
@@ -290,3 +301,94 @@ def reorder_actions(list_name: str, category: str, order: list[str]) -> OpResult
 
     _write(list_name, placed + remaining + others)
     return OpResult()
+
+
+# --- Capture and clarify ----------------------------------------------------------------
+
+_STAMP_RE = re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}")
+
+CLARIFY_OUTCOMES = ("next", "waiting", "someday", "project_step", "new_project", "done", "reference", "trash")
+
+
+def capture(text: str, captured_at: str | None = None) -> OpResult:
+    """Add a new item to Captured.
+
+    ``captured_at`` (``YYYY-MM-DD HH:MM``) is when it was typed on the device, which may
+    be well before it syncs. The client builds the same line itself, so it can go on to
+    clarify the item while still offline.
+    """
+    if captured_at is not None and not _STAMP_RE.fullmatch(captured_at):
+        raise OpSkipped("bad_date")
+    try:
+        line = clarify_ops.captured_line(text, captured_at)
+    except ValueError:
+        raise OpSkipped("invalid") from None
+    if line in _read(CAPTURED):
+        return OpResult(new_raw=line)  # the same capture, sent twice
+    clarify_ops.add_capture(text, captured_at)
+    return OpResult(new_raw=line)
+
+
+def clarify(raw: str, outcome: str, fields: dict) -> OpResult:
+    """File a captured item where it belongs. The same decisions as Telegram ``/clarify``,
+    made in one step; the writing is shared with it through ``clarify_ops``."""
+    if outcome not in CLARIFY_OUTCOMES:
+        raise OpSkipped("bad_outcome")
+    captured = _read(CAPTURED)
+    line = captured[_index(captured, raw)]
+
+    _validate_fields({k: v for k, v in fields.items() if k in ("category", "contexts", "tickler", "waiting_on")})
+    text = fields.get("text")
+    if text is not None and not (isinstance(text, str) and text.strip()):
+        raise OpSkipped("invalid")
+    project = fields.get("project") or None
+    if project is not None and (not isinstance(project, str) or project not in _all_active_projects()):
+        # Never create a project as a side effect of a typo or a stale picker.
+        raise OpSkipped("unknown_project")
+    category = fields.get("category")
+    common = {"text": text}
+
+    try:
+        if outcome == "next":
+            new = clarify_ops.to_next(line, category=category, contexts=fields.get("contexts"),
+                                      project=project, tickler=fields.get("tickler"), **common)
+        elif outcome == "waiting":
+            if not (fields.get("waiting_on") or "").strip():
+                raise OpSkipped("invalid")
+            new = clarify_ops.to_waiting(line, waiting_on=fields["waiting_on"], category=category,
+                                         project=project, tickler=fields.get("tickler"), **common)
+        elif outcome == "someday":
+            new = clarify_ops.to_someday(line, category=category, **common)
+        elif outcome == "project_step":
+            if not project:
+                raise OpSkipped("unknown_project")
+            clarify_ops.to_project_step(line, project=project, **common)
+            new = None
+        elif outcome == "new_project":
+            name = fields.get("name")
+            if not (isinstance(name, str) and name.strip()):
+                raise OpSkipped("invalid")
+            for key in ("project_outcome", "first_action"):
+                if fields.get(key) is not None and not isinstance(fields[key], str):
+                    raise OpSkipped("invalid")
+            clarify_ops.to_new_project(line, name=name, category=category,
+                                       outcome=fields.get("project_outcome"),
+                                       first_action=fields.get("first_action"),
+                                       contexts=fields.get("contexts"), **common)
+            new = None
+        elif outcome == "done":
+            clarify_ops.to_done(line, **common)
+            new = None
+        elif outcome == "reference":
+            clarify_ops.to_reference(line, **common)
+            new = None
+        else:
+            clarify_ops.trash(line)
+            new = None
+    except ValueError:
+        raise OpSkipped("invalid") from None
+    return OpResult(new_raw=new)
+
+
+def _all_active_projects() -> set[str]:
+    return {name for names in active_project_names().values() for name in names}

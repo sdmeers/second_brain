@@ -35,11 +35,21 @@ def mount_webapp(app: FastAPI) -> bool:
     return True
 
 
+# `Op` has a field called `list`; once that has a default it shadows the builtin inside the
+# class body, so the list-of-strings type is named out here.
+StrList = list[str]
+
+
 class Op(BaseModel):
     op_id: str = Field(min_length=1, max_length=64)
-    type: Literal["complete", "edit", "move", "reorder"]
-    list: str
+    type: Literal["complete", "edit", "move", "reorder", "capture", "clarify"]
+    list: str = "captured"
     raw: str | None = None
+    # capture
+    text: str | None = None
+    captured_at: str | None = None
+    # clarify: where the captured item goes; its details travel in `fields`
+    outcome: str | None = None
     # edit: only the keys present are changed; null clears a field
     fields: dict | None = None
     # move
@@ -48,7 +58,7 @@ class Op(BaseModel):
     follow_up: str | None = None
     # reorder
     category: str | None = None
-    order: list[str] | None = None
+    order: StrList | None = None
 
 
 class OpsRequest(BaseModel):
@@ -85,7 +95,11 @@ def _apply(op: Op, alias: dict[str, str]) -> actions.OpResult:
         return actions.edit_action(op.list, current(op.raw), op.fields or {})
     if op.type == "move":
         return actions.move_action(op.list, op.to or "", current(op.raw), op.waiting_on, op.follow_up)
-    return actions.reorder_actions(op.list, op.category or "", [current(r) for r in op.order or []])
+    if op.type == "reorder":
+        return actions.reorder_actions(op.list, op.category or "", [current(r) for r in op.order or []])
+    if op.type == "capture":
+        return actions.capture(op.text or "", op.captured_at)
+    return actions.clarify(current(op.raw), op.outcome or "", op.fields or {})
 
 
 def _prompt_project_promotion(project: str) -> None:

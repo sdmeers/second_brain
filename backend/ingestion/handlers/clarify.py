@@ -1,14 +1,12 @@
 import os
 import re
 from datetime import datetime, timedelta
-import shutil
 import httpx
 from backend.config import OBSIDIAN_VAULT_PATH, TASKS_PATH
-from backend.vault.writer import atomic_write
 from backend.utils.sessions import SessionStore
+from backend.vault import clarify_ops
 from backend.vault.tasks import (
     append_project_step,
-    archive_completed_lines,
     ensure_project_note,
     strip_task_metadata,
 )
@@ -156,28 +154,8 @@ def get_category_project_buttons(category: str, action_prefix: str = "roadmap_pr
 
 async def archive_and_remove_captured(item_line: str) -> str:
     """Archives source file from Inbox and removes item from Captured.md. Returns filename if any."""
-    source_match = re.search(r'\(Source:\s*\[\[(.*?)\]\]\)', item_line)
-    filename = source_match.group(1) if source_match else None
-    
-    if filename:
-        inbox_path = os.path.join(OBSIDIAN_VAULT_PATH, "00_System", "Inbox")
-        archive_path = os.path.join(inbox_path, "Archive")
-        os.makedirs(archive_path, exist_ok=True)
-        
-        src_file = os.path.join(inbox_path, filename)
-        dest_file = os.path.join(archive_path, filename)
-        if os.path.exists(src_file):
-            shutil.move(src_file, dest_file)
-
-    captured_md = os.path.join(TASKS_PATH, "Captured.md")
-    if os.path.exists(captured_md):
-        with open(captured_md, encoding="utf-8") as f:
-            content = f.read()
-        content = content.replace(item_line, "")
-        atomic_write(captured_md, content)
-
+    filename = clarify_ops.remove_captured(item_line)
     return filename
-
 
 def parse_natural_date_str(date_str: str):
     """Parses natural dates like '23rd Aug', '23 Aug', '23/08', 'tomorrow', '7d', '2026-08-23'."""
@@ -301,12 +279,8 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
 
     # 2. Pass to AI Librarian
     if action == "action_librarian":
-        filename = await archive_and_remove_captured(item_line)
         clean_text = sanitize_task_item_text(item_line)
-        
-        from backend.ingestion.queue import add_to_queue
-        payload = {"filename": filename or "reference_note.md", "type": "reference_note"}
-        add_to_queue(source_type="file_drop", raw_payload=payload, content_text=clean_text)
+        clarify_ops.to_reference(item_line)
         
         await http_client.post(
             f"https://api.telegram.org/bot{token}/editMessageText",
@@ -319,8 +293,7 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
     # 3. 2-Minute Rule
     if action == "action_2min":
         clean_text = sanitize_task_item_text(item_line)
-        archive_completed_lines([item_line])
-        await archive_and_remove_captured(item_line)
+        clarify_ops.to_done(item_line)
         await http_client.post(
             f"https://api.telegram.org/bot{token}/editMessageText",
             json={"chat_id": chat_id, "message_id": message_id, "text": f"⚡ 2-Minute Rule Done! Logged to z_Completed.md:\n{clean_text}"}
@@ -403,9 +376,8 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
 
     if action.startswith("roadmap_proj"):
         proj_name = data.split(":")[2]
-        append_to_project_roadmap(proj_name, item_line)
-        await archive_and_remove_captured(item_line)
-        
+        clarify_ops.to_project_step(item_line, project=proj_name)
+
         clean_text = sanitize_task_item_text(item_line)
         await http_client.post(
             f"https://api.telegram.org/bot{token}/editMessageText",
@@ -484,20 +456,12 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
         cat_tag = "#professional" if category == "Professional" else "#personal"
         
         wait_tag = f"#waiting({waiting_person})"
-        task_str = f"- [ ] {clean_text} {wait_tag} {cat_tag}"
         tag_disp = f" {wait_tag} {cat_tag}"
-        
         if proj_tag != "none":
-            proj_tag_clean = proj_tag.strip().replace(" ", "_")
-            task_str += f" #project/{proj_tag_clean}"
-            ensure_project_note_exists(proj_tag, category=category)
-            tag_disp += f" #project/{proj_tag_clean}"
-            
-        waiting_md = os.path.join(TASKS_PATH, "Waiting_For.md")
-        from backend.utils.tasks_dashboard import append_gtd_item
-        append_gtd_item(waiting_md, task_str)
-            
-        await archive_and_remove_captured(item_line)
+            tag_disp += f" #project/{proj_tag.strip().replace(' ', '_')}"
+
+        clarify_ops.to_waiting(item_line, waiting_on=waiting_person, category=category,
+                               project=None if proj_tag == "none" else proj_tag)
         await http_client.post(
             f"https://api.telegram.org/bot{token}/editMessageText",
             json={"chat_id": chat_id, "message_id": message_id, "text": f"⏳ Added to Waiting For ({tag_disp}):\n{clean_text}"}
@@ -605,19 +569,12 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
         clean_text = sanitize_task_item_text(item_line)
         cat_tag = "#professional" if category == "Professional" else "#personal"
         
-        task_str = f"- [ ] {clean_text} {ctx} {cat_tag}"
         tag_disp = f" {cat_tag}"
         if proj_tag != "none":
-            proj_tag_clean = proj_tag.strip().replace(" ", "_")
-            task_str += f" #project/{proj_tag_clean}"
-            ensure_project_note_exists(proj_tag, category=category)
-            tag_disp += f" #project/{proj_tag_clean}"
-            
-        tasks_md = os.path.join(TASKS_PATH, "Next_Actions.md")
-        from backend.utils.tasks_dashboard import append_gtd_item
-        append_gtd_item(tasks_md, task_str)
-            
-        await archive_and_remove_captured(item_line)
+            tag_disp += f" #project/{proj_tag.strip().replace(' ', '_')}"
+
+        clarify_ops.to_next(item_line, category=category, contexts=[ctx],
+                            project=None if proj_tag == "none" else proj_tag)
         await http_client.post(
             f"https://api.telegram.org/bot{token}/editMessageText",
             json={"chat_id": chat_id, "message_id": message_id, "text": f"⚡ Added to Next Actions ({ctx}{tag_disp}):\n{clean_text}"}
@@ -758,11 +715,7 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
         clean_text = sanitize_task_item_text(item_line)
         cat_tag = "#professional" if category == "Professional" else "#personal"
         
-        tasks_md = os.path.join(TASKS_PATH, "Next_Actions.md")
-        from backend.utils.tasks_dashboard import append_gtd_item
-        append_gtd_item(tasks_md, f"- [ ] {clean_text} {cat_tag} 🔔 {defer_date}")
-        
-        await archive_and_remove_captured(item_line)
+        clarify_ops.to_next(item_line, category=category, tickler=defer_date)
         await http_client.post(
             f"https://api.telegram.org/bot{token}/editMessageText",
             json={"chat_id": chat_id, "message_id": message_id, "text": f"🔔 Deferred until {date_display} ({cat_tag}):\n{clean_text}"}
@@ -795,10 +748,7 @@ async def handle_clarify_callback(callback_query: dict, token: str, http_client:
         category = data.split(":")[2]
         cat_tag = "#professional" if category == "Professional" else "#personal"
         clean_text = sanitize_task_item_text(item_line)
-        someday_md = os.path.join(TASKS_PATH, "Someday_Maybe.md")
-        from backend.utils.tasks_dashboard import append_gtd_item
-        append_gtd_item(someday_md, f"- [ ] {clean_text} {cat_tag}")
-        await archive_and_remove_captured(item_line)
+        clarify_ops.to_someday(item_line, category=category)
         await http_client.post(
             f"https://api.telegram.org/bot{token}/editMessageText",
             json={"chat_id": chat_id, "message_id": message_id, "text": f"💡 Saved to Someday/Maybe ({cat_tag}):\n{clean_text}"}
@@ -859,13 +809,9 @@ async def handle_clarify_text_input(chat_id: int, text: str, token: str, http_cl
         proj_name = item_data.get("new_project_name", "New Project")
         outcome = text.strip()
         
-        # 1. Create project note with outcome
-        ensure_project_note_exists(proj_name, category=category, outcome=outcome)
-        
-        # 2. Append step to project roadmap
-        append_to_project_roadmap(proj_name, item_line)
-        
-        await archive_and_remove_captured(item_line)
+        # Create the project note with its outcome; the captured item becomes its first
+        # roadmap step.
+        clarify_ops.to_new_project(item_line, name=proj_name, category=category, outcome=outcome)
         
         clean_text = re.sub(r'\(Captured on.*?\)', '', item_line)
         clean_text = re.sub(r'\(Source:.*?\)', '', clean_text).strip("- \n")

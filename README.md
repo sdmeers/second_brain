@@ -1,7 +1,7 @@
 # 🧠 Second Brain (GTD + P.A.R.A Fusion)
 
 > **An Agentic Personal Knowledge & Task Operating System for Obsidian.**  
-> Powered by Local CUDA Faster-Whisper, SQLite-VSS Vector Search, and Google Gemini.
+> Driven from Telegram and an installable GTD web app. Powered by Google Gemini, SQLite-VSS vector search and local Faster-Whisper.
 
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
@@ -33,7 +33,8 @@ The **Second Brain** operates on the **"Agent-as-Librarian"** paradigm: an intel
 ### Why Second Brain?
 * **Absolute Data Ownership:** No proprietary cloud databases or walled gardens. Your tasks, project roadmaps, and knowledge graphs exist as standard Markdown files and local SQLite databases.
 * **GTD + P.A.R.A Fusion:** Unifies David Allen's **Getting Things Done (GTD)** actionable workflows (`Next_Actions`, `Waiting_For`, `Someday_Maybe`) with Tiago Forte's **P.A.R.A** organizational structure (`Projects`, `Areas`, `Resources`, `Archive`).
-* **Zero-Friction Voice & Text Capture:** Dictate thoughts while driving or walking. Local GPU Whisper transcribes and queues them for structured triage.
+* **Zero-Friction Voice & Text Capture:** Dictate thoughts while driving or walking, in Telegram or the GTD web app. They are transcribed and queued for structured triage.
+* **Two Front Ends, One Set of Files:** Telegram for conversation and commands, an installable web app for working through your lists by touch. Both edit the same Markdown, so they never disagree.
 * **Proactive Project Momentum:** Completing an action in Telegram or Obsidian automatically triggers the system to prompt and promote the next step from your project roadmap.
 * **Zero-to-Low Cost:** Designed to run entirely on local compute and Google Gemini / Cloud free tiers.
 
@@ -42,7 +43,8 @@ The **Second Brain** operates on the **"Agent-as-Librarian"** paradigm: an intel
 ## ✨ Key Capabilities
 
 ### 1. 📥 Frictionless Multi-Channel Capture
-* **Voice Notes (Telegram):** Send raw voice notes to your Telegram bot. Transcribed locally via `faster-whisper` on CUDA GPU with multi-topic splitting.
+* **Voice Notes (Telegram or the GTD app):** Send a voice note to the bot, or tap the mic in the app. Transcribed by Gemini and saved to `Captured.md` with the audio kept alongside.
+* **GTD Web App:** The **+** button captures a typed or spoken thought from your phone or laptop, online or off.
 * **Quick Text (Telegram):** Capture quick thoughts via `/in <text>` in Telegram.
 * **Direct Filing (Telegram):** Send `/file <URL/doc>` to bypass GTD triage and file documents straight into P.A.R.A reference folders.
 * **Drop Folder:** Drop PDFs, notes, or audio files into `00_System/Inbox/` for automatic ingestion.
@@ -169,6 +171,7 @@ flowchart TD
     subgraph Ingest["📥 Multi-Channel Ingestion"]
         direction TB
         TG["📱 Telegram (Voice Notes, /in, /file, /research, Q&A)"]
+        App["🌐 GTD Web App (capture, clarify, lists, projects)"]
         InboxDrop["📂 00_System/Inbox/ (File & Document Drops)"]
         Gmail["📧 Gmail IMAP (PDF Invoices & Attachments)"]
     end
@@ -211,6 +214,7 @@ flowchart TD
     Classifier -->|Direct File| Librarian --> S_Para
     Classifier -->|Deep Research| Research --> S_Para
     Engage <--> S_Tasks & S_Proj
+    App <-->|/api/actions| S_Tasks & S_Proj
     Reviews --> S_Sys & S_Tasks
     AutoHealer -.-> S_Tasks
 ```
@@ -412,12 +416,12 @@ Comprehensive guides are located in the `docs/` directory:
 
 ```bash
 cd backend
-uv run pytest              # ~320 tests, ~2s — no vault, API key or network required
+uv run pytest              # ~520 tests, ~3s — no vault, API key or network required
 uv run ruff check .        # lint; must pass clean
 uv run ruff check . --fix  # apply safe autofixes
 
 cd ../webapp
-npm run build              # type-check and build the actions web app
+npm run build              # type-check and build the GTD web app
 npm run lint
 ```
 
@@ -426,11 +430,15 @@ Tests build a throwaway vault in `tests/conftest.py`, so they never touch your r
 **Two conventions matter when working on the backend:**
 
 1. **Use `backend/vault/tasks.py` for anything touching task lines or project notes** —
-   `parse_task_line`, `strip_task_metadata`, `archive_completed_lines`,
-   `find_project_note`, `read_project`, `dump_frontmatter`. It is the single source of
-   truth for the formats in
+   `parse_task_line`, `update_task_line`, `strip_task_metadata`,
+   `archive_completed_lines`, `find_project_note`, `read_project`, `dump_frontmatter`. It
+   is the single source of truth for the formats in
    [technical_implementation.md](docs/technical_implementation.md) §2 and §6. Independent
    copies of these parsers drifting apart has been a recurring source of silent bugs.
+   The same goes for *behaviour* shared by Telegram and the web app: filing a captured
+   item lives in `backend/vault/clarify_ops.py`, projects and roadmaps in
+   `backend/vault/projects.py`, voice-note storage in
+   `backend/processing/voice_capture.py`. Change it there, not in a handler.
 2. **Restart the service after any backend change** — code edits do not take effect until
    you do:
    ```bash
@@ -438,6 +446,12 @@ Tests build a throwaway vault in `tests/conftest.py`, so they never touch your r
    systemctl --user status second-brain.service
    journalctl --user -u second-brain.service -f
    ```
+
+---
+
+**Credentials never go in source files.** They live in `backend/.env` (gitignored);
+`backend/.env.example` holds placeholders only. `tests/test_no_secrets.py` fails if a
+tracked file contains a credential-shaped string or an env file becomes tracked.
 
 ---
 

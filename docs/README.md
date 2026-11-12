@@ -46,6 +46,7 @@ vault/
 4. **Action-Oriented Daily Review:** Morning briefing and `/daily` command surfacing upcoming deadlines (<= 14 days), today's ticklers, and active tasks grouped by context.
 5. **Deep Research Engine:** Ingests articles and documents via `/research`, building interconnected concept nodes in `04_Resources/Research_Brain/Concepts/`.
 6. **Auto-Healer Daemon:** Transparently detects and resolves Syncthing sync conflicts on task files with automated Git commits.
+7. **GTD Web App:** An installable app at `/app` for capture (typed or voice), clarifying, prioritising next actions and managing projects, sharing its logic with the Telegram handlers (`backend/vault/clarify_ops.py`, `projects.py`, `processing/voice_capture.py`).
 
 ---
 
@@ -67,7 +68,7 @@ journalctl --user -u second-brain.service -f
 ```bash
 cd backend
 uv sync                    # install/update dependencies
-uv run pytest              # ~320 tests, ~2s — no vault, API key or network needed
+uv run pytest              # ~520 tests, ~3s — no vault, API key or network needed
 uv run ruff check .        # lint; must pass clean
 uv run ruff check . --fix  # apply safe autofixes
 ```

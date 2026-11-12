@@ -1,5 +1,19 @@
 # 📋 Changelog
 
+## Documentation and Security Refresh — 11 November 2026
+
+- README and `docs/` brought up to date with the GTD web app, and corrected where they
+  claimed Telegram voice notes are transcribed by local Whisper. They are transcribed by
+  Gemini, and have been since August; local Whisper handles audio files dropped into the
+  inbox.
+- `docs/manual_testing.md` gains section H, a manual plan for the web app.
+- A Jira API token was found in the git history: hard-coded in
+  `backend/create_jira_epics.py` from 11 July to 16 August 2026, and missed by the August
+  history rewrite. It has been revoked and replaced. `tests/test_no_secrets.py` now fails
+  if a tracked file contains a credential-shaped string or an env file becomes tracked.
+- The laptop's pre-rewrite branches and the server's merged `fix/document-routing`
+  branch were deleted; every copy now has only `main`.
+
 ## GTD App: Star, Project Buttons, Clarify All — November 2026 (`feat/star-chips-clarify-all`)
 
 - **Star next actions.** A star on each Next card marks it as one to do next and turns

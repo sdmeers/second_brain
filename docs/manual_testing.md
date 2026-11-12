@@ -176,6 +176,26 @@ Off by default; the API stays open exactly as before. To enable:
 
 ---
 
+## H. GTD web app
+
+Open `https://<server>.<tailnet>.ts.net/app/` on a phone with Tailscale connected. After
+each step, the file named should show the change in Obsidian.
+
+| # | Step | Expected |
+|---|---|---|
+| H1 | Tap **+**, type a thought, Enter | "✓ 1 added"; a new line in `Captured.md` ending `via GTD app` |
+| H2 | Tap **+**, tap the mic, speak, **Done** | "Voice note · Transcribing…" then the transcript in Captured; audio in `00_System/Inbox/*_voice.*` |
+| H3 | Captured → tap an item → **Next** → a context → a project button → Save | Leaves Captured; line in `Next_Actions.md` with `@context` and `#project/…` |
+| H4 | **Clarify all** → Save & next / Skip / Trash through several items | Header counts "2 of n"; skipped items stay; Trash offers Undo |
+| H5 | Next → drag a card to the top | Order persists after 30 s (the sweeper no longer re-sorts) and matches `Next_Actions.md` |
+| H6 | Next → tap a star | Card turns gold; line gains `#focus`; `/next` in Telegram shows ⭐ |
+| H7 | Tick an action that has a project | Undo toast; "What's next for …?" offers roadmap steps; Telegram sends its prompt too |
+| H8 | Projects → open one → add a step, drag it, **↑** to make it a next action | `## Project Steps` updates; the step moves to `Next_Actions.md` |
+| H9 | Projects → a finished project → **Archive** → then **Restore** from Archived | Folder moves to `05_Archive/02_Projects/<Category>/` and back; `status` flips |
+| H10 | Airplane mode → capture, tick, reorder → reconnect | Pill shows "Offline · n to sync", then "Synced"; all changes are in the files |
+| H11 | Edit an action in Obsidian while the phone is offline and the same action is changed there | On reconnect: "1 change couldn't be applied"; the Obsidian wording wins |
+| H12 | Record a voice note in airplane mode → reconnect | "Voice note · Waiting to upload", then transcribed |
+
 ## Merging
 
 Once you are satisfied:

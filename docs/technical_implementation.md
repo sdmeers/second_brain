@@ -361,7 +361,7 @@ Both are configured in `backend/pyproject.toml`.
 
 ```bash
 cd backend
-uv run pytest              # ~320 tests, ~2s
+uv run pytest              # ~520 tests, ~3s
 uv run ruff check .        # must pass clean
 uv run ruff check . --fix  # apply safe autofixes
 ```
@@ -382,6 +382,7 @@ no network calls.
 | `test_clarify_ops.py` | Every clarify outcome (shared by Telegram and the web app), capture, and removing items from Captured. |
 | `test_voice_capture.py` | Voice upload: format handling, storage, duplicate uploads, silence, retryable vs permanent failures. |
 | `test_projects.py` | Project listing and the stuck flag, roadmap edits, promotion, archive and restore. |
+| `test_no_secrets.py` | No credential-shaped strings in tracked files; `backend/.env` stays ignored. |
 | `test_regressions.py` | One test per confirmed historical bug. |
 | `test_urls.py` | URL normalisation for duplicate-capture detection. |
 | `test_embedding_resilience.py` | Texts-per-minute pacing, `retryDelay` handling, and a failed embed leaving the existing index intact. |

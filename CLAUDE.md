@@ -32,7 +32,7 @@ Testing and linting (both configured in `backend/pyproject.toml`):
 
 ```bash
 cd backend
-uv run pytest              # ~320 tests, ~2s, no vault/API key/network needed
+uv run pytest              # ~520 tests, ~3s, no vault/API key/network needed
 uv run ruff check .        # must pass clean
 uv run ruff check . --fix  # apply safe autofixes
 ```

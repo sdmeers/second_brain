@@ -7,11 +7,11 @@ This guide outlines your day-to-day workflow with the Second Brain, leveraging t
 ## 🔄 The 5 GTD Stages in Practice
 
 1. **Capture:** Get everything out of your head with zero friction.
-   - **Voice:** Send a voice note in Telegram while driving or walking. The local GPU transcribes and saves it to `01_Tasks/Captured.md`.
-   - **Text:** Type `/in <thought>` in Telegram or drop files into `00_System/Inbox/`.
+   - **Voice:** Send a voice note in Telegram, or tap **+** then the mic in the GTD app, while driving or walking. It is transcribed and saved to `01_Tasks/Captured.md`.
+   - **Text:** Type `/in <thought>` in Telegram, tap **+** in the GTD app, or drop files into `00_System/Inbox/`.
    - **Reference/Files:** Send `/file <URL/PDF>` to route straight to the AI Librarian (skipping GTD triage).
 2. **Clarify:** Process your capture backlog.
-   - Run `/clarify` in Telegram to triage items through an interactive 8-option GTD menu (`Next Action`, `Existing Project Roadmap`, `New Project`, `Waiting For`, `Someday/Maybe`, `Pass to AI Librarian`, `2-Min Rule`, `Trash`).
+   - Tap an item on the GTD app's **Captured** tab (or **Clarify all** to step through the lot), or run `/clarify` in Telegram to triage items through an interactive 8-option GTD menu (`Next Action`, `Existing Project Roadmap`, `New Project`, `Waiting For`, `Someday/Maybe`, `Pass to AI Librarian`, `2-Min Rule`, `Trash`).
    - Use the built-in **Telegram Visual Calendar Picker** for 1-tap date deferrals.
 3. **Organise:** Everything lands in its exact, structured home:
    - `01_Tasks/Next_Actions.md` for immediate actions tagged with `@context` and `#project/<Name>`.
@@ -36,7 +36,7 @@ The Unified Telegram Bot is your central command interface.
 | Command | Purpose & Description |
 | :--- | :--- |
 | *(text)* | **Q&A** — Natural language conversational Q&A against your vault (with 5-turn context memory). |
-| *(voice)* | **Capture** — Transcribes speech via local Faster-Whisper and logs to `01_Tasks/Captured.md`. |
+| *(voice)* | **Capture** — Transcribes speech via Gemini and logs to `01_Tasks/Captured.md`. A note that is phrased as a question is answered instead. |
 | `/in <text>` | **GTD Capture** — Append a raw thought directly to `01_Tasks/Captured.md`. |
 | `/file <URL/doc>` | **Direct Filing** — Passes URLs, PDFs, or text directly to the AI Librarian (skipping GTD clarify). |
 | `/research <URL>` | **Deep Research** — Ingests content into Research Brain with full knowledge graph & concept extraction. |
@@ -85,9 +85,14 @@ the same Markdown files, so the app, Telegram and Obsidian always agree.
 
 - **Capture:** tap **+**, then type, or tap the mic and speak. It lands in Captured.
 - **Clarify:** open the **Captured** tab and tap an item. Choose what it is; only the
-  questions that choice needs appear. Save, and tap the next one.
+  questions that choice needs appear, and projects are one-tap buttons. Save, and tap
+  the next one, or use **Clarify all** to be walked through every item with Save & next
+  and Skip.
 - **Engage:** **Next**, **Waiting** and **Someday** list your actions in the order you
   have dragged them. Tick to complete (Undo for five seconds), tap to edit or move.
+- **Star:** tap the star on a next action to mark it as one of the few you are doing
+  next. The card turns gold. It is a `#focus` tag on the line, so it shows on every
+  device and in Obsidian, and as ⭐ in Telegram `/next`.
 - **Projects:** the **Projects** tab shows each project and flags any that are *Stuck*
   (nothing in Next or Waiting). Open one to see its actions and roadmap, add and reorder
   steps, move a step up to Next, or archive the project when it is finished.

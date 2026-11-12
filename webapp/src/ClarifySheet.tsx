@@ -73,14 +73,25 @@ export function ClarifySheet({ item, category: initialCategory, projects, knownC
     setProject(""); // projects belong to one area
   };
 
+  // With nothing chosen yet, a corrected wording can still be saved on its own: fixing a
+  // transcription shouldn't force you to decide where the item goes.
+  const rewordOnly = !outcome && !!wording && wording !== item.text;
   const ready =
-    !!wording &&
-    !!outcome &&
-    (outcome !== "waiting" || !!waitingOn.trim()) &&
-    (outcome !== "project_step" || !!project) &&
-    (outcome !== "new_project" || (!!name.trim() && !!firstAction.trim()));
+    rewordOnly ||
+    (!!wording &&
+      !!outcome &&
+      (outcome !== "waiting" || !!waitingOn.trim()) &&
+      (outcome !== "project_step" || !!project) &&
+      (outcome !== "new_project" || (!!name.trim() && !!firstAction.trim())));
 
   const save = () => {
+    if (rewordOnly) {
+      store.edit("captured", item.raw, { description: wording });
+      // The item stays in Captured; in a run-through, carry on to the next one.
+      if (run) run.onSkip();
+      else onClose();
+      return;
+    }
     if (!outcome || !ready) return;
     const fields: ClarifyFields = {};
     if (wording !== item.text) fields.text = wording;
@@ -240,7 +251,13 @@ export function ClarifySheet({ item, category: initialCategory, projects, knownC
                 );
               })}
             </div>
-            {outcome && <p className="mt-2 text-xs text-slate-400">{OUTCOMES.find((o) => o.id === outcome)!.hint}.</p>}
+            {outcome ? (
+              <p className="mt-2 text-xs text-slate-400">{OUTCOMES.find((o) => o.id === outcome)!.hint}.</p>
+            ) : (
+              <p className="mt-2 text-xs text-slate-400">
+                {rewordOnly ? "Choose one, or save just the corrected wording and decide later." : "Choose one to file it."}
+              </p>
+            )}
           </div>
 
           {showArea && (
@@ -314,7 +331,7 @@ export function ClarifySheet({ item, category: initialCategory, projects, knownC
             disabled={!ready}
             className="flex-1 rounded-xl bg-(--accent) py-3 text-sm font-semibold text-white disabled:opacity-40 dark:text-slate-950"
           >
-            {outcome === "trash" ? "Trash it" : run && run.position < run.of ? "Save & next" : "Save"}
+            {rewordOnly ? "Save wording" : outcome === "trash" ? "Trash it" : run && run.position < run.of ? "Save & next" : "Save"}
           </button>
         </div>
       </div>

@@ -319,6 +319,10 @@ export default function App() {
             )}
           </>
         )}
+        <p className="mt-10 text-center text-[11px] text-slate-300 dark:text-slate-700">
+          Version{" "}
+          {new Date(__BUILD__).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+        </p>
       </main>
 
       {/* On phones the tabs sit at the bottom, within thumb reach. This must stay outside

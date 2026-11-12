@@ -7,6 +7,8 @@ import { VitePWA } from "vite-plugin-pwa";
 // same-origin in production. In dev, /api is proxied to the local backend.
 export default defineConfig({
   base: "/app/",
+  // Shown at the foot of the app, so it is obvious which build a device is running.
+  define: { __BUILD__: JSON.stringify(new Date().toISOString()) },
   plugins: [
     react(),
     tailwindcss(),

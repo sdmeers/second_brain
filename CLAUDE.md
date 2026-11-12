@@ -62,14 +62,14 @@ The Chrome extension (`extension/`) is a plain Manifest V3 extension (no build s
 
 ### Ingestion → classification → filing pipeline
 
-All input channels (Telegram bot, Chrome extension POSTs to `/process`, Gmail IMAP poller, filesystem drops into `00_System/Inbox/`) funnel through a **SQLite-backed queue** (`backend/ingestion/queue.py`) that a background **watcher loop** (`backend/ingestion/watcher.py`, started in FastAPI's `startup` event in `backend/api/routes.py`) polls continuously.
+All input channels (Telegram bot, Chrome extension POSTs to `/process`, Gmail IMAP poller, filesystem drops into `00_System/Inbox/`) funnel through a **SQLite-backed queue** (`backend/ingestion/queue.py`) that a background **watcher loop** (`backend/ingestion/watcher.py`, started by FastAPI's `lifespan` context in `backend/api/routes.py`) polls continuously.
 
 The watcher/`classifier.py` routes each item to one of three destinations:
 - **GTD Engine** — interactive triage via the `/clarify` state machine (`backend/ingestion/handlers/clarify.py`) into `01_Tasks/*.md` and project roadmaps.
 - **AI Librarian** — direct semantic filing into P.A.R.A. reference folders under `04_Resources/` (`backend/utils/librarian.py`).
 - **Deep Research** — full extraction + concept-graph pipeline (`backend/processing/capture.py`, `brain_node.py`, `concept_updater.py`) into `04_Resources/Research_Brain/`.
 
-Slash commands (`/research`, `/file`, etc.) deterministically bypass classifier heuristics and route straight to their handler — see `backend/ingestion/handlers/` (`voice.py`, `project.py`, `clarify.py`, `engage.py`, `instruction.py`, `task.py`) and `backend/ingestion/telegram.py` for the Telegram command dispatch table (full reference in the README's "Telegram Command Reference" table).
+Slash commands (`/research`, `/file`, etc.) deterministically bypass classifier heuristics and route straight to their handler — see `backend/ingestion/handlers/` (`voice.py`, `project.py`, `clarify.py`, `engage.py`, `instruction.py`, `task.py`, `undo.py`) and `backend/ingestion/telegram.py` for the Telegram command dispatch table (full reference in the README's "Telegram Command Reference" table).
 
 ### The vault is the schema
 
@@ -98,7 +98,7 @@ vs `01_Tasks/Next_Actions.md`).
 
 ### Config and paths
 
-`backend/config.py` is the single source of truth for all vault sub-paths (derived from `OBSIDIAN_VAULT_PATH`) and provider settings (`LLM_PROVIDER`/`EMBEDDING_PROVIDER`: `gemini` | `openai` | `ollama`, set via `backend/.env`). It also creates required vault directories on import and will raise at import time if `OBSIDIAN_VAULT_PATH` (and the active provider's API key) isn't set — so any script importing `backend.config` requires a valid `.env` to even load.
+`backend/config.py` is the single source of truth for all vault sub-paths (derived from `OBSIDIAN_VAULT_PATH`) and provider settings (`LLM_PROVIDER`/`EMBEDDING_PROVIDER`: `gemini` | `openai` | `ollama`, set via `backend/.env`). Importing it does not write to disk (`ensure_vault_layout()` creates the vault directories and is called explicitly at startup), but it will raise at import time if `OBSIDIAN_VAULT_PATH` (and the active provider's API key) isn't set — so any script importing `backend.config` requires a valid `.env` to even load.
 
 ### RAG / Q&A
 

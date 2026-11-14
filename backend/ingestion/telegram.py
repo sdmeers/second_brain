@@ -178,9 +178,11 @@ async def process_telegram_message(message: dict, token: str, http_client):
     # output at all, and the only way to tell what happened is to infer it from file
     # mtimes -- which is how a /project ... add report went undiagnosed twice.
     if raw_text:
-        note = "" if text == raw_text else f" (unwrapped from {raw_text!r})"
+        # Mask identifiers (NHS number, card number...) so they never reach journald.
+        from backend.feeds.masking import redact
+        note = "" if text == raw_text else f" (unwrapped from {redact(raw_text)!r})"
         kind = "COMMAND" if text.startswith("/") else "text"
-        print(f"Backend [Telegram]: {kind} from {chat_id}: {text[:120]!r}{note}")
+        print(f"Backend [Telegram]: {kind} from {chat_id}: {redact(text)[:120]!r}{note}")
 
     voice = message.get("voice")
     audio = message.get("audio")

@@ -91,3 +91,6 @@ docs/screenshots/*.log
 # Actions web app build output
 webapp/dist/
 webapp/dev-dist/
+
+# Prompts are code: never let the scratch-note patterns above ignore one
+!backend/prompts/*.md

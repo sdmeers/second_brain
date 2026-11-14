@@ -44,6 +44,12 @@ def init_vector_db():
         cursor.execute("ALTER TABLE brain_chunks ADD COLUMN file_mtime REAL")
     if "file_size" not in existing_cols:
         cursor.execute("ALTER TABLE brain_chunks ADD COLUMN file_size INTEGER")
+
+    # Note type and date from frontmatter, for date-aware retrieval later.
+    from backend import config as _config
+    if _config.ENABLE_FEED_RETRIEVAL:
+        from backend.feeds.retrieval import ensure_index_columns
+        ensure_index_columns(cursor)
     
     # 2. Virtual VSS table for vector search (using vss0 module)
     cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='vss_brain_chunks'")
@@ -173,7 +179,12 @@ async def index_file(vault_relative_path: str, full_file_path: str, file_hash: s
                 INSERT INTO vss_brain_chunks (rowid, vector)
                 VALUES (?, ?)
             """, (row_id, json.dumps(vector)))
-            
+
+        from backend import config as _config
+        if _config.ENABLE_FEED_RETRIEVAL:
+            from backend.feeds.retrieval import tag_indexed_file
+            tag_indexed_file(cursor, vault_relative_path, content)
+
         conn.commit()
         print(f"RAG [VectorStore]: Successfully indexed {len(chunks)} chunks for {vault_relative_path}")
     except Exception as e:

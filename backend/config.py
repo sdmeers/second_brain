@@ -141,3 +141,18 @@ PORT = int(os.getenv("PORT", 8080))
 # Optional shared secret for the HTTP API (/process, /query). When set, callers must
 # send `Authorization: Bearer <token>`. Unset leaves the API open, as before.
 API_AUTH_TOKEN = os.getenv("API_AUTH_TOKEN", "")
+
+# --- Context-ingestion feeds (backend/feeds/) ---------------------------------------
+# Ingestion state and the cost ledger live outside the vault so Syncthing never sees them.
+FEEDS_DB_PATH = os.getenv(
+    "FEEDS_DB_PATH", os.path.join(os.path.dirname(os.path.abspath(__file__)), "state", "feeds.db"))
+# Raw exports sit under the inbox, which is excluded from Syncthing and from the RAG index.
+FEEDS_RAW_PATH = os.path.join(INBOX_PATH, "Raw")
+# Hard monthly cap on model spend by the feeds, in pence. Existing features are not capped.
+FEEDS_MONTHLY_BUDGET_PENCE = float(os.getenv("FEEDS_MONTHLY_BUDGET_PENCE", "300"))
+# A single run estimated above this must be approved before it starts. Backfills always ask.
+FEEDS_APPROVAL_THRESHOLD_PENCE = float(os.getenv("FEEDS_APPROVAL_THRESHOLD_PENCE", "25"))
+# Provider prices are in USD; set a little high so the ledger over- rather than under-counts.
+FEEDS_USD_TO_GBP = float(os.getenv("FEEDS_USD_TO_GBP", "0.80"))
+# Lets chat read the open task lists and stores note type/date in the index. Off by default.
+ENABLE_FEED_RETRIEVAL = os.getenv("ENABLE_FEED_RETRIEVAL", "false").lower() == "true"

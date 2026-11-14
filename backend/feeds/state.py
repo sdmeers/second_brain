@@ -49,6 +49,7 @@ def connect() -> sqlite3.Connection:
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )""")
+    conn.execute("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS journal_prompts (
             chat_id INTEGER NOT NULL,
@@ -90,3 +91,15 @@ def list_seen(feed: str) -> list[dict]:
     with connect() as conn:
         rows = conn.execute("SELECT * FROM seen_items WHERE feed = ? ORDER BY source_id", (feed,)).fetchall()
     return [dict(r) for r in rows]
+
+
+def get_value(key: str, default: str | None = None) -> str | None:
+    with connect() as conn:
+        row = conn.execute("SELECT value FROM kv WHERE key = ?", (key,)).fetchone()
+    return row[0] if row else default
+
+
+def set_value(key: str, value: str) -> None:
+    with connect() as conn:
+        conn.execute("INSERT INTO kv (key, value) VALUES (?, ?) "
+                     "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, value))

@@ -1,0 +1,9 @@
+[Unit]
+Description=Build the Second Brain personal email digest each morning
+
+[Timer]
+OnCalendar=*-*-* 06:45:00 Europe/London
+Persistent=true
+
+[Install]
+WantedBy=timers.target

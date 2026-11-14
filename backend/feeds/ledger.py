@@ -115,3 +115,10 @@ def summary(month: str | None = None) -> dict:
     total = sum(by_feed.values())
     return {"month": month, "by_feed": by_feed, "total_pence": total,
             "remaining_pence": config.FEEDS_MONTHLY_BUDGET_PENCE - total}
+
+
+def spent_today_pence(feed: str) -> float:
+    with state.connect() as conn:
+        row = conn.execute("SELECT COALESCE(SUM(cost_pence), 0) FROM ledger WHERE feed = ? AND ts LIKE ?",
+                           (feed, datetime.now().strftime("%Y-%m-%d") + "%")).fetchone()
+    return float(row[0])

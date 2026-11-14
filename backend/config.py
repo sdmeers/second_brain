@@ -182,3 +182,17 @@ CHAT_NOTES_DIR = "04_Resources/AI_Conversations"
 CHAT_EXCLUSIONS_FILE = os.path.join(INTERNAL_PATH, "Chat_Exclusions.md")
 # A backfill stops while this much of the month's budget is still left for the other feeds.
 FEEDS_BACKFILL_HEADROOM_PENCE = float(os.getenv("FEEDS_BACKFILL_HEADROOM_PENCE", "50"))
+
+# Personal email digest (backend/feeds/mail.py). Read-only Gmail access over OAuth.
+ENABLE_EMAIL_FEED = os.getenv("ENABLE_EMAIL_FEED", "false").lower() == "true"
+_STATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state")
+GOOGLE_CLIENT_FILE = os.getenv("GOOGLE_CLIENT_FILE", os.path.join(_STATE_DIR, "google_client.json"))
+GOOGLE_TOKEN_FILE = os.getenv("GOOGLE_TOKEN_FILE", os.path.join(_STATE_DIR, "google_token.json"))
+EMAIL_RULES_FILE = os.path.join(INTERNAL_PATH, "Email_Rules.md")
+EMAIL_DAILY_MAX_MESSAGES = int(os.getenv("EMAIL_DAILY_MAX_MESSAGES", "20"))
+EMAIL_DAILY_MAX_PENCE = float(os.getenv("EMAIL_DAILY_MAX_PENCE", "3"))
+EMAIL_MAX_BODY_CHARS = int(os.getenv("EMAIL_MAX_BODY_CHARS", "6000"))
+EMAIL_FIRST_RUN_DAYS = int(os.getenv("EMAIL_FIRST_RUN_DAYS", "7"))
+# "single": 04_Resources/Email_Digest/<year>/<month>/. "by_area": <area>/Email/.
+EMAIL_NOTES_FILING = os.getenv("EMAIL_NOTES_FILING", "single").lower()
+EMAIL_NOTES_DIR = "04_Resources/Email_Digest"

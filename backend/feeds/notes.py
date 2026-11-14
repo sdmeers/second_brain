@@ -59,15 +59,18 @@ def write_feed_note(*, feed: str, source_id: str, note_type: str, title: str, bo
 
     # The indexer embeds every new note; count that against the feed budget too.
     embed_tokens = ledger.estimate_tokens(text)
-    if report:
-        report.notes.append(rel_path)
     if dry_run:
         if report:
+            report.notes.append(rel_path)
             report.cost_pence += ledger.cost_pence(config.EMBEDDING_MODEL, embed_tokens, 0)
         return rel_path
 
+    # Raises BudgetExceeded rather than write a note whose indexing would breach the cap.
+    ledger.check_budget(feed, ledger.cost_pence(config.EMBEDDING_MODEL, embed_tokens, 0), use_reserve=True)
     atomic_write(os.path.join(config.OBSIDIAN_VAULT_PATH, rel_path), text)
     state.mark_seen(feed, source_id, source_hash, note_path=rel_path, original_date=original)
+    if report:
+        report.notes.append(rel_path)
     pence = ledger.record(feed, config.EMBEDDING_MODEL, "embed-estimate", embed_tokens, 0)
     if report:
         report.cost_pence += pence

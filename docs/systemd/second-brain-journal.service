@@ -1,0 +1,11 @@
+[Unit]
+Description=Second Brain evening journal prompt
+After=network-online.target
+
+[Service]
+Type=oneshot
+# EDIT THESE PATHS for your machine. Runs the venv interpreter directly (no `uv run`),
+# so run `uv sync` in backend/ after dependency changes.
+# Sends nothing unless ENABLE_JOURNAL_FEED=true in backend/.env.
+WorkingDirectory=/home/username/second_brain
+ExecStart=/home/username/second_brain/backend/.venv/bin/python3 -m backend.feeds.journal prompt

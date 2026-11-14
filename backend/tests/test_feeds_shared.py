@@ -24,6 +24,7 @@ def feeds_db(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "FEEDS_DB_PATH", str(tmp_path / "feeds.db"))
     monkeypatch.setattr(config, "FEEDS_MONTHLY_BUDGET_PENCE", 300.0)
     monkeypatch.setattr(config, "FEEDS_APPROVAL_THRESHOLD_PENCE", 25.0)
+    monkeypatch.setattr(config, "FEEDS_INDEXING_RESERVE_PENCE", 10.0)
     monkeypatch.setattr(config, "FEEDS_USD_TO_GBP", 0.80)
 
 
@@ -103,9 +104,20 @@ def test_unknown_model_is_charged_at_the_expensive_fallback():
 def test_budget_refuses_a_call_that_could_breach_the_cap():
     ledger.record("journal", "gemini-3.1-flash-lite", "generate", 0, 2_000_000)   # 240p
     assert ledger.month_spent_pence() == pytest.approx(240.0)
-    ledger.check_budget("journal", 59.0)
+    ledger.check_budget("journal", 49.0)            # model calls stop 10p short of the cap
     with pytest.raises(ledger.BudgetExceeded):
-        ledger.check_budget("journal", 61.0)
+        ledger.check_budget("journal", 51.0)
+    ledger.check_budget("journal", 59.0, use_reserve=True)
+    with pytest.raises(ledger.BudgetExceeded):
+        ledger.check_budget("journal", 61.0, use_reserve=True)
+
+
+def test_note_write_is_refused_rather_than_breach_the_cap(vault):
+    ledger.record("x", "gemini-3.1-flash-lite", "generate", 0, 2_500_000)   # exactly 300p
+    with pytest.raises(ledger.BudgetExceeded):
+        _write(vault, source_id="cap-1", title="Over the cap")
+    assert not list((vault / "03_Areas/Journal").glob("Over the cap*"))
+    assert ledger.month_spent_pence() == pytest.approx(300.0)
 
 
 def test_cap_is_shared_across_feeds_and_resets_each_month():
@@ -154,7 +166,7 @@ async def test_generate_records_real_usage_including_thinking(fake_model):
 
 
 async def test_generate_refuses_when_budget_is_gone(fake_model):
-    ledger.record("x", "gemini-3.1-flash-lite", "generate", 0, 2_500_000)   # 300p: cap reached
+    ledger.record("x", "gemini-3.1-flash-lite", "generate", 0, 2_420_000)   # 290.4p: only the reserve left
     with pytest.raises(ledger.BudgetExceeded):
         await llm.generate("email", "hello")
     assert fake_model.calls == []

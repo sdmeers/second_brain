@@ -64,9 +64,13 @@ def remaining_pence() -> float:
     return config.FEEDS_MONTHLY_BUDGET_PENCE - month_spent_pence()
 
 
-def check_budget(feed: str, worst_case_pence: float) -> None:
-    """Raise BudgetExceeded unless the worst case still fits under this month's cap."""
-    remaining = remaining_pence()
+def check_budget(feed: str, worst_case_pence: float, use_reserve: bool = False) -> None:
+    """Raise BudgetExceeded unless the worst case still fits under this month's cap.
+
+    Model calls stop short of the cap by the indexing reserve; only note writes pass
+    ``use_reserve=True``. Total spend therefore never passes the cap.
+    """
+    remaining = remaining_pence() - (0 if use_reserve else config.FEEDS_INDEXING_RESERVE_PENCE)
     if worst_case_pence > remaining:
         raise BudgetExceeded(
             f"{feed}: call could cost {format_pence(worst_case_pence)} but only "

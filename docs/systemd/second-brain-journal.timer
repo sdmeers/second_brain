@@ -1,0 +1,10 @@
+[Unit]
+Description=Send the Second Brain evening journal prompt at 22:00 UK time
+
+[Timer]
+OnCalendar=*-*-* 22:00:00 Europe/London
+# Not persistent: a prompt missed while the server was down is skipped, not sent late.
+Persistent=false
+
+[Install]
+WantedBy=timers.target

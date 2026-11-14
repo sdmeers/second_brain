@@ -194,6 +194,11 @@ async def process_telegram_message(message: dict, token: str, http_client):
     os.makedirs(staging_path, exist_ok=True)
 
     try:
+        # Journal replies, /journal and /feeds. Does nothing unless ENABLE_JOURNAL_FEED is set.
+        from backend.feeds.journal_telegram import maybe_handle as maybe_handle_journal
+        if await maybe_handle_journal(message, text, token, http_client):
+            return
+
         from backend.ingestion.handlers.clarify import handle_clarify_text_input
         if text and not text.startswith("/") and await handle_clarify_text_input(chat_id, text, token, http_client):
             return
@@ -308,6 +313,11 @@ async def process_telegram_message(message: dict, token: str, http_client):
   /ask [question]      Ask anything (or type naturally)
   /jira [summary]      Create Jira ticket in backlog
   /help                Show this command reference"""
+                from backend import config as _config
+                if _config.ENABLE_JOURNAL_FEED:
+                    help_text += ("\n\n━━━ 📓 **JOURNAL & FEEDS** ━━━\n"
+                                  "  /journal [text]      Add a journal entry (or send /journal, then a voice note)\n"
+                                  "  /feeds               Feed status and this month's spend")
                 await send_telegram_message_safe(http_client, token, chat_id, help_text)
                 return
             elif cmd_part == "/clarify":

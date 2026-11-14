@@ -150,9 +150,15 @@ FEEDS_DB_PATH = os.getenv(
 FEEDS_RAW_PATH = os.path.join(INBOX_PATH, "Raw")
 # Hard monthly cap on model spend by the feeds, in pence. Existing features are not capped.
 FEEDS_MONTHLY_BUDGET_PENCE = float(os.getenv("FEEDS_MONTHLY_BUDGET_PENCE", "300"))
+# Held back from model calls so the small cost of indexing each new note always fits under
+# the cap. Model calls stop at budget minus reserve; note writes may use the reserve.
+FEEDS_INDEXING_RESERVE_PENCE = float(os.getenv("FEEDS_INDEXING_RESERVE_PENCE", "10"))
 # A single run estimated above this must be approved before it starts. Backfills always ask.
 FEEDS_APPROVAL_THRESHOLD_PENCE = float(os.getenv("FEEDS_APPROVAL_THRESHOLD_PENCE", "25"))
 # Provider prices are in USD; set a little high so the ledger over- rather than under-counts.
 FEEDS_USD_TO_GBP = float(os.getenv("FEEDS_USD_TO_GBP", "0.80"))
 # Lets chat read the open task lists and stores note type/date in the index. Off by default.
 ENABLE_FEED_RETRIEVAL = os.getenv("ENABLE_FEED_RETRIEVAL", "false").lower() == "true"
+# Daily voice journal (backend/feeds/journal.py). Off by default.
+ENABLE_JOURNAL_FEED = os.getenv("ENABLE_JOURNAL_FEED", "false").lower() == "true"
+JOURNAL_DIR = "03_Areas/Journal"   # vault-relative; notes go in a sub-folder per year

@@ -22,3 +22,17 @@ def store_raw(feed: str, source_path: str, report: RunReport | None = None, dry_
         os.makedirs(dest_dir, exist_ok=True)
         shutil.copy2(source_path, dest)
     return dest
+
+
+def store_raw_bytes(feed: str, filename: str, data: bytes, report: RunReport | None = None,
+                    dry_run: bool = False) -> str:
+    """Write bytes (for example a voice recording) into the feed's raw store."""
+    dest_dir = os.path.join(config.FEEDS_RAW_PATH, sanitize_filename(feed))
+    dest = os.path.join(dest_dir, sanitize_filename(filename))
+    if report:
+        report.raw_files.append(dest)
+    if not dry_run:
+        os.makedirs(dest_dir, exist_ok=True)
+        with open(dest, "wb") as f:
+            f.write(data)
+    return dest

@@ -39,6 +39,17 @@ def connect() -> sqlite3.Connection:
         )""")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_ledger_month ON ledger(month)")
     conn.execute("""
+        CREATE TABLE IF NOT EXISTS chat_exports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            provider TEXT NOT NULL,
+            raw_path TEXT NOT NULL,
+            status TEXT NOT NULL,
+            estimate_pence REAL NOT NULL DEFAULT 0,
+            qualifying INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )""")
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS journal_prompts (
             chat_id INTEGER NOT NULL,
             message_id INTEGER NOT NULL,

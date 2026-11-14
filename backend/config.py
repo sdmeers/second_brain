@@ -168,3 +168,17 @@ JOURNAL_DIR = "03_Areas/Journal"   # vault-relative; notes go in a sub-folder pe
 ENABLE_CALENDAR_FEED = os.getenv("ENABLE_CALENDAR_FEED", "false").lower() == "true"
 GCAL_ICAL_URLS = [u.strip().strip('"') for u in os.getenv("GCAL_ICAL_URL", "").split(",") if u.strip()]
 CALENDAR_LOOKAHEAD_DAYS = int(os.getenv("CALENDAR_LOOKAHEAD_DAYS", "7"))
+
+# AI conversation summaries (backend/feeds/chats.py). Exports dropped in CHAT_EXPORTS_PATH.
+ENABLE_CHATS_FEED = os.getenv("ENABLE_CHATS_FEED", "false").lower() == "true"
+CHAT_EXPORTS_PATH = os.getenv("CHAT_EXPORTS_PATH", os.path.expanduser("~/exports"))
+CHAT_MIN_CHARS = int(os.getenv("CHAT_MIN_CHARS", "600"))          # shorter conversations are skipped
+CHAT_MAX_CHARS = int(os.getenv("CHAT_MAX_CHARS", "60000"))        # longer ones are cut in the middle
+CHAT_ACTION_WINDOW_DAYS = int(os.getenv("CHAT_ACTION_WINDOW_DAYS", "14"))
+# "single": all notes under 04_Resources/AI_Conversations/<year>/.
+# "by_area": each note under the area or resource folder the model picks, in AI_Conversations/.
+CHAT_NOTES_FILING = os.getenv("CHAT_NOTES_FILING", "single").lower()
+CHAT_NOTES_DIR = "04_Resources/AI_Conversations"
+CHAT_EXCLUSIONS_FILE = os.path.join(INTERNAL_PATH, "Chat_Exclusions.md")
+# A backfill stops while this much of the month's budget is still left for the other feeds.
+FEEDS_BACKFILL_HEADROOM_PENCE = float(os.getenv("FEEDS_BACKFILL_HEADROOM_PENCE", "50"))

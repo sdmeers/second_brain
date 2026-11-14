@@ -1,0 +1,9 @@
+[Unit]
+Description=Second Brain AI conversation export intake
+After=network-online.target
+
+[Service]
+Type=oneshot
+# EDIT THESE PATHS for your machine. Does nothing unless ENABLE_CHATS_FEED=true.
+WorkingDirectory=/home/username/second_brain
+ExecStart=/home/username/second_brain/backend/.venv/bin/python3 -m backend.feeds.chats poll

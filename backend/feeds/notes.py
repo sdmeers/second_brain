@@ -2,13 +2,14 @@
 
 import hashlib
 import os
+import re
 from datetime import date, datetime
 
 from backend import config
 from backend.feeds import ledger, state
 from backend.feeds.dryrun import RunReport
 from backend.utils.sanitize import sanitize_filename
-from backend.vault.tasks import dump_frontmatter
+from backend.vault.tasks import FRONTMATTER_RE, dump_frontmatter
 from backend.vault.writer import atomic_write
 
 
@@ -18,6 +19,20 @@ def content_hash(*parts: str) -> str:
         h.update(part.encode("utf-8"))
         h.update(b"\x00")
     return h.hexdigest()
+
+
+def existing_body(rel_path: str | None) -> str:
+    """A note's body without frontmatter or title, so a rewrite can keep what is there
+    (earlier entries, and anything added by hand in Obsidian)."""
+    if not rel_path:
+        return ""
+    try:
+        with open(os.path.join(config.OBSIDIAN_VAULT_PATH, rel_path), encoding="utf-8") as f:
+            text = f.read()
+    except OSError:
+        return ""
+    text = FRONTMATTER_RE.sub("", text, count=1).lstrip("\n")
+    return re.sub(r"\A# [^\n]*\n+", "", text).strip()
 
 
 def write_feed_note(*, feed: str, source_id: str, note_type: str, title: str, body: str,

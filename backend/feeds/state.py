@@ -73,3 +73,9 @@ def mark_seen(feed: str, source_id: str, content_hash: str, note_path: str | Non
             "ingested_at = excluded.ingested_at",
             (feed, source_id, content_hash, note_path, original_date,
              datetime.now().isoformat(timespec="seconds")))
+
+
+def list_seen(feed: str) -> list[dict]:
+    with connect() as conn:
+        rows = conn.execute("SELECT * FROM seen_items WHERE feed = ? ORDER BY source_id", (feed,)).fetchall()
+    return [dict(r) for r in rows]

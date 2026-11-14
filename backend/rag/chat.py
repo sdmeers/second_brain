@@ -35,12 +35,13 @@ async def query_brain(user_query: str, chat_history: list = None, top_k: int = 5
     
     chunks = await search_similar_chunks(query_vector, top_k=effective_k)
 
-    # Open task lists are not in the vector index; add them when the question is about
-    # promises or outstanding actions. Off unless ENABLE_FEED_RETRIEVAL is set.
+    # Add the open task lists (not in the vector index) for questions about promises or
+    # actions, and today's daily note for questions about the calendar. Off unless
+    # ENABLE_FEED_RETRIEVAL is set.
     from backend import config as _config
     if _config.ENABLE_FEED_RETRIEVAL:
-        from backend.feeds.retrieval import task_chunks
-        chunks.extend(task_chunks(user_query))
+        from backend.feeds.retrieval import extra_chunks
+        chunks.extend(extra_chunks(user_query))
     
     # Hybrid Retrieval: Dynamically scan matching P.A.R.A Projects or Areas directories
     from backend.config import OBSIDIAN_VAULT_PATH

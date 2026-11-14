@@ -1,0 +1,9 @@
+[Unit]
+Description=Sync the personal calendar into the Second Brain daily note
+
+[Timer]
+OnCalendar=*-*-* 06:30:00 Europe/London
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -50,6 +50,34 @@ def task_chunks(query: str) -> list[dict]:
     return chunks
 
 
+_CALENDAR_QUESTION = re.compile(
+    r"\b(today|tonight|tomorrow|weekend|this week|next week|calendar|diary|schedule\w*|appointments?|"
+    r"what'?s on|am i (?:busy|free)|coming up|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b", re.I)
+
+
+def calendar_chunks(query: str) -> list[dict]:
+    """Today's daily note (events today and the days ahead) for calendar questions."""
+    if not _CALENDAR_QUESTION.search(query):
+        return []
+    from datetime import datetime
+
+    from backend.feeds import state
+    seen = state.get_seen("calendar", datetime.now().date().isoformat())
+    if not seen or not seen["note_path"]:
+        return []
+    try:
+        with open(os.path.join(config.OBSIDIAN_VAULT_PATH, seen["note_path"]), encoding="utf-8") as f:
+            text = f.read()
+    except OSError:
+        return []
+    return [{"file_path": seen["note_path"], "chunk_index": 0, "text": text[:_MAX_CHARS_PER_LIST],
+             "distance": 0.0}]
+
+
+def extra_chunks(query: str) -> list[dict]:
+    return task_chunks(query) + calendar_chunks(query)
+
+
 def ensure_index_columns(cursor) -> None:
     existing = {row[1] for row in cursor.execute("PRAGMA table_info(brain_chunks)")}
     for column in ("note_type", "note_date"):

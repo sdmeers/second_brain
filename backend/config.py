@@ -162,3 +162,9 @@ ENABLE_FEED_RETRIEVAL = os.getenv("ENABLE_FEED_RETRIEVAL", "false").lower() == "
 # Daily voice journal (backend/feeds/journal.py). Off by default.
 ENABLE_JOURNAL_FEED = os.getenv("ENABLE_JOURNAL_FEED", "false").lower() == "true"
 JOURNAL_DIR = "03_Areas/Journal"   # vault-relative; notes go in a sub-folder per year
+
+# Personal calendar (backend/feeds/calendar.py). One or more secret iCal addresses,
+# comma-separated. Treat them as secrets: never log them.
+ENABLE_CALENDAR_FEED = os.getenv("ENABLE_CALENDAR_FEED", "false").lower() == "true"
+GCAL_ICAL_URLS = [u.strip().strip('"') for u in os.getenv("GCAL_ICAL_URL", "").split(",") if u.strip()]
+CALENDAR_LOOKAHEAD_DAYS = int(os.getenv("CALENDAR_LOOKAHEAD_DAYS", "7"))

@@ -1,0 +1,9 @@
+[Unit]
+Description=Second Brain calendar sync (read-only)
+After=network-online.target
+
+[Service]
+Type=oneshot
+# EDIT THESE PATHS for your machine. Does nothing unless ENABLE_CALENDAR_FEED=true.
+WorkingDirectory=/home/username/second_brain
+ExecStart=/home/username/second_brain/backend/.venv/bin/python3 -m backend.feeds.calendar sync

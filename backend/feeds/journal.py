@@ -11,7 +11,6 @@ Run as a module to send the evening prompt:  python3 -m backend.feeds.journal pr
 
 import asyncio
 import os
-import re
 import sys
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -22,7 +21,6 @@ from backend import config
 from backend.feeds import ledger, llm, notes, raw, state
 from backend.feeds.dryrun import RunReport
 from backend.prompts import load_prompt
-from backend.vault.tasks import FRONTMATTER_RE
 
 FEED = "journal"
 ENTRY_FEED = "journal-entry"     # state key space for per-message de-duplication
@@ -75,20 +73,6 @@ class JournalResult:
 
 def journal_date_for(when: datetime) -> date:
     return (when - timedelta(hours=DAY_ROLLOVER_HOUR)).date()
-
-
-def _existing_body(rel_path: str | None) -> str:
-    """The body of today's note without frontmatter or title, so a second entry (and any
-    edits made in Obsidian) are kept when the note is rewritten."""
-    if not rel_path:
-        return ""
-    try:
-        with open(os.path.join(config.OBSIDIAN_VAULT_PATH, rel_path), encoding="utf-8") as f:
-            text = f.read()
-    except OSError:
-        return ""
-    text = FRONTMATTER_RE.sub("", text, count=1).lstrip("\n")
-    return re.sub(r"\A# [^\n]*\n+", "", text).strip()
 
 
 def _render_entry(when: datetime, via: str, transcript: str, extract: JournalExtract | None) -> str:
@@ -182,7 +166,7 @@ async def record_entry(*, text: str | None = None, audio: bytes | None = None,
 
     title = f"{day.isoformat()} Journal"
     seen = state.get_seen(FEED, day.isoformat())
-    earlier = _existing_body(seen["note_path"] if seen else None)
+    earlier = notes.existing_body(seen["note_path"] if seen else None)
     entry = _render_entry(when, via, transcript, extract)
     body = f"{earlier}\n\n{entry}" if earlier else entry
 

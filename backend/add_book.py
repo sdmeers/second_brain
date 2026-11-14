@@ -41,11 +41,10 @@ async def generate_book_node(title: str, author: str, atlas_themes: list[str]) -
     )
     
     try:
-        # Attempt 1: Use gemini-2.5-flash (legacy search)
-        print("  [Attempt 1] Using gemini-2.5-flash with Search Tool...")
-        # Reduced max_retries to 2 to fail faster and reach fallback during high demand (503)
+        # Attempt 1: the configured model, grounded with Google Search
+        print(f"  [Attempt 1] Using {GEMINI_MODEL} with Search Tool...")
         response = await call_gemini_with_retry(
-            model="gemini-2.5-flash",
+            model=GEMINI_MODEL,
             contents=prompt,
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,
@@ -60,58 +59,47 @@ async def generate_book_node(title: str, author: str, atlas_themes: list[str]) -
             ),
             max_retries=5
         )
-        
+
         if not response or not response.text or len(response.text.strip()) < 50:
-            raise ValueError(f"Empty or truncated response from 2.5-flash (Finish Reason: {getattr(response.candidates[0], 'finish_reason', 'Unknown')})")
+            finish_reason = getattr(response.candidates[0], "finish_reason", "Unknown") if response and response.candidates else "Unknown"
+            raise ValueError(f"Empty or truncated response from {GEMINI_MODEL} with search (Finish Reason: {finish_reason})")
 
     except Exception as e:
-        # Fallback if 2.5-flash is 503/429 or search tool is limited
-        if any(err in str(e).upper() for err in ["EMPTY", "429", "RESOURCE_EXHAUSTED", "503"]):
-            print(f"  [Attempt 2] Primary search failed or was empty ({str(e)[:30]}...). Trying {GEMINI_MODEL} for stability...")
-            
-            try:
-                # Use GEMINI_MODEL as a high-speed, more available model
-                # We try without search first as search often triggers 429 on free tier previews
-                sys_instr_with_schema = system_instruction + "\n\n7. JSON SCHEMA POPULATION: Return a JSON object following the OntologyExtraction schema."
-                cache_name = await get_or_create_context_cache(GEMINI_MODEL, sys_instr_with_schema)
-                
-                if cache_name:
-                    config = types.GenerateContentConfig(
-                        cached_content=cache_name,
-                        temperature=0.3,
-                        response_mime_type="application/json",
-                        response_schema=OntologyExtraction,
-                    )
-                else:
-                    config = types.GenerateContentConfig(
-                        system_instruction=sys_instr_with_schema,
-                        temperature=0.3,
-                        response_mime_type="application/json",
-                        response_schema=OntologyExtraction,
-                    )
-                
-                response = await call_gemini_with_retry(
-                    model=GEMINI_MODEL,
-                    contents=prompt,
-                    config=config,
-                    max_retries=2
-                )
-                if not response or not response.text:
-                    raise ValueError("3.1-flash-lite also failed.")
-            except Exception as pro_e:
-                print(f"  [FALLBACK] 3.1-flash-lite also failed: {str(pro_e)[:50]}. Retrying one last time with gemini-2.0-flash...")
-                
-                response = await call_gemini_with_retry(
-                    model="gemini-2.0-flash",
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        system_instruction=system_instruction,
-                        temperature=0.3,
-                    )
-                )
+        # Fall back when the grounded call is rate limited, overloaded or comes back empty
+        if not any(err in str(e).upper() for err in ["EMPTY", "429", "RESOURCE_EXHAUSTED", "503"]):
+            raise
+
+        print(f"  [Attempt 2] Search attempt failed or was empty ({str(e)[:30]}...). Retrying {GEMINI_MODEL} without search...")
+
+        # Same model without the search tool, which is what usually trips the quota.
+        # There is no third model to fall back to: if this fails, the error surfaces.
+        sys_instr_with_schema = system_instruction + "\n\n7. JSON SCHEMA POPULATION: Return a JSON object following the OntologyExtraction schema."
+        cache_name = await get_or_create_context_cache(GEMINI_MODEL, sys_instr_with_schema)
+
+        if cache_name:
+            config = types.GenerateContentConfig(
+                cached_content=cache_name,
+                temperature=0.3,
+                response_mime_type="application/json",
+                response_schema=OntologyExtraction,
+            )
         else:
-            raise e
-            
+            config = types.GenerateContentConfig(
+                system_instruction=sys_instr_with_schema,
+                temperature=0.3,
+                response_mime_type="application/json",
+                response_schema=OntologyExtraction,
+            )
+
+        response = await call_gemini_with_retry(
+            model=GEMINI_MODEL,
+            contents=prompt,
+            config=config,
+            max_retries=2
+        )
+        if not response or not response.text:
+            raise ValueError(f"Empty response from {GEMINI_MODEL} without search.")
+
     try:
         data = response.text
         

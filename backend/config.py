@@ -196,3 +196,10 @@ EMAIL_FIRST_RUN_DAYS = int(os.getenv("EMAIL_FIRST_RUN_DAYS", "7"))
 # "single": 04_Resources/Email_Digest/<year>/<month>/. "by_area": <area>/Email/.
 EMAIL_NOTES_FILING = os.getenv("EMAIL_NOTES_FILING", "single").lower()
 EMAIL_NOTES_DIR = "04_Resources/Email_Digest"
+
+# Household reference backfill (backend/feeds/household.py). The scan itself runs on the
+# laptop (backend/feeds/household_scan.py); approved documents arrive here for reading.
+HOUSEHOLD_STAGING_PATH = os.getenv("HOUSEHOLD_STAGING_PATH", os.path.join(CHAT_EXPORTS_PATH, "household"))
+HOUSEHOLD_FALLBACK_DIR = "04_Resources/Household_Reference"
+HOUSEHOLD_MAX_CHARS = int(os.getenv("HOUSEHOLD_MAX_CHARS", "24000"))
+HOUSEHOLD_REMINDER_DAYS = int(os.getenv("HOUSEHOLD_REMINDER_DAYS", "30"))

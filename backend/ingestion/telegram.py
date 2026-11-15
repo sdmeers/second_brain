@@ -92,16 +92,32 @@ async def generate_title_from_text(text: str) -> str:
         words = text.split()
         return " ".join(words[:4]) + "..." if len(words) > 4 else text
 
+DOWNLOAD_ATTEMPTS = 3
+
+
 async def download_telegram_file(file_id: str, token: str, http_client: httpx.AsyncClient) -> bytes:
+    """Fetch a file the user sent. A brief network or Telegram hiccup is retried, because
+    Telegram will not deliver the message a second time once it has been acknowledged."""
     file_info_url = f"https://api.telegram.org/bot{token}/getFile"
-    response = await http_client.get(file_info_url, params={"file_id": file_id}, timeout=30.0)
-    response.raise_for_status()
-    file_path = response.json()["result"]["file_path"]
-    
-    file_download_url = f"https://api.telegram.org/file/bot{token}/{file_path}"
-    download_res = await http_client.get(file_download_url, timeout=120.0)
-    download_res.raise_for_status()
-    return download_res.content
+    for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
+        try:
+            response = await http_client.get(file_info_url, params={"file_id": file_id}, timeout=30.0)
+            response.raise_for_status()
+            file_path = response.json()["result"]["file_path"]
+
+            file_download_url = f"https://api.telegram.org/file/bot{token}/{file_path}"
+            download_res = await http_client.get(file_download_url, timeout=120.0)
+            download_res.raise_for_status()
+            return download_res.content
+        except (httpx.TransportError, httpx.HTTPStatusError) as e:
+            status = e.response.status_code if isinstance(e, httpx.HTTPStatusError) else None
+            if attempt == DOWNLOAD_ATTEMPTS or (status is not None and status < 500):
+                # httpx puts the URL, which holds the bot token, in its messages: never pass it on.
+                detail = f"HTTP {status}" if status else type(e).__name__
+                raise RuntimeError(f"Telegram did not hand over the file ({detail}). Please send it again.") from None
+            print(f"Backend [Telegram]: file download attempt {attempt} failed ({type(e).__name__}); retrying.")
+            await asyncio.sleep(2 * attempt)
+
 
 async def log_import_result(result: dict, source_url: str, chat_id: int, token: str, http_client: httpx.AsyncClient):
     safe_title = result.get("title", "Untitled")

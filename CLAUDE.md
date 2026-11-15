@@ -32,7 +32,7 @@ Testing and linting (both configured in `backend/pyproject.toml`):
 
 ```bash
 cd backend
-uv run pytest              # ~520 tests, ~3s, no vault/API key/network needed
+uv run pytest              # ~680 tests, ~5s, no vault/API key/network needed
 uv run ruff check .        # must pass clean
 uv run ruff check . --fix  # apply safe autofixes
 ```
@@ -95,6 +95,20 @@ helpers rather than writing another Markdown parser:
 Conventions drifting between independent copies of these parsers is what previously
 caused several silent failures (`Completed.md` vs `z_Completed.md`, `00_System/Tasks.md`
 vs `01_Tasks/Next_Actions.md`).
+
+### Context feeds (`backend/feeds/`)
+
+Automatic feeds (voice journal, calendar, AI chat summaries, email digest, household documents) built from `docs/implementation_plan/ingestion/INTENT.md`. Each is a module with a `python3 -m backend.feeds.<name>` entry point run by its own systemd timer (`docs/systemd/second-brain-{journal,calendar,chats,email}.*`) and an `ENABLE_*_FEED` switch that defaults to off. Rules that hold for every feed:
+
+- **Model calls go through `feeds.llm.generate()` only.** It masks identifiers, enforces the monthly cap (`feeds/ledger.py`, `FEEDS_MONTHLY_BUDGET_PENCE`), passes no tools, and records token counts. Never call `call_gemini_with_retry` or `llm_client` directly from a feed, and never give the summarising call tools: ingested text is untrusted.
+- **Notes go through `feeds.notes.write_feed_note()` only.** It writes the required frontmatter, is idempotent on `(feed, source_id, hash)`, and charges the indexing estimate. A feed that appends to an existing note uses `notes.existing_body()` so hand-written text survives.
+- **Every entry point takes `dry_run`** and then writes nothing and spends nothing.
+- **State lives in `backend/state/feeds.db`** (`feeds/state.py`), outside the vault. It holds IDs, hashes, paths and counts. Never put message text, transcripts, senders, subjects or identifiers in it, in the ledger, or in a log line; use `feeds.masking.redact()` for anything logged.
+- **Read-only at the source.** The calendar and email feeds only issue GETs; `feeds/google_auth.py` refuses any Google scope other than `gmail.readonly`. Do not add a write scope or a second OAuth client without asking.
+- **Feed cores are transport-independent.** `feeds/journal.record_entry()` takes audio or text plus `via` and `entry_id`; Telegram is a thin adapter (`feeds/journal_telegram.py`). The GTD web app is expected to call the same function later.
+- **Secrets:** `GCAL_ICAL_URL`, `backend/state/google_client.json` and `google_token.json` must never be logged or committed. httpx exceptions contain the URL, so catch them and report the type only.
+
+Raw material (journal audio, export zips) goes to `00_System/Inbox/Raw/<feed>/`, which Syncthing and the RAG index both skip. `feeds/household_scan.py` must stay standard-library only: it runs on the laptop without the venv.
 
 ### Config and paths
 

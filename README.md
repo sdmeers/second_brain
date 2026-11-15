@@ -103,6 +103,15 @@ The **Second Brain** operates on the **"Agent-as-Librarian"** paradigm: an intel
 * Works offline: changes queue on the device and replay when it reconnects. An action that was changed elsewhere in the meantime is skipped and flagged rather than overwritten.
 * Served by the backend at `/app` — see [GTD Web App setup](#6-gtd-web-app-optional).
 
+### 9. 📡 Context Feeds
+Feeds bring context into the vault without hand capture. They live in `backend/feeds/`, are read-only at the source, treat what they read as untrusted data, and share a hard monthly model budget (`FEEDS_MONTHLY_BUDGET_PENCE`, default £3). Each has its own switch in `backend/.env`, off by default, and its own systemd timer in `docs/systemd/`.
+* **Voice journal** (`ENABLE_JOURNAL_FEED`): the bot prompts at 22:00; a voice or text reply becomes a dated note in `03_Areas/Journal/<year>/`, and commitments are added to `Captured.md`. `/journal` starts an entry at any time.
+* **Calendar** (`ENABLE_CALENDAR_FEED`, `GCAL_ICAL_URL`): a daily note with today's events and the next seven days, read from the calendar's secret iCal address. No model calls.
+* **AI conversation summaries** (`ENABLE_CHATS_FEED`): drop a provider data export into `CHAT_EXPORTS_PATH`; after approval in Telegram each qualifying conversation becomes one summary note. Claude exports are supported; Gemini is not yet.
+* **Email digest** (`ENABLE_EMAIL_FEED`): Gmail over OAuth with the `gmail.readonly` scope only, filtered by free rules before any model call. Needs a Google Cloud OAuth client and `python3 -m backend.feeds.mail authorize`.
+* **Household documents**: `backend/feeds/household_scan.py` (standard library only) shortlists documents on the machine that holds them; `python3 -m backend.feeds.household process` reads the approved ones.
+* `/feeds` shows each feed's activity and the month's spend. Every feed supports `--dry-run`.
+
 ---
 
 ## 🤖 Telegram Command Reference
@@ -127,6 +136,8 @@ The **Second Brain** operates on the **"Agent-as-Librarian"** paradigm: an intel
 | `/reflect` | **Guided Review** — Step-by-step interactive weekly reflection (inbox zero, stale waitings, orphaned projects, Someday/Maybe). |
 | `/holiday` | **Pause Reviews** — Pause automated briefings by scope (`Personal`, `Professional`, `All`) via calendar picker, or type a date directly (`/holiday personal 23rd Aug`). |
 | `/jira <summary>` | **Jira Export** — Create a ticket directly in Jira backlog. |
+| `/journal [text]` | **Journal Entry** — Saves a journal entry from text, or from the next voice note when sent alone. Needs `ENABLE_JOURNAL_FEED`. |
+| `/feeds` | **Feed Status** — Notes and last run per feed, and this month's spend against the budget. |
 | `/undo` | **Safety Revert** — Shows the last vault commit and its files, then reverts it on confirmation. Only `[orchestrator]` commits can be reverted; hand-made commits are refused. |
 | `/help` | **Help Menu** — Full command reference and workflow examples. |
 

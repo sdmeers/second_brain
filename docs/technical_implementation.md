@@ -485,3 +485,31 @@ addresses and the optional API token, keeping personal Tailscale/LAN addresses o
 repository. **The port there must match `PORT` in `backend/.env`.** Manifest V3
 `host_permissions` cannot read that file, so a non-localhost address must also be listed
 in `extension/manifest.json`.
+
+---
+
+## 11. Context Feeds (`backend/feeds/`)
+
+Feeds add context to the vault automatically. Each feed is a module with its own command-line entry point, systemd timer and `ENABLE_*_FEED` switch; none does long work inside the daemon.
+
+| Module | Role |
+| :--- | :--- |
+| `state.py` | `backend/state/feeds.db`: `seen_items` (idempotency), `ledger`, `journal_prompts`, `chat_exports`, `kv`. IDs, hashes, paths and counts only. |
+| `ledger.py` | Model prices, monthly cap (`check_budget`), approval rule (`check_run`). |
+| `llm.py` | `generate()`: masking, cap check on the worst case, tool-less provider call, token accounting, unmasking. |
+| `masking.py` | `mask` / `unmask` / `redact` for structured identifiers (UK formats). |
+| `notes.py` | `write_feed_note()`: required frontmatter, idempotent, same file rewritten when the source changes. |
+| `raw.py`, `dryrun.py`, `notify.py`, `approvals.py` | Raw store, run reports, Telegram messages from timers, Approve / Cancel buttons. |
+| `retrieval.py` | Behind `ENABLE_FEED_RETRIEVAL`: task lists and today's daily note added to chat context; `note_type` / `note_date` columns on `brain_chunks`. |
+| `journal.py`, `journal_telegram.py` | Evening prompt and journal entries. `record_entry()` is independent of Telegram. |
+| `calendar.py` | Daily note from the secret iCal address. No model calls. |
+| `chats.py` | Provider export intake, free filters, approval, one summary note per conversation. |
+| `mail.py`, `google_auth.py` | Read-only Gmail digest; scope checked on every token refresh. |
+| `household_scan.py`, `household.py` | Standard-library scanner for the machine holding the documents; server-side reading of approved ones. |
+
+**Budget.** Model calls stop at `FEEDS_MONTHLY_BUDGET_PENCE` minus `FEEDS_INDEXING_RESERVE_PENCE`; note writes may use the reserve and are refused beyond the cap. The estimate before each call is deliberately high (three characters per token, full output allowance). Only the feeds are metered.
+
+**Frontmatter of a feed note:** `type`, `source`, `source_id`, `date` (of the original), `ingested`, plus feed-specific fields such as `provider`, `conversation_id`, `message_id`, `area` or `original_path`.
+
+**Timers:** `second-brain-journal` (22:00, not persistent), `second-brain-calendar` (06:30), `second-brain-chats` (every 15 minutes), `second-brain-email` (06:45). All use `Europe/London` and run `backend/.venv/bin/python3` directly.
+

@@ -103,6 +103,16 @@ def _claude_message_text(msg: dict) -> str:
     return text.strip()
 
 
+MAX_MEMBER_BYTES = 1024 * 1024 * 1024    # an export's JSON is tens of MB; refuse a zip bomb
+
+
+def _read_member(zf: zipfile.ZipFile, name: str) -> bytes:
+    """Read one archive member, refusing one that would unpack to an absurd size."""
+    if zf.getinfo(name).file_size > MAX_MEMBER_BYTES:
+        raise UnrecognisedExport("a file in the archive is too large to be a chat export")
+    return zf.read(name)
+
+
 def parse_claude_export(zip_path: str) -> list[Conversation]:
     """Claude data export: a zip holding ``conversations.json``."""
     try:
@@ -110,11 +120,11 @@ def parse_claude_export(zip_path: str) -> list[Conversation]:
             name = next((n for n in zf.namelist() if os.path.basename(n) == "conversations.json"), None)
             if not name:
                 raise UnrecognisedExport("no conversations.json in the archive")
-            data = json.loads(zf.read(name))
+            data = json.loads(_read_member(zf, name))
             projects = {}
             pname = next((n for n in zf.namelist() if os.path.basename(n) == "projects.json"), None)
             if pname:
-                for p in json.loads(zf.read(pname)) or []:
+                for p in json.loads(_read_member(zf, pname)) or []:
                     if isinstance(p, dict) and p.get("uuid"):
                         projects[p["uuid"]] = str(p.get("name") or "")
     except (zipfile.BadZipFile, json.JSONDecodeError, OSError) as e:

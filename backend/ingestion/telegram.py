@@ -251,7 +251,10 @@ async def process_telegram_message(message: dict, token: str, http_client):
                     if isinstance(doc_obj, list):
                         doc_obj = doc_obj[-1]
                     file_id = doc_obj["file_id"]
-                    file_name = doc_obj.get("file_name", f"doc_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf")
+                    from backend.utils.sanitize import sanitize_filename
+                    # The name comes from the sender: keep it to one safe path segment.
+                    file_name = sanitize_filename(
+                        doc_obj.get("file_name", f"doc_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"))
                     file_bytes = await download_telegram_file(file_id, token, http_client)
                     staged_path = os.path.join(staging_path, file_name)
                     with open(staged_path, "wb") as f:

@@ -320,3 +320,17 @@ async def test_disabled_feed_touches_nothing(tmp_path, model, monkeypatch):
     tg = FakeTelegram()
     await chats.poll(http_client=tg)
     assert os.listdir(tmp_path / "exports") == ["claude-export.zip"] and tg.sent == []
+
+
+def test_oversized_archive_member_is_refused(tmp_path, monkeypatch):
+    """A zip bomb must be refused before it is unpacked into memory."""
+    import zipfile
+
+    from backend.feeds import chats
+
+    path = tmp_path / "export.zip"
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("conversations.json", "[" + " " * 5000 + "]")
+    monkeypatch.setattr(chats, "MAX_MEMBER_BYTES", 1000)
+    with pytest.raises(chats.UnrecognisedExport):
+        chats.parse_claude_export(str(path))

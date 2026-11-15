@@ -19,6 +19,7 @@ import os
 import re
 import shutil
 import sys
+import urllib.parse
 import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, UTC
@@ -157,9 +158,92 @@ def parse_claude_export(zip_path: str) -> list[Conversation]:
     return conversations
 
 
+GEMINI_ACTIVITY = "Gemini Apps/My Activity.json"
+_GEMINI_PROMPT = "Prompted "
+_GEMINI_MEDIA = re.compile(r"^\d+ generated (image|video)s?\.?$", re.IGNORECASE)
+
+
+def _html_text(html: str) -> str:
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(html, "html.parser")
+    for tag in soup(["script", "style"]):
+        tag.decompose()
+    return re.sub(r"\n{3,}", "\n\n", soup.get_text(separator="\n").replace("\xa0", " ")).strip()
+
+
+def _gemini_conversation_id(entry: dict) -> str:
+    """The ID in the entry's gemini.google.com/app/<id> link, or "" when it has none."""
+    for d in entry.get("details") or []:
+        parsed = urllib.parse.urlparse(str(d.get("url") or "")) if isinstance(d, dict) else None
+        parts = [x for x in parsed.path.split("/") if x] if parsed else []
+        if parsed and parsed.netloc == "gemini.google.com" and len(parts) == 2 and parts[0] == "app":
+            return parts[1]
+    return ""
+
+
 def parse_gemini_export(zip_path: str) -> list[Conversation]:
-    raise UnrecognisedExport(
-        "Gemini exports are not supported yet: the parser will be written against a real Takeout file")
+    """Google Takeout, "My Activity > Gemini Apps", exported as JSON.
+
+    Takeout has no conversation objects: it is one flat log with an entry per prompt.
+    Each entry links to ``gemini.google.com/app/<id>``, which is what groups them here.
+    Entries with no link are grouped by day. There are no titles either, so the first
+    prompt stands in for one. Generated images, video and attached files are recorded
+    as a marker only; the media in the archive is never read.
+    """
+    try:
+        with zipfile.ZipFile(zip_path) as zf:
+            name = next((n for n in zf.namelist() if n.endswith(GEMINI_ACTIVITY)), None)
+            if not name:
+                html = any(n.endswith("Gemini Apps/My Activity.html") for n in zf.namelist())
+                raise UnrecognisedExport(
+                    "the Takeout archive holds the activity as HTML: in Takeout, set My Activity's format to JSON "
+                    "and export again" if html else "no Gemini Apps activity in the archive")
+            data = json.loads(_read_member(zf, name))
+    except (zipfile.BadZipFile, json.JSONDecodeError, OSError) as e:
+        raise UnrecognisedExport(f"could not read the archive ({type(e).__name__})") from None
+    if not isinstance(data, list):
+        raise UnrecognisedExport("My Activity.json is not a list")
+
+    groups: dict[str, list[tuple[datetime, list[Message]]]] = {}
+    for raw in data:
+        try:
+            title, when = raw["title"], _when(raw["time"])
+            if not isinstance(title, str):
+                raise TypeError("title")
+            if not title.startswith(_GEMINI_PROMPT):
+                continue                 # "Created a Gem", "Used an extension", feedback: not conversation
+            prompt = title[len(_GEMINI_PROMPT):].strip()
+            names = [os.path.basename(str(a)) for a in raw.get("attachedFiles") or []]
+            media = [s["name"] for s in raw.get("subtitles") or []
+                     if isinstance(s, dict) and _GEMINI_MEDIA.match(str(s.get("name") or ""))]
+            generated = {os.path.basename(str(raw["imageFile"]))} if raw.get("imageFile") else set()
+            attached = [n for n in names if n not in generated]
+            if attached:
+                prompt += "\n" + "\n".join(f"[attachment: {n}]" for n in attached)
+            reply = "\n\n".join(t for t in (_html_text(str(i.get("html") or ""))
+                                             for i in raw.get("safeHtmlItem") or [] if isinstance(i, dict)) if t)
+            if media or generated:
+                reply = (reply + "\n" if reply else "") + f"[{media[0].rstrip('.') if media else '1 generated image'}; not kept]"
+            messages = [Message("user", prompt)] if prompt else []
+            if reply:
+                messages.append(Message("assistant", reply))
+            if messages:
+                key = _gemini_conversation_id(raw) or f"day-{when.date().isoformat()}"
+                groups.setdefault(key, []).append((when, messages))
+        except (KeyError, TypeError, ValueError, AttributeError) as e:
+            raise UnrecognisedExport(
+                f"an activity entry does not have the expected fields ({type(e).__name__})") from None
+
+    conversations = []
+    for key, turns in groups.items():
+        turns.sort(key=lambda t: t[0])
+        messages = [m for _, ms in turns for m in ms]
+        first = next((m.text for m in messages if m.role == "user"), "")
+        title = " ".join(first.split("\n")[0].split())[:70].strip() or "Untitled"
+        conversations.append(Conversation(
+            provider="gemini", id=key, title=title, created=turns[0][0], updated=turns[-1][0], messages=messages,
+            url="" if key.startswith("day-") else f"https://gemini.google.com/app/{key}"))
+    return conversations
 
 
 def detect_provider(zip_path: str) -> str:

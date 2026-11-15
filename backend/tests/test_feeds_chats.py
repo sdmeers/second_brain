@@ -334,3 +334,82 @@ def test_oversized_archive_member_is_refused(tmp_path, monkeypatch):
     monkeypatch.setattr(chats, "MAX_MEMBER_BYTES", 1000)
     with pytest.raises(chats.UnrecognisedExport):
         chats.parse_claude_export(str(path))
+
+
+# --- Gemini (Google Takeout) ----------------------------------------------------------
+
+def _gemini_entry(prompt, when, conv="abc123def4567890", html="<p>Use a <strong>ring main</strong>.</p>", **extra):
+    entry = {"header": "Gemini Apps", "title": f"Prompted {prompt}", "time": when, "products": ["Gemini Apps"],
+             "activityControls": ["Gemini Apps Activity"]}
+    if conv:
+        entry["details"] = [{"name": "https://gemini.google.com", "url": f"https://gemini.google.com/app/{conv}"}]
+    if html:
+        entry["safeHtmlItem"] = [{"html": html}]
+    return {**entry, **extra}
+
+
+def _gemini_zip(path, entries):
+    return make_export(path, entries, inner="Takeout/My Activity/Gemini Apps/My Activity.json")
+
+
+def test_gemini_entries_are_grouped_into_conversations_in_time_order(tmp_path):
+    convs = chats.parse_gemini_export(_gemini_zip(tmp_path / "g.zip", [
+        _gemini_entry("And the fuse rating?", "2026-03-02T10:05:00.000Z", html="<p>32 amp.</p>"),
+        _gemini_entry("How should I wire the garage sockets?\nDetails follow", "2026-03-02T10:00:00.000Z"),
+        _gemini_entry("Plan a week of dinners", "2026-03-03T18:00:00Z", conv="ffff000011112222"),
+    ]))
+    by_id = {c.id: c for c in convs}
+    assert set(by_id) == {"abc123def4567890", "ffff000011112222"}
+    garage = by_id["abc123def4567890"]
+    assert [m.role for m in garage.messages] == ["user", "assistant", "user", "assistant"]
+    assert garage.messages[0].text.startswith("How should I wire")
+    assert "ring main" in garage.messages[1].text
+    assert "<" not in garage.transcript()
+    assert garage.title == "How should I wire the garage sockets?"
+    assert garage.provider == "gemini" and garage.url == "https://gemini.google.com/app/abc123def4567890"
+    assert garage.created < garage.updated
+
+
+def test_gemini_images_and_attachments_become_markers_only(tmp_path):
+    convs = chats.parse_gemini_export(_gemini_zip(tmp_path / "g.zip", [
+        _gemini_entry("Draw a robin on a spade", "2026-03-02T10:00:00Z", html="",
+                      subtitles=[{"name": "1 generated image."}], imageFile="robin-1a2b.png",
+                      attachedFiles=["robin-1a2b.png"]),
+        _gemini_entry("Summarise this", "2026-03-02T10:01:00Z", attachedFiles=["notes.docx"],
+                      subtitles=[{"name": "Attached 1 file."}]),
+    ]))
+    texts = [m.text for m in convs[0].messages]
+    assert texts[0] == "Draw a robin on a spade"
+    assert texts[1] == "[1 generated image; not kept]"
+    assert "[attachment: notes.docx]" in texts[2]
+
+
+def test_gemini_non_prompt_activity_is_skipped_and_unlinked_prompts_group_by_day(tmp_path):
+    entries = [
+        {"header": "Gemini Apps", "title": "Created a Gem", "time": "2026-03-02T09:00:00Z"},
+        _gemini_entry("first", "2026-03-02T10:00:00Z", conv=""),
+        _gemini_entry("second", "2026-03-02T11:00:00Z", conv=""),
+    ]
+    convs = chats.parse_gemini_export(_gemini_zip(tmp_path / "g.zip", entries))
+    assert len(convs) == 1 and convs[0].id == "day-2026-03-02" and convs[0].url == ""
+    assert len(convs[0].messages) == 4
+
+
+def test_gemini_unexpected_shapes_are_refused(tmp_path):
+    with pytest.raises(chats.UnrecognisedExport):
+        chats.parse_gemini_export(_gemini_zip(tmp_path / "a.zip", {"not": "a list"}))
+    with pytest.raises(chats.UnrecognisedExport):
+        chats.parse_gemini_export(_gemini_zip(tmp_path / "b.zip", [{"title": "Prompted x"}]))   # no time
+    html_only = make_export(tmp_path / "c.zip", [], inner="Takeout/My Activity/Gemini Apps/My Activity.html")
+    with pytest.raises(chats.UnrecognisedExport, match="JSON"):
+        chats.parse_gemini_export(html_only)
+
+
+def test_gemini_reimport_is_idempotent_by_fingerprint(tmp_path):
+    entries = [_gemini_entry("How should I wire the garage sockets?", "2026-03-02T10:00:00Z")]
+    a = chats.parse_gemini_export(_gemini_zip(tmp_path / "a.zip", entries))[0]
+    b = chats.parse_gemini_export(_gemini_zip(tmp_path / "b.zip", entries))[0]
+    assert a.fingerprint() == b.fingerprint()
+    entries.append(_gemini_entry("And the fuse?", "2026-03-02T10:05:00Z"))
+    c = chats.parse_gemini_export(_gemini_zip(tmp_path / "c.zip", entries))[0]
+    assert c.fingerprint() != a.fingerprint()

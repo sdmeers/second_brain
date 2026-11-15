@@ -130,6 +130,9 @@ if allowed_chat_ids_str:
 # Gmail Configuration
 GMAIL_EMAIL = os.getenv("GMAIL_EMAIL")
 GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
+# Addresses allowed to send to the +brain address, comma-separated. Empty accepts anyone,
+# as before; set it so a stranger who learns the address cannot put content in the vault.
+GMAIL_ALLOWED_SENDERS = [a.strip().lower() for a in os.getenv("GMAIL_ALLOWED_SENDERS", "").split(",") if a.strip()]
 
 # Polling Toggles
 ENABLE_OBSIDIAN_INBOX_POLLING = os.getenv("ENABLE_OBSIDIAN_INBOX_POLLING", "false").lower() == "true"

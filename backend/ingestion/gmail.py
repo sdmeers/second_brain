@@ -2,13 +2,34 @@ import os
 import imaplib
 import email
 from email.header import decode_header
+from email.utils import parseaddr
 import asyncio
 from datetime import datetime
-from backend.config import GMAIL_EMAIL, GMAIL_APP_PASSWORD
+from backend.config import GMAIL_EMAIL, GMAIL_APP_PASSWORD, GMAIL_ALLOWED_SENDERS
 from backend.utils.sanitize import sanitize_filename
 from backend.ingestion.telegram import notify_via_telegram
 
 from backend.ingestion.queue import add_to_queue
+
+def sender_allowed(msg, allowed: list[str]) -> tuple[bool, str]:
+    """Whether a +brain message comes from an address on the allow-list.
+
+    Returns ``(ok, sender)``. An empty list accepts everything. A From line is easy to
+    forge, so a message Gmail itself marked as failing DMARC is refused even when the
+    address matches. Only Gmail's own verdict counts: a sender can add a fake header but
+    cannot remove Google's.
+    """
+    sender = parseaddr(str(msg.get("From", "")))[1].strip().lower()
+    if not allowed:
+        return True, sender
+    if sender not in allowed:
+        return False, sender
+    for verdict in msg.get_all("Authentication-Results", []):
+        verdict = str(verdict).lower()
+        if "mx.google.com" in verdict and "dmarc=fail" in verdict:
+            return False, sender
+    return True, sender
+
 
 async def _ingest_email(subject: str, body: str, attachments: list):
     print(f"Backend [Gmail Watcher]: Queuing email: '{subject}'")
@@ -101,6 +122,16 @@ def _process_gmail_emails(gmail_email, gmail_app_password, loop):
                 print(f"Backend [Gmail Watcher]: Skipping email (no +brain in headers): {msg.get('Subject', '(no subject)')}")
                 continue
             
+            ok, sender = sender_allowed(msg, GMAIL_ALLOWED_SENDERS)
+            if not ok:
+                # Marked read so it is not fetched again every poll; nothing is ingested.
+                print("Backend [Gmail Watcher]: Ignored a +brain email from a sender not on the allow-list.")
+                mail.store(mail_id, '+FLAGS', '\\Seen')
+                asyncio.run_coroutine_threadsafe(notify_via_telegram(
+                    f"📧🚫 Ignored an email to +brain from {sender or 'an unknown sender'}: not on the "
+                    "allow-list (GMAIL_ALLOWED_SENDERS in backend/.env)."), loop)
+                continue
+
             subject, encoding = decode_header(msg["Subject"])[0]
             if isinstance(subject, bytes):
                 subject = subject.decode(encoding or "utf-8", errors="ignore")

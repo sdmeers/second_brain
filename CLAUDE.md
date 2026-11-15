@@ -32,7 +32,7 @@ Testing and linting (both configured in `backend/pyproject.toml`):
 
 ```bash
 cd backend
-uv run pytest              # ~680 tests, ~5s, no vault/API key/network needed
+uv run pytest              # ~695 tests, ~5s, no vault/API key/network needed
 uv run ruff check .        # must pass clean
 uv run ruff check . --fix  # apply safe autofixes
 ```
@@ -108,7 +108,17 @@ Automatic feeds (voice journal, calendar, AI chat summaries, email digest, house
 - **Feed cores are transport-independent.** `feeds/journal.record_entry()` takes audio or text plus `via` and `entry_id`; Telegram is a thin adapter (`feeds/journal_telegram.py`). The GTD web app is expected to call the same function later.
 - **Secrets:** `GCAL_ICAL_URL`, `backend/state/google_client.json` and `google_token.json` must never be logged or committed. httpx exceptions contain the URL, so catch them and report the type only.
 
+- **Chat exports differ by provider.** Claude's export has conversation objects (`conversations.json`). Gemini's Google Takeout is a flat activity log with one entry per prompt and no titles: `parse_gemini_export` groups entries by the ID in each entry's `gemini.google.com/app/<id>` link. Parsers are strict and refuse an unexpected shape rather than guess. A first import for a provider always asks for approval in Telegram.
+
 Raw material (journal audio, export zips) goes to `00_System/Inbox/Raw/<feed>/`, which Syncthing and the RAG index both skip. `feeds/household_scan.py` must stay standard-library only: it runs on the laptop without the venv.
+
+### Access control and secrets
+
+- **The HTTP API requires a token.** `API_AUTH_TOKEN` is set in the live `backend/.env`; `/process`, `/query` and `/api/actions/*` return 401 without `Authorization: Bearer <token>`. `/health` and the static `/app` shell stay open by design. Any new route that returns or changes vault data must take `Depends(require_api_token)`. The web app stores the token in `localStorage`; the extension reads it from the gitignored `extension/config.js`.
+- **The `+brain` Gmail poller has a sender allow-list** (`GMAIL_ALLOWED_SENDERS`, checked by `ingestion/gmail.sender_allowed()`). Unlisted senders and messages Gmail marked `dmarc=fail` are marked read, reported in Telegram and not ingested.
+- **Never pass an httpx error message to the user or a log.** It contains the request URL, which for Telegram holds the bot token and for the calendar is the secret address. Report the exception type or status code only (see `download_telegram_file`).
+- **Never load `backend/.env` with the shell's `source`/`.`**: values with spaces get executed and echoed. Use `dotenv.load_dotenv()` in Python.
+- **The GitHub repo is public.** Nothing personal, no addresses and no credentials in commits; `tests/test_no_secrets.py` guards the obvious cases. Check dependencies with `uvx pip-audit` after changing `uv.lock`.
 
 ### Config and paths
 

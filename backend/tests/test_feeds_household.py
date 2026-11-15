@@ -177,7 +177,7 @@ async def test_approved_run_writes_reference_note_and_reminder(tmp_path, model, 
     assert "Period of cover from" not in text                                   # no raw document text
     (line,) = next_actions(tasks_dir)                                           # past and invalid dates add none
     task = parse_task_line(line)
-    assert task.description == "Renew Car insurance policy schedule (Acme Mutual)"
+    assert line.startswith("- [ ] Renew Car insurance policy schedule (Acme Mutual) 📅 2027-03-01 🔔 2027-01-30")
     assert task.due == date(2027, 3, 1) and task.tickler == date(2027, 1, 30)
     assert task.source == "Car insurance policy schedule"
     assert r.reminders == 1 and list((tmp_path / "staging").glob("*.pdf")) == []  # staged copy removed

@@ -123,3 +123,43 @@ export interface OpResult {
   /** On a completed action: the project it belonged to, as a tag. */
   project?: string | null;
 }
+
+/** Whether tonight's journal is still to do. `due` drives the Journal tab's quiet dot. */
+export interface JournalStatus {
+  date: string;
+  recorded: boolean;
+  due: boolean;
+}
+
+/** A journal entry waiting to be uploaded: a recording or typed text. Kept on the
+ *  device only until the server has saved it. */
+export interface JournalDraft {
+  id: string;
+  blob?: Blob;
+  text?: string;
+  seconds?: number;
+  captured_at: string;
+}
+
+export interface JournalDaySummary {
+  date: string;
+  entries: number;
+}
+
+export interface JournalEntry {
+  time: string;
+  via: string;
+  summary: string;
+  commitments: string[];
+  on_my_mind: string[];
+  transcript: string;
+  /** The stored recording's name, or null for a typed entry (or one past retention). */
+  audio: string | null;
+}
+
+export interface JournalDay {
+  date: string;
+  /** Anything added by hand in Obsidian above the first entry. */
+  notes: string;
+  entries: JournalEntry[];
+}

@@ -14,7 +14,8 @@ import { ActionCard } from "./ActionCard";
 import { CaptureBox } from "./CaptureBox";
 import { ClarifySheet } from "./ClarifySheet";
 import { EditSheet } from "./EditSheet";
-import { BoltIcon, BulbIcon, ChevronIcon, FolderIcon, HourglassIcon, InboxIcon } from "./icons";
+import { BoltIcon, BookIcon, BulbIcon, ChevronIcon, FolderIcon, HourglassIcon, InboxIcon } from "./icons";
+import { JournalTab } from "./JournalTab";
 import { NextStepPrompt } from "./NextStepPrompt";
 import { projectKey } from "./optimistic";
 import { ProjectScreen } from "./ProjectScreen";
@@ -22,7 +23,7 @@ import { ProjectsTab } from "./ProjectsTab";
 import { pendingCount, statusOf, store, useStore, viewOf, type SyncStatus } from "./store";
 import type { Category, Item, ListName, Project } from "./types";
 
-type Tab = ListName | "projects";
+type Tab = ListName | "projects" | "journal";
 
 const TABS: { id: Tab; label: string; icon: ReactNode; empty: string }[] = [
   { id: "next", label: "Next", icon: <BoltIcon className="size-5" />, empty: "All clear. Nothing next on your plate." },
@@ -30,6 +31,7 @@ const TABS: { id: Tab; label: string; icon: ReactNode; empty: string }[] = [
   { id: "someday", label: "Someday", icon: <BulbIcon className="size-5" />, empty: "No someday / maybe ideas parked here." },
   { id: "captured", label: "Captured", icon: <InboxIcon className="size-5" />, empty: "Inbox zero. Tap + to capture a thought." },
   { id: "projects", label: "Projects", icon: <FolderIcon className="size-5" />, empty: "" },
+  { id: "journal", label: "Journal", icon: <BookIcon className="size-5" />, empty: "" },
 ];
 
 const DEFAULT_CONTEXTS = ["@home", "@computer", "@errands", "@phone", "@anywhere", "@office", "@WFH"];
@@ -84,9 +86,12 @@ export default function App() {
     (["next", "waiting"] as const).flatMap((list) =>
       (view?.lists[list] ?? []).filter((i) => i.project && projectKey(i.project) === projectKey(project.name)).map((i) => ({ ...i, list })),
     );
-  const countOf = (t: Tab) => (t === "projects" ? projects.length : inCategory(t).filter((i) => !i.deferred).length);
+  const countOf = (t: Tab) =>
+    t === "journal" ? 0 : t === "projects" ? projects.length : inCategory(t).filter((i) => !i.deferred).length;
+  // A quiet dot, never a count or a notification: tonight's entry is still to do.
+  const journalDue = !!state.journal?.due && state.journalQueue.length === 0;
 
-  const all = tab === "projects" ? [] : inCategory(tab);
+  const all = tab === "projects" || tab === "journal" ? [] : inCategory(tab);
   const active = all.filter((i) => !i.deferred);
   const deferred = all.filter((i) => i.deferred);
   // Two identical lines are possible in a Markdown file, so ids carry their position.
@@ -104,7 +109,7 @@ export default function App() {
   );
 
   const onDragEnd = ({ active: dragged, over }: DragEndEvent) => {
-    if (!over || dragged.id === over.id || tab === "projects") return;
+    if (!over || dragged.id === over.id || tab === "projects" || tab === "journal") return;
     const moved = arrayMove(active, ids.indexOf(String(dragged.id)), ids.indexOf(String(over.id)));
     store.reorder(tab, category, [...moved, ...deferred].map((i) => i.raw));
   };
@@ -117,7 +122,7 @@ export default function App() {
     setNextStepFor(project && project.steps.length > 0 && !openProject ? project.name : null);
   };
 
-  const list: ListName = tab === "projects" ? "next" : tab;
+  const list: ListName = tab === "projects" || tab === "journal" ? "next" : tab;
   const shownProject = openProject ? view?.projects.active.find((p) => p.name === openProject) : undefined;
   const offered = nextStepFor ? view?.projects.active.find((p) => p.name === nextStepFor && p.steps.length > 0) : undefined;
   // For the clarify sheet's project buttons: the projects in play (with open actions) first.
@@ -155,7 +160,7 @@ export default function App() {
   if (state.needToken) return <TokenPrompt />;
 
   const tabs = (
-    <ul className="mx-auto grid max-w-2xl grid-cols-5 sm:gap-1">
+    <ul className="mx-auto grid max-w-2xl grid-cols-6 sm:gap-1">
       {TABS.map((t) => {
         const on = t.id === tab;
         const count = countOf(t.id);
@@ -182,6 +187,9 @@ export default function App() {
                     {count}
                   </span>
                 )}
+                {t.id === "journal" && journalDue && (
+                  <span className="absolute -top-0.5 -right-1 size-2 rounded-full bg-(--accent)" aria-label="Tonight's journal not yet recorded" />
+                )}
               </span>
               {t.label}
               {count > 0 && <span className="hidden text-xs tabular-nums opacity-60 sm:inline">{count}</span>}
@@ -192,7 +200,7 @@ export default function App() {
     </ul>
   );
 
-  const canEditList = tab !== "captured" && tab !== "projects";
+  const canEditList = tab !== "captured" && tab !== "projects" && tab !== "journal";
   const current = TABS.find((t) => t.id === tab)!;
 
   return (
@@ -203,6 +211,7 @@ export default function App() {
           <StatusPill status={statusOf(state)} pending={pendingCount(state)} />
         </div>
 
+        {tab !== "journal" && (
         <div className="mt-3 grid grid-cols-2 gap-1 rounded-2xl bg-slate-200/70 p-1 dark:bg-slate-800/80">
           {(["personal", "professional"] as Category[]).map((c) => (
             <button
@@ -220,6 +229,7 @@ export default function App() {
             </button>
           ))}
         </div>
+        )}
 
         <div className="mt-3 hidden sm:block">{tabs}</div>
       </header>
@@ -249,7 +259,9 @@ export default function App() {
           </div>
         )}
 
-        {!view ? (
+        {tab === "journal" ? (
+          <JournalTab />
+        ) : !view ? (
           state.offline ? (
             <Empty title="Can't reach your Second Brain" hint="Check that Tailscale is connected, then pull this page back into view." />
           ) : (
@@ -377,7 +389,7 @@ export default function App() {
         />
       )}
 
-      {!editing && !shownProject && !runItem && <CaptureBox />}
+      {!editing && !shownProject && !runItem && tab !== "journal" && <CaptureBox />}
 
       {runItem && run && (
         <ClarifySheet

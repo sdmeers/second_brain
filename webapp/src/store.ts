@@ -5,6 +5,10 @@ import type {
   Category,
   ClarifyFields,
   EditFields,
+  JournalDay,
+  JournalDaySummary,
+  JournalDraft,
+  JournalStatus,
   ListName,
   Lists,
   NewOp,
@@ -37,6 +41,12 @@ export interface State {
   needToken: boolean;
   /** One-line message about changes the server declined, shown until dismissed. */
   notice: string | null;
+  /** Tonight's journal status from the last sync; null until the first. */
+  journal: JournalStatus | null;
+  /** Journal entries not yet saved by the server, oldest first. Survives reloads. */
+  journalQueue: JournalDraft[];
+  /** The server's one-line reply to the last journal entry saved, until dismissed. */
+  journalMessage: string | null;
 }
 
 class NeedTokenError extends Error {}
@@ -63,10 +73,14 @@ class ActionsStore {
     offline: false,
     needToken: false,
     notice: null,
+    journal: null,
+    journalQueue: [],
+    journalMessage: null,
   };
   private listeners = new Set<() => void>();
   private wake: ReturnType<typeof setTimeout> | null = null;
   private voiceBusy = false;
+  private journalBusy = false;
 
   subscribe = (fn: () => void) => {
     this.listeners.add(fn);
@@ -81,16 +95,18 @@ class ActionsStore {
     if (patch.server) void set("server", patch.server).catch(() => {});
     if (patch.projects) void set("projects", patch.projects).catch(() => {});
     if (patch.voice) void set("voice", patch.voice).catch(() => {});
+    if (patch.journalQueue) void set("journal_queue", patch.journalQueue).catch(() => {});
   }
 
   async start() {
     // Show the last known lists (and any unsent changes) immediately, even offline.
     try {
-      const [server, outbox, projects, voice] = await Promise.all([
+      const [server, outbox, projects, voice, journalQueue] = await Promise.all([
         get<Lists>("server"),
         get<Op[]>("outbox"),
         get<Projects>("projects"),
         get<VoiceNote[]>("voice"),
+        get<JournalDraft[]>("journal_queue"),
       ]);
       this.update({
         server: this.state.server ?? server ?? null,
@@ -98,6 +114,7 @@ class ActionsStore {
         // An older build cached project names in another shape; ignore that.
         ...(projects && Array.isArray(projects.active) ? { projects } : {}),
         voice: [...(voice ?? []), ...this.state.voice],
+        journalQueue: [...(journalQueue ?? []), ...this.state.journalQueue],
       });
     } catch {
       /* private mode or blocked storage: the app still works online */
@@ -157,6 +174,103 @@ class ActionsStore {
     void this.syncVoice();
   }
 
+  // --- Journal -----------------------------------------------------------------------
+
+  /** Queue a journal recording. Like a voice note, it stays on the device until saved. */
+  recordJournal(blob: Blob, seconds: number) {
+    this.queueJournal({ id: newId(), blob, seconds, captured_at: captureStamp() });
+  }
+
+  writeJournal(text: string) {
+    if (!text.trim()) return;
+    this.queueJournal({ id: newId(), text: text.trim(), captured_at: captureStamp() });
+  }
+
+  dismissJournalMessage() {
+    this.update({ journalMessage: null });
+  }
+
+  private queueJournal(draft: JournalDraft) {
+    this.update({ journalQueue: [...this.state.journalQueue, draft], journalMessage: null });
+    void this.syncJournal();
+  }
+
+  /** GET a journal route. Past entries are fetched when looked at and never stored here. */
+  async journalGet<T>(path: string): Promise<T> {
+    const res = await this.authed(`/api/actions/journal${path}`);
+    if (!res.ok) throw new Error(`${res.status}`);
+    return res.json();
+  }
+
+  journalDays = () => this.journalGet<{ days: JournalDaySummary[]; today: JournalStatus }>("");
+  journalDay = (date: string) => this.journalGet<JournalDay>(`/day/${date}`);
+
+  /** A recording, as an object URL for an <audio> element (which can't send the token).
+   *  The caller revokes it. */
+  async journalAudio(name: string): Promise<string> {
+    const res = await this.authed(`/api/actions/journal/audio/${encodeURIComponent(name)}`);
+    if (!res.ok) throw new Error(`${res.status}`);
+    return URL.createObjectURL(await res.blob());
+  }
+
+  private async authed(path: string, init: { method?: string; body?: FormData } = {}): Promise<Response> {
+    const token = localStorage.getItem(TOKEN_KEY);
+    const res = await fetch(path, {
+      ...init,
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      cache: "no-store",
+    });
+    if (res.status === 401) {
+      this.update({ needToken: true });
+      throw new NeedTokenError();
+    }
+    return res;
+  }
+
+  /** Upload queued journal entries one at a time, as syncVoice does for voice notes. */
+  private async syncJournal() {
+    if (this.journalBusy || this.state.needToken) return;
+    this.journalBusy = true;
+    try {
+      while (this.state.journalQueue.length > 0) {
+        const draft = this.state.journalQueue[0];
+        const drop = (patch: Partial<State>) =>
+          this.update({ journalQueue: this.state.journalQueue.filter((d) => d.id !== draft.id), ...patch });
+
+        const form = new FormData();
+        form.append("upload_id", draft.id);
+        form.append("captured_at", draft.captured_at);
+        if (draft.blob) form.append("file", draft.blob, "journal");
+        if (draft.text) form.append("text", draft.text);
+        if (draft.seconds) form.append("duration_seconds", String(draft.seconds));
+        let res: Response;
+        try {
+          res = await this.authed("/api/actions/journal", { method: "POST", body: form });
+        } catch (err) {
+          if (!(err instanceof NeedTokenError)) {
+            this.update({ offline: true });
+            this.wakeAt(10_000);
+          }
+          return;
+        }
+
+        if (res.ok) {
+          const body = await res.json();
+          drop({ journal: body.today, journalMessage: body.message, offline: false });
+          // Commitments from the entry land in Captured: fetch the lists again.
+          if (body.commitments > 0) void this.sync();
+        } else if (res.status === 409 || res.status >= 500) {
+          this.wakeAt(15_000);
+          return;
+        } else {
+          drop({ journalMessage: "That journal entry couldn't be saved and was discarded." });
+        }
+      }
+    } finally {
+      this.journalBusy = false;
+    }
+  }
+
   /** File a captured item. Trashing is held for a few seconds so it can be undone;
    *  the returned op id is what `undo` takes. */
   clarify(raw: string, outcome: Outcome, fields: ClarifyFields): string {
@@ -202,7 +316,7 @@ class ActionsStore {
   private async request(
     path: string,
     body?: unknown,
-  ): Promise<{ lists: Lists; projects?: Projects; results?: OpResult[] }> {
+  ): Promise<{ lists: Lists; projects?: Projects; journal?: JournalStatus; results?: OpResult[] }> {
     const token = localStorage.getItem(TOKEN_KEY);
     const res = await fetch(path, {
       method: body ? "POST" : "GET",
@@ -243,6 +357,7 @@ class ActionsStore {
       this.update({
         server: body.lists,
         ...(body.projects ? { projects: body.projects } : {}),
+        ...(body.journal ? { journal: body.journal } : {}),
         outbox: retarget(this.state.outbox.slice(count), sent, results),
         offline: false,
         notice: skipped
@@ -268,6 +383,7 @@ class ActionsStore {
     // Anything queued while that request was out goes next.
     if (!this.state.offline && this.state.outbox.some((o) => (o.notBefore ?? 0) <= Date.now())) void this.sync();
     if (!this.state.offline) void this.syncVoice();
+    if (!this.state.offline) void this.syncJournal();
   }
 
   /** Upload queued recordings one at a time. Transcription takes a few seconds, so this
@@ -353,11 +469,11 @@ export function viewOf(state: State): View | null {
   return view;
 }
 
-export const pendingCount = (state: State) => state.outbox.length + state.voice.length;
+export const pendingCount = (state: State) => state.outbox.length + state.voice.length + state.journalQueue.length;
 
 export function statusOf(state: State): SyncStatus {
   if (state.offline) return "offline";
   if (state.busy && state.inFlight > 0) return "syncing";
-  if (state.outbox.length > 0 || state.voice.length > 0) return "pending";
+  if (pendingCount(state) > 0) return "pending";
   return "synced";
 }

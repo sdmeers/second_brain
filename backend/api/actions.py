@@ -14,10 +14,14 @@ from fastapi import APIRouter, FastAPI, Form, HTTPException, UploadFile
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from backend.api.journal import router as journal_router
+from backend.feeds import journal
 from backend.processing import voice_capture
 from backend.vault import actions, projects
 
 router = APIRouter(prefix="/api/actions", tags=["actions"])
+# The Journal page's routes, under /api/actions/journal and so behind the same token check.
+router.include_router(journal_router)
 
 WEBAPP_DIST = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
                            "webapp", "dist")
@@ -132,8 +136,10 @@ def _apply(op: Op, alias: dict[str, str]) -> actions.OpResult:
 
 
 def _state() -> dict:
-    """Everything the app shows, read in one go: the lists and the projects."""
-    return {**actions.read_action_lists(), "projects": projects.list_projects()}
+    """Everything the app shows, read in one go: the lists, the projects and whether
+    tonight's journal is still to do (for the Journal tab's quiet dot)."""
+    return {**actions.read_action_lists(), "projects": projects.list_projects(),
+            "journal": journal.today_status()}
 
 
 def _prompt_project_promotion(project: str) -> None:

@@ -356,3 +356,144 @@ async def test_reply_and_journal_command_still_skip_the_buttons(model, tg):
 async def test_tap_after_restart_says_expired(tg):
     await journal_telegram.handle_callback("jrnl:j:7", 42, 102, "tok", tg)
     assert "expired" in tg.sent[-1]["text"] and "/journal" in tg.sent[-1]["text"]
+
+
+# --- reading entries back, audio links and retention ---------------------------------
+
+def _raw_dir():
+    return __import__("pathlib").Path(config.FEEDS_RAW_PATH) / "journal"
+
+
+async def test_entry_links_its_recording_and_reads_back(model, vault):
+    await journal.record_entry(audio=b"a1", mime_type="audio/ogg", duration_seconds=30, when=WHEN, entry_id="e1")
+    await journal.record_entry(text="Typed later.", when=datetime(2026, 11, 14, 23, 2), entry_id="e2")
+    day = journal.read_day(date(2026, 11, 14))
+    first, second = day["entries"]
+    assert (first["time"], first["via"], first["audio"]) == ("22:14", "Telegram", "2026-11-14_22-14-00_journal.ogg")
+    assert first["summary"] == EXTRACT["summary"] and first["commitments"] == ["Send Rosie the form"]
+    assert first["on_my_mind"] == ["The boiler"] and first["transcript"] == TRANSCRIPT
+    assert second["audio"] is None and second["transcript"] == "Typed later."
+    assert journal.list_days() == [{"date": "2026-11-14", "entries": 2}]
+    assert journal.read_day(date(2026, 11, 13)) is None
+
+
+async def test_two_recordings_in_one_second_both_survive(model):
+    for i in (1, 2):
+        await journal.record_entry(audio=b"a%d" % i, mime_type="audio/ogg", when=WHEN, entry_id=f"e{i}")
+    assert sorted(p.name for p in _raw_dir().iterdir()) == [
+        "2026-11-14_22-14-00-2_journal.ogg", "2026-11-14_22-14-00_journal.ogg"]
+
+
+async def test_entries_from_before_the_marker_find_their_recording_by_time(model, vault):
+    await journal.record_entry(audio=b"a1", mime_type="audio/ogg", when=WHEN, entry_id="e1")
+    note = vault / journal._note_path(date(2026, 11, 14))
+    note.write_text(note.read_text().replace("<!-- audio: 2026-11-14_22-14-00_journal.ogg -->\n", ""))
+    assert journal.read_day(date(2026, 11, 14))["entries"][0]["audio"] == "2026-11-14_22-14-00_journal.ogg"
+
+
+async def test_hand_written_text_is_kept_when_reading(model, vault):
+    await journal.record_entry(text=TRANSCRIPT, when=WHEN, entry_id="e1")
+    note = vault / journal._note_path(date(2026, 11, 14))
+    text = note.read_text().replace("# 2026-11-14 Journal\n", "# 2026-11-14 Journal\n\nA note I added.\n")
+    note.write_text(text.replace("- The boiler", "- The boiler\n- And the car"))
+    day = journal.read_day(date(2026, 11, 14))
+    assert day["notes"] == "A note I added." and day["entries"][0]["on_my_mind"] == ["The boiler", "And the car"]
+
+
+def test_audio_file_only_serves_names_the_feed_makes(tmp_path):
+    _raw_dir().mkdir(parents=True)
+    (_raw_dir() / "2026-11-14_22-14-00_journal.ogg").write_bytes(b"x")
+    assert journal.audio_file("2026-11-14_22-14-00_journal.ogg")
+    for bad in ("../journal/2026-11-14_22-14-00_journal.ogg", "notes.md", "2026-11-14_22-14-00_journal.ogg/..",
+                "2026-11-15_22-14-00_journal.ogg"):
+        assert journal.audio_file(bad) is None
+
+
+def test_retention_keeps_forever_by_default_and_prunes_when_set(monkeypatch):
+    _raw_dir().mkdir(parents=True)
+    for name in ("2026-04-30_22-00-00_journal.ogg", "2026-05-16_22-00-00_journal.webm", "unrelated.txt"):
+        (_raw_dir() / name).write_bytes(b"x")
+    monkeypatch.setattr(config, "JOURNAL_AUDIO_KEEP_MONTHS", 0)
+    assert journal.prune_audio(today=date(2026, 11, 16)) == 0
+    monkeypatch.setattr(config, "JOURNAL_AUDIO_KEEP_MONTHS", 6)
+    assert journal.prune_audio(today=date(2026, 11, 16), dry_run=True) == 1 and len(list(_raw_dir().iterdir())) == 3
+    assert journal.prune_audio(today=date(2026, 11, 16)) == 1
+    assert sorted(p.name for p in _raw_dir().iterdir()) == ["2026-05-16_22-00-00_journal.webm", "unrelated.txt"]
+    assert journal._months_before(date(2026, 8, 31), 6) == date(2026, 2, 28)
+
+
+async def test_today_status_is_quiet_outside_the_window(model):
+    assert journal.today_status(datetime(2026, 11, 14, 18, 0))["due"] is False
+    assert journal.today_status(datetime(2026, 11, 14, 22, 30)) == {"date": "2026-11-14", "recorded": False, "due": True}
+    await journal.record_entry(text=TRANSCRIPT, when=WHEN, entry_id="e1")
+    assert journal.today_status(datetime(2026, 11, 15, 1, 0)) == {"date": "2026-11-14", "recorded": True, "due": False}
+
+
+# --- HTTP API for the web app --------------------------------------------------------
+
+@pytest.fixture
+def api():
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from backend.api import actions as actions_api
+    app = FastAPI()
+    app.include_router(actions_api.router)
+    return TestClient(app)
+
+
+def test_api_records_a_recording_once(model, api, tasks_dir):
+    form = {"upload_id": "u1", "captured_at": "2026-11-14 22:14", "duration_seconds": "30"}
+    files = {"file": ("note", b"webm-bytes", "audio/webm;codecs=opus")}
+    r = api.post("/api/actions/journal", data=form, files=files)
+    assert r.status_code == 200 and r.json()["status"] == "saved" and r.json()["commitments"] == 1
+    assert r.json()["message"].startswith("📓 Journal saved for 14 Nov.")
+    again = api.post("/api/actions/journal", data=form, files=files)
+    assert again.json()["status"] == "duplicate" and len(model.transcribed) == 1 and len(captured(tasks_dir)) == 1
+    day = api.get("/api/actions/journal/day/2026-11-14").json()
+    assert day["entries"][0]["via"] == "GTD app" and day["entries"][0]["audio"].endswith("_journal.webm")
+    audio = api.get(f"/api/actions/journal/audio/{day['entries'][0]['audio']}")
+    assert audio.status_code == 200 and audio.content == b"webm-bytes" and audio.headers["content-type"] == "audio/webm"
+
+
+def test_api_records_typed_text(model, api):
+    r = api.post("/api/actions/journal", data={"upload_id": "u2", "captured_at": "2026-11-15 01:30", "text": TRANSCRIPT})
+    assert r.json()["journal_date"] == "2026-11-14" and model.transcribed == []
+    index = api.get("/api/actions/journal").json()
+    assert index["days"] == [{"date": "2026-11-14", "entries": 1}] and "due" in index["today"]
+
+
+def test_api_refuses_bad_input(model, api):
+    post = lambda **kw: api.post("/api/actions/journal", **kw).status_code  # noqa: E731
+    assert post(data={"upload_id": "u"}) == 422                                        # nothing to save
+    assert post(data={"upload_id": "u", "text": " "}) == 422
+    assert post(data={"upload_id": "u", "captured_at": "tonight", "text": "x"}) == 422
+    assert post(data={"upload_id": "u"}, files={"file": ("n", b"x", "image/png")}) == 415
+    assert api.get("/api/actions/journal/day/not-a-date").status_code == 422
+    assert api.get("/api/actions/journal/day/2026-01-01").status_code == 404
+    assert api.get("/api/actions/journal/audio/..%2Fsecrets.ogg").status_code == 404
+
+
+def test_api_transcriber_failure_keeps_the_entry_retryable(model, api, monkeypatch):
+    async def boom(data, mime):
+        raise RuntimeError("transcriber down")
+    monkeypatch.setattr("backend.processing.voice_capture.transcribe", boom)
+    files = {"file": ("note", b"x", "audio/webm")}
+    assert api.post("/api/actions/journal", data={"upload_id": "u3"}, files=files).status_code == 502
+    monkeypatch.setattr(config, "ENABLE_JOURNAL_FEED", False)
+    assert api.post("/api/actions/journal", data={"upload_id": "u4", "text": "x"}).status_code == 403
+
+
+def test_api_routes_require_the_token(monkeypatch):
+    """The journal routes ride on the actions router, which the app mounts behind the token."""
+    from fastapi.testclient import TestClient
+
+    from backend.api import routes
+    monkeypatch.setattr(routes, "API_AUTH_TOKEN", "secret-for-test")
+    client = TestClient(routes.app)
+    for path in ("/api/actions/journal", "/api/actions/journal/day/2026-11-14",
+                 "/api/actions/journal/audio/2026-11-14_22-14-00_journal.ogg"):
+        assert client.get(path).status_code == 401, path
+    assert client.post("/api/actions/journal", data={"upload_id": "u", "text": "x"}).status_code == 401
+    ok = client.get("/api/actions/journal", headers={"Authorization": "Bearer secret-for-test"})
+    assert ok.status_code == 200

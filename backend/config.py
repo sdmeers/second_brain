@@ -165,6 +165,9 @@ ENABLE_FEED_RETRIEVAL = os.getenv("ENABLE_FEED_RETRIEVAL", "false").lower() == "
 # Daily voice journal (backend/feeds/journal.py). Off by default.
 ENABLE_JOURNAL_FEED = os.getenv("ENABLE_JOURNAL_FEED", "false").lower() == "true"
 JOURNAL_DIR = "03_Areas/Journal"   # vault-relative; notes go in a sub-folder per year
+# Journal recordings older than this many months are deleted (the transcripts stay).
+# 0, the default, keeps them forever.
+JOURNAL_AUDIO_KEEP_MONTHS = int(os.getenv("JOURNAL_AUDIO_KEEP_MONTHS", "0") or 0)
 
 # Personal calendar (backend/feeds/calendar.py). One or more secret iCal addresses,
 # comma-separated. Treat them as secrets: never log them.

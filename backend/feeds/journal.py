@@ -6,11 +6,15 @@ adapter (``feeds/journal_telegram.py``); the GTD web app is expected to add a jo
 recording later, and should call ``record_entry`` with its upload ID as ``entry_id`` and
 ``via="GTD app"`` rather than growing a second implementation.
 
-Run as a module to send the evening prompt:  python3 -m backend.feeds.journal prompt
+Run as a module to send the evening prompt (and apply the audio retention rule):
+    python3 -m backend.feeds.journal prompt
+    python3 -m backend.feeds.journal prune [--dry-run]
 """
 
 import asyncio
+import calendar
 import os
+import re
 import sys
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -29,6 +33,12 @@ PROMPT_TEXT = ("🌙 Evening journal. Whenever you're ready before bed, send a v
                "• What happened today?\n• What did you promise anyone?\n• What's on your mind?")
 # An entry made after midnight but before this hour belongs to the evening before.
 DAY_ROLLOVER_HOUR = 4
+# The journal window opens with the evening prompt, or at this hour if none was sent.
+WINDOW_START_HOUR = 22
+# Recordings are named <journal date>_<HH-MM-SS>[-n]_journal.<ext> in the raw store.
+AUDIO_NAME_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})_(\d{2}-\d{2})-\d{2}(?:-\d+)?_journal\.[a-z0-9]{2,5}$")
+AUDIO_MARK_RE = re.compile(r"^<!-- audio: (\S+) -->$")
+ENTRY_HEADING_RE = re.compile(r"^## (\d{2}:\d{2}) entry \(via ([^)]*)\)\s*$", re.MULTILINE)
 # Gemini bills audio at about 32 tokens a second; speech comes back at roughly 5.
 AUDIO_TOKENS_PER_SECOND, TRANSCRIPT_TOKENS_PER_SECOND = 32, 5
 # Used to size the recording when the front end doesn't report a duration. Deliberately
@@ -76,8 +86,12 @@ def journal_date_for(when: datetime) -> date:
     return (when - timedelta(hours=DAY_ROLLOVER_HOUR)).date()
 
 
-def _render_entry(when: datetime, via: str, transcript: str, extract: JournalExtract | None) -> str:
+def _render_entry(when: datetime, via: str, transcript: str, extract: JournalExtract | None,
+                  audio_name: str | None = None) -> str:
     lines = [f"## {when.strftime('%H:%M')} entry (via {via})", ""]
+    if audio_name:
+        # Hidden in Obsidian's reading view; lets the web app play the recording back.
+        lines += [f"<!-- audio: {audio_name} -->", ""]
     if extract and extract.summary.strip():
         lines += [extract.summary.strip(), ""]
     if extract and extract.commitments:
@@ -130,9 +144,10 @@ async def record_entry(*, text: str | None = None, audio: bytes | None = None,
         return result
 
     transcript = (text or "").strip()
+    audio_name = None
     if audio:
         ext = voice_capture.extension_for(mime_type) or "ogg"
-        audio_name = f"{day.isoformat()}_{when.strftime('%H-%M-%S')}_journal.{ext}"
+        audio_name = _free_audio_name(f"{day.isoformat()}_{when.strftime('%H-%M-%S')}", ext)
         raw.store_raw_bytes(FEED, audio_name, audio, report=report, dry_run=dry_run)
 
         seconds = duration_seconds or len(audio) / ASSUMED_AUDIO_BYTES_PER_SECOND
@@ -168,7 +183,7 @@ async def record_entry(*, text: str | None = None, audio: bytes | None = None,
     title = f"{day.isoformat()} Journal"
     seen = state.get_seen(FEED, day.isoformat())
     earlier = notes.existing_body(seen["note_path"] if seen else None)
-    entry = _render_entry(when, via, transcript, extract)
+    entry = _render_entry(when, via, transcript, extract, audio_name)
     body = f"{earlier}\n\n{entry}" if earlier else entry
 
     try:
@@ -188,6 +203,157 @@ async def record_entry(*, text: str | None = None, audio: bytes | None = None,
         if entry_id:
             state.mark_seen(ENTRY_FEED, entry_id, notes.content_hash(entry), note_path=result.note_path)
     return result
+
+
+def _audio_dir() -> str:
+    return os.path.join(config.FEEDS_RAW_PATH, FEED)
+
+
+def _free_audio_name(stem: str, ext: str) -> str:
+    """Two recordings in the same second must not overwrite each other."""
+    name, n = f"{stem}_journal.{ext}", 1
+    while os.path.exists(os.path.join(_audio_dir(), name)):
+        n += 1
+        name = f"{stem}-{n}_journal.{ext}"
+    return name
+
+
+# --- reading entries back (the web app's journal page) ---------------------------------
+
+def in_journal_window(chat_id: int | None, now: datetime) -> bool:
+    """From tonight's prompt (or 22:00 if none was sent) until the 04:00 rollover."""
+    if chat_id is not None:
+        with state.connect() as conn:
+            row = conn.execute("SELECT sent_at FROM journal_prompts WHERE chat_id = ? AND journal_date = ?",
+                               (chat_id, journal_date_for(now).isoformat())).fetchone()
+        if row and datetime.fromisoformat(row[0]) <= now:
+            return True
+    return now.hour >= WINDOW_START_HOUR or now.hour < DAY_ROLLOVER_HOUR
+
+
+def today_status(now: datetime | None = None) -> dict:
+    """For the web app's quiet dot: is tonight's entry still to do?"""
+    now = now or datetime.now()
+    day = journal_date_for(now)
+    recorded = state.get_seen(FEED, day.isoformat()) is not None
+    return {"date": day.isoformat(), "recorded": recorded,
+            "due": config.ENABLE_JOURNAL_FEED and not recorded and in_journal_window(None, now)}
+
+
+def _note_path(day: date) -> str:
+    return os.path.join(config.JOURNAL_DIR, str(day.year), f"{day.isoformat()} Journal.md")
+
+
+def list_days() -> list[dict]:
+    """Every day with a journal note, newest first, with how many entries it has."""
+    root = os.path.join(config.OBSIDIAN_VAULT_PATH, config.JOURNAL_DIR)
+    days = []
+    for year in sorted(os.listdir(root)) if os.path.isdir(root) else []:
+        folder = os.path.join(root, year)
+        if not (year.isdigit() and os.path.isdir(folder)):
+            continue
+        for name in os.listdir(folder):
+            m = re.fullmatch(r"(\d{4}-\d{2}-\d{2}) Journal\.md", name)
+            if not m:
+                continue
+            body = notes.existing_body(os.path.join(config.JOURNAL_DIR, year, name))
+            days.append({"date": m.group(1), "entries": len(ENTRY_HEADING_RE.findall(body))})
+    return sorted(days, key=lambda d: d["date"], reverse=True)
+
+
+def _old_audio_for(day: str, hhmm: str) -> str | None:
+    """Entries saved before the audio marker existed: match the recording by its time."""
+    try:
+        names = sorted(os.listdir(_audio_dir()))
+    except OSError:
+        return None
+    for name in names:
+        m = AUDIO_NAME_RE.match(name)
+        if m and m.group(1) == day and m.group(2) == hhmm.replace(":", "-"):
+            return name
+    return None
+
+
+def _parse_entry(day: str, time: str, via: str, chunk: str) -> dict:
+    entry = {"time": time, "via": via, "summary": "", "commitments": [], "on_my_mind": [],
+             "transcript": "", "audio": None}
+    section, summary, transcript = "summary", [], []
+    lists = {"commitments": entry["commitments"], "on_my_mind": entry["on_my_mind"]}
+    for line in chunk.split("\n"):
+        stripped = line.strip()
+        mark = AUDIO_MARK_RE.match(stripped)
+        if mark:
+            entry["audio"] = mark.group(1)
+        elif stripped == "**Commitments**":
+            section = "commitments"
+        elif stripped == "**On my mind**":
+            section = "on_my_mind"
+        elif stripped == "**Transcript**":
+            section = "transcript"
+        elif section == "transcript":
+            transcript.append(re.sub(r"^> ?", "", line))
+        elif section in lists:
+            if stripped:      # a line typed by hand in Obsidian is kept too
+                lists[section].append(stripped[2:] if stripped.startswith("- ") else stripped)
+        else:
+            summary.append(line)
+    entry["summary"] = "\n".join(summary).strip()
+    entry["transcript"] = "\n".join(transcript).strip()
+    if entry["audio"] is None:
+        entry["audio"] = _old_audio_for(day, time)
+    if entry["audio"] and not os.path.isfile(os.path.join(_audio_dir(), entry["audio"])):
+        entry["audio"] = None         # deleted by the retention rule
+    return entry
+
+
+def read_day(day: date) -> dict | None:
+    """One day's entries, parsed from the note. Text added by hand above the first entry
+    comes back as ``notes``. None when there is no journal for that day."""
+    rel = _note_path(day)
+    if not os.path.isfile(os.path.join(config.OBSIDIAN_VAULT_PATH, rel)):
+        return None
+    body = notes.existing_body(rel)
+    parts = ENTRY_HEADING_RE.split(body)
+    entries = [_parse_entry(day.isoformat(), parts[i], parts[i + 1], parts[i + 2])
+               for i in range(1, len(parts), 3)]
+    return {"date": day.isoformat(), "notes": parts[0].strip(), "entries": entries}
+
+
+def audio_file(name: str) -> str | None:
+    """The path of a stored recording, or None. Only names the feed itself produces."""
+    if not AUDIO_NAME_RE.match(name):
+        return None
+    path = os.path.join(_audio_dir(), name)
+    return path if os.path.isfile(path) else None
+
+
+# --- audio retention -----------------------------------------------------------------
+
+def _months_before(day: date, months: int) -> date:
+    y, m = divmod(day.year * 12 + day.month - 1 - months, 12)
+    m += 1
+    return date(y, m, min(day.day, calendar.monthrange(y, m)[1]))
+
+
+def prune_audio(months: int | None = None, today: date | None = None, dry_run: bool = False) -> int:
+    """Delete recordings older than ``months`` (JOURNAL_AUDIO_KEEP_MONTHS). 0 keeps all.
+    Transcripts in the vault are never touched. Returns how many were (or would be) deleted."""
+    months = config.JOURNAL_AUDIO_KEEP_MONTHS if months is None else months
+    if months <= 0:
+        return 0
+    cutoff = _months_before(today or date.today(), months)
+    try:
+        names = os.listdir(_audio_dir())
+    except OSError:
+        return 0
+    removed = 0
+    for name in names:
+        m = AUDIO_NAME_RE.match(name)
+        if m and date.fromisoformat(m.group(1)) < cutoff:
+            removed += 1
+            if not dry_run:
+                os.remove(os.path.join(_audio_dir(), name))
+    return removed
 
 
 # --- evening prompt ------------------------------------------------------------------
@@ -240,7 +406,16 @@ async def send_evening_prompt(http_client=None, now: datetime | None = None) -> 
 
 
 if __name__ == "__main__":
-    if sys.argv[1:] == ["prompt"]:
+    args = sys.argv[1:]
+    if args == ["prompt"]:
         print(f"Backend [Journal]: sent {asyncio.run(send_evening_prompt())} prompt(s).")
+        n = prune_audio()
+        if n:
+            print(f"Backend [Journal]: deleted {n} recording(s) past the retention period.")
+    elif args and args[0] == "prune" and set(args[1:]) <= {"--dry-run"}:
+        dry = "--dry-run" in args
+        n = prune_audio(dry_run=dry)
+        print(f"Backend [Journal]: {'would delete' if dry else 'deleted'} {n} recording(s) "
+              f"(keep {config.JOURNAL_AUDIO_KEEP_MONTHS or 'forever'} months).")
     else:
-        sys.exit("usage: python3 -m backend.feeds.journal prompt")
+        sys.exit("usage: python3 -m backend.feeds.journal prompt | prune [--dry-run]")

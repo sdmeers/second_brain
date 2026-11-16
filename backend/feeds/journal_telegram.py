@@ -20,8 +20,6 @@ _pending = SessionStore("journal_pending", ttl=30 * 60)
 # Voice notes waiting for the Journal / Capture choice, keyed by (chat_id, message_id).
 # In memory only: after a restart a tap says the note has expired.
 _offers = SessionStore("journal_offers", ttl=8 * 60 * 60)
-# Fallback start of the window if the evening prompt was not sent (Telegram down).
-WINDOW_START_HOUR = 22
 CALLBACK_PREFIX = "jrnl:"
 # Set on a message the user chose to capture, so the dispatcher's second pass skips us.
 DECLINED = "_journal_declined"
@@ -32,14 +30,7 @@ def _now() -> datetime:
 
 
 def in_journal_window(chat_id: int, now: datetime) -> bool:
-    """From tonight's prompt (or 22:00 if none was sent) until the 04:00 rollover."""
-    day = journal.journal_date_for(now)
-    with state.connect() as conn:
-        row = conn.execute("SELECT sent_at FROM journal_prompts WHERE chat_id = ? AND journal_date = ?",
-                           (chat_id, day.isoformat())).fetchone()
-    if row and datetime.fromisoformat(row[0]) <= now:
-        return True
-    return now.hour >= WINDOW_START_HOUR or now.hour < journal.DAY_ROLLOVER_HOUR
+    return journal.in_journal_window(chat_id, now)
 
 
 async def _send(http_client, token: str, chat_id: int, text: str) -> None:

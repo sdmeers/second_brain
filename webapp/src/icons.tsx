@@ -63,3 +63,6 @@ export const StarIcon = ({ filled, ...p }: SVGProps<SVGSVGElement> & { filled?: 
 export const CloseIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}><path d="M6 6l12 12M18 6L6 18" /></svg>
 );
+export const BookIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}><path d="M5 4.5A1.5 1.5 0 016.5 3H19v15H6.5A1.5 1.5 0 005 19.5v-15zM5 19.5A1.5 1.5 0 006.5 21H19M9 7.5h6" /></svg>
+);

@@ -4,7 +4,7 @@ import base64
 import json
 import os
 import stat
-from datetime import datetime, timedelta
+from datetime import datetime
 from types import SimpleNamespace
 
 import pytest
@@ -283,68 +283,3 @@ def test_token_file_is_owner_only(tmp_path):
     google_auth._save_token("rt-value")
     assert stat.S_IMODE(os.stat(tmp_path / "token.json").st_mode) == 0o600
 
-
-# --- where things were filed: Telegram summary and the daily digest section ----------
-
-async def test_telegram_summary_gives_counts_and_folders_only(model, vault):
-    r = await mail.sync(http_client=FakeGmail(), now=NOW)
-    text = mail.telegram_summary(r)
-    folder = f"{config.EMAIL_NOTES_DIR}/2026/2026-11"
-    assert text.splitlines()[:2] == ["📧 Email digest: 3 filed", f"• 3 → {folder}"]
-    assert "4 left out by your rules" in text and "Daily Digest" in text
-    for private in ("Hotel booking", "The Grand", "Sunday lunch", "may@family.example", "GR-88213", "Aunt May"):
-        assert private not in text
-
-
-async def test_telegram_summary_groups_by_area(model, vault, monkeypatch):
-    monkeypatch.setattr(config, "EMAIL_NOTES_FILING", "by_area")
-    r = await mail.sync(http_client=FakeGmail(), now=NOW)
-    assert "• 3 → 03_Areas/Family/Email" in mail.telegram_summary(r)
-
-
-async def test_no_message_when_nothing_filed_or_dry_run(model, vault):
-    assert mail.telegram_summary(await mail.sync(http_client=FakeGmail([INBOX[4]]), now=NOW)) is None
-    assert mail.telegram_summary(await mail.sync(dry_run=True, http_client=FakeGmail(), now=NOW)) is None
-
-
-async def test_deferred_alone_is_still_reported(model, vault, monkeypatch):
-    monkeypatch.setattr(config, "EMAIL_DAILY_MAX_MESSAGES", 0)
-    text = mail.telegram_summary(await mail.sync(http_client=FakeGmail(), now=NOW))
-    assert text.startswith("📧 Email digest: 0 filed") and "3 waiting for the next run" in text
-    assert "Daily Digest" not in text
-
-
-async def test_summary_is_sent_after_a_real_run(monkeypatch, model, vault):
-    sent = []
-    r = await mail.sync(http_client=FakeGmail([INBOX[0]]), now=NOW)
-
-    async def fake_sync(dry_run=False):
-        return r
-
-    async def fake_send(text, **kw):
-        sent.append(text)
-    monkeypatch.setattr(mail, "sync", fake_sync)
-    monkeypatch.setattr("backend.feeds.notify.send", fake_send)
-    await mail._sync_and_report(dry_run=False)
-    assert sent == [mail.telegram_summary(r)]
-
-
-async def test_digest_section_links_each_note(model, vault):
-    await mail.sync(http_client=FakeGmail(), now=NOW)
-    section = mail.digest_section(datetime.now() - timedelta(days=1))
-    lines = section.strip().splitlines()
-    assert lines[0] == "## 📧 Filed from email (last 24h)" and len(lines) == 4
-    assert "[[04_Resources/Email_Digest_" in lines[1] and "|2026-11-13 " in lines[1] and lines[1].endswith("/2026/2026-11`")
-    digest_notes(vault)[0].unlink()                     # a deleted note drops out
-    assert len(mail.digest_section(datetime.now() - timedelta(days=1)).strip().splitlines()) == 3
-    assert mail.digest_section(datetime.now() + timedelta(minutes=1)) == ""
-
-
-async def test_weekend_digest_skips_professional_areas(model, vault, monkeypatch):
-    (vault / "03_Areas" / "Professional").mkdir(exist_ok=True)
-    monkeypatch.setattr(config, "EMAIL_NOTES_FILING", "by_area")
-    reply = dict(DIGEST, area="03_Areas/Professional")
-    model.reply = json.dumps(reply)
-    await mail.sync(http_client=FakeGmail([INBOX[0]]), now=NOW)
-    since = datetime.now() - timedelta(days=1)
-    assert mail.digest_section(since) and mail.digest_section(since, skip_professional=True) == ""

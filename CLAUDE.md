@@ -110,6 +110,8 @@ Automatic feeds (voice journal, calendar, AI chat summaries, email digest, house
 
 - **Chat exports differ by provider.** Claude's export has conversation objects (`conversations.json`). Gemini's Google Takeout is a flat activity log with one entry per prompt and no titles: `parse_gemini_export` groups entries by the ID in each entry's `gemini.google.com/app/<id>` link. Parsers are strict and refuse an unexpected shape rather than guess. A first import for a provider always asks for approval in Telegram.
 
+- **Filing round-up:** the morning review (`brain_cleaner.generate_daily_digest`) uses `utils/filing_roundup.py` to report everything filed since the last scheduled review (librarian log plus email, household and chat feed notes): counts and folders in Telegram, links in the Daily Digest note. Feeds do not send their own "filed" messages.
+
 Raw material (journal audio, export zips) goes to `00_System/Inbox/Raw/<feed>/`, which Syncthing and the RAG index both skip. `feeds/household_scan.py` must stay standard-library only: it runs on the laptop without the venv.
 
 ### Access control and secrets

@@ -622,7 +622,7 @@ async def cleanup_old_audio():
             except Exception:
                 pass
 
-async def generate_daily_digest(target_chat_id: int = None):
+async def generate_daily_digest(target_chat_id: int = None, scheduled: bool = False):
     print("🌅 Generating daily digest...")
     from backend.utils.holiday_manager import is_scope_paused
     
@@ -837,12 +837,16 @@ async def generate_daily_digest(target_chat_id: int = None):
     digest_content += f"- Waiting For Items: {len(waiting_items)}\n"
     digest_content += f"- Orphaned Projects: {len(orphaned_projects)}\n\n"
 
-    # Email digest notes filed in the last day, with links (titles stay in the vault).
+    # Everything filed since the last scheduled review: links in the note, counts and
+    # folders in Telegram (titles stay in the vault).
+    filed, filed_since_dt = [], today_dt - timedelta(days=1)
     try:
-        from backend.feeds import mail as email_feed
-        digest_content += email_feed.digest_section(yesterday, skip_professional=is_weekend)
+        from backend.utils import filing_roundup
+        filed_since_dt = filing_roundup.window_start(today_dt)
+        filed = filing_roundup.filed_since(filed_since_dt, skip_professional=is_weekend)
+        digest_content += filing_roundup.digest_section(filed, filed_since_dt)
     except Exception as e:
-        print(f"Backend [Digest]: email notes not listed ({type(e).__name__}).")
+        print(f"Backend [Digest]: filing round-up skipped ({type(e).__name__}).")
 
     digest_content += "## 📁 Recent Brain Activity (Last 24h)\n"
     if recent_activity:
@@ -902,6 +906,10 @@ async def generate_daily_digest(target_chat_id: int = None):
                 summary_lines.extend(f"• {it}" for it in items[:5])
             summary_lines.append("")
 
+        if filed:
+            summary_lines.append(filing_roundup.telegram_block(filed, filed_since_dt))
+            summary_lines.append("")
+
         if unclarified_count > 0:
             summary_lines.append(f"📥 **Unclarified Items:** {unclarified_count} awaiting /clarify")
 
@@ -912,6 +920,13 @@ async def generate_daily_digest(target_chat_id: int = None):
                 await send_telegram_message_safe(client, TELEGRAM_BOT_TOKEN, chat_id, summary_text)
         except Exception as e:
             print(f"Failed to send digest via Telegram: {e}")
+
+    # Only the scheduled review moves the round-up window on; /daily on demand doesn't.
+    if scheduled:
+        try:
+            filing_roundup.mark_reviewed(today_dt)
+        except Exception as e:
+            print(f"Backend [Digest]: round-up window not saved ({type(e).__name__}).")
 
     return digest_content
 
@@ -1187,7 +1202,7 @@ async def main():
     except Exception as e: print(f"Failed to index vault: {e}")
     await auto_update_index()
     await cleanup_old_audio()
-    await generate_daily_digest()
+    await generate_daily_digest(scheduled=True)
     await rolling_retention()
     run_brain_cleaner()
     print("✅ All Brain Cleaner Tasks Completed.")

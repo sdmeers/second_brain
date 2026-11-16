@@ -211,8 +211,12 @@ export default function App() {
           <StatusPill status={statusOf(state)} pending={pendingCount(state)} />
         </div>
 
-        {tab !== "journal" && (
-        <div className="mt-3 grid grid-cols-2 gap-1 rounded-2xl bg-slate-200/70 p-1 dark:bg-slate-800/80">
+        {/* The journal isn't split by area, but the filter keeps its space there so the
+            page doesn't jump when switching tabs. */}
+        <div
+          className={`mt-3 grid grid-cols-2 gap-1 rounded-2xl bg-slate-200/70 p-1 dark:bg-slate-800/80 ${tab === "journal" ? "invisible" : ""}`}
+          aria-hidden={tab === "journal" || undefined}
+        >
           {(["personal", "professional"] as Category[]).map((c) => (
             <button
               key={c}
@@ -229,7 +233,6 @@ export default function App() {
             </button>
           ))}
         </div>
-        )}
 
         <div className="mt-3 hidden sm:block">{tabs}</div>
       </header>

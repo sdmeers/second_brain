@@ -201,6 +201,10 @@ def tg(monkeypatch):
     async def fake_download(file_id, token, http_client):
         return b"audio-bytes"
     monkeypatch.setattr("backend.ingestion.telegram.download_telegram_file", fake_download)
+    clock = {"now": datetime(2026, 11, 14, 12, 0)}          # midday: outside the journal window
+    monkeypatch.setattr(journal_telegram, "_now", lambda: clock["now"])
+    monkeypatch.setattr(journal_telegram, "_offers", journal_telegram.SessionStore("t", ttl=3600))
+    fake.clock = clock
     return fake
 
 
@@ -286,3 +290,69 @@ async def test_dispatcher_voice_capture_unchanged_when_not_a_journal(monkeypatch
     lines = captured(tasks_dir)
     assert len(lines) == 1 and lines[0].startswith("- Buy milk (Captured on") and "via Telegram Voice" in lines[0]
     assert state.get_seen("journal", journal.journal_date_for(datetime.now()).isoformat()) is None
+
+
+# --- journal window: Journal / Capture buttons ----------------------------------------
+
+def _buttons(sent: dict) -> list[str]:
+    return [b["callback_data"] for b in sent["reply_markup"]["inline_keyboard"][0]]
+
+
+async def test_plain_voice_note_in_the_window_offers_buttons(model, tg):
+    await journal.send_evening_prompt(tg, now=datetime(2026, 11, 14, 22, 0))
+    tg.clock["now"] = datetime(2026, 11, 14, 23, 40)
+    assert await journal_telegram.maybe_handle(voice_msg(7), "", "tok", tg)
+    assert _buttons(tg.sent[-1]) == ["jrnl:j:7", "jrnl:c:7"]
+    assert model.transcribed == []                       # nothing spent until the user chooses
+
+
+async def test_window_runs_to_the_rollover_even_without_a_prompt(tg):
+    for hour, expected in ((21, False), (22, True), (2, True), (4, False)):
+        day = 15 if hour < 12 else 14
+        assert journal_telegram.in_journal_window(42, datetime(2026, 11, day, hour, 30)) is expected
+
+
+async def test_window_opens_with_an_earlier_prompt(tg):
+    await journal.send_evening_prompt(tg, now=datetime(2026, 11, 14, 21, 0))
+    assert journal_telegram.in_journal_window(42, datetime(2026, 11, 14, 21, 15))
+    assert not journal_telegram.in_journal_window(42, datetime(2026, 11, 14, 20, 55))
+
+
+async def test_journal_button_saves_under_the_evening_it_was_recorded(model, tg, vault, tasks_dir):
+    tg.clock["now"] = datetime(2026, 11, 14, 23, 50)
+    await journal_telegram.maybe_handle(voice_msg(7), "", "tok", tg)
+    tg.clock["now"] = datetime(2026, 11, 15, 8, 0)          # tapped the next morning
+    await journal_telegram.handle_callback("jrnl:j:7", 42, 102, "tok", tg)
+    assert model.transcribed == [(b"audio-bytes", "audio/ogg")]
+    assert state.get_seen("journal", "2026-11-14")
+    assert tg.sent[-1]["text"].startswith("📓 Journal saved for 14 Nov.")
+    assert TRANSCRIPT not in " ".join(m.get("text", "") for m in tg.sent)
+    await journal_telegram.handle_callback("jrnl:j:7", 42, 102, "tok", tg)     # double tap
+    assert "expired" in tg.sent[-1]["text"] and len(model.transcribed) == 1
+
+
+async def test_capture_button_takes_the_ordinary_capture_path(monkeypatch, model, tg, tasks_dir, tmp_path):
+    monkeypatch.setattr(config, "INBOX_PATH", str(tmp_path / "inbox"))
+    monkeypatch.setattr("backend.processing.voice_capture.INBOX_PATH", str(tmp_path / "inbox"))
+
+    async def fake_transcribe(data, mime):
+        return "Buy milk"
+    monkeypatch.setattr("backend.processing.transcriber.transcribe_audio_via_gemini", fake_transcribe)
+    tg.clock["now"] = datetime(2026, 11, 14, 22, 30)
+    await journal_telegram.maybe_handle(voice_msg(7), "", "tok", tg)
+    await journal_telegram.handle_callback("jrnl:c:7", 42, 102, "tok", tg)
+    lines = captured(tasks_dir)
+    assert len(lines) == 1 and lines[0].startswith("- Buy milk (Captured on")
+    assert state.get_seen("journal", "2026-11-14") is None
+
+
+async def test_reply_and_journal_command_still_skip_the_buttons(model, tg):
+    await journal.send_evening_prompt(tg, now=datetime(2026, 11, 14, 22, 0))
+    tg.clock["now"] = datetime(2026, 11, 14, 22, 30)
+    await journal_telegram.maybe_handle(voice_msg(7, reply_to=101), "", "tok", tg)
+    assert "reply_markup" not in tg.sent[-1] and len(model.transcribed) == 1
+
+
+async def test_tap_after_restart_says_expired(tg):
+    await journal_telegram.handle_callback("jrnl:j:7", 42, 102, "tok", tg)
+    assert "expired" in tg.sent[-1]["text"] and "/journal" in tg.sent[-1]["text"]

@@ -475,6 +475,11 @@ async def handle_telegram_callback_query(callback_query: dict, token: str, http_
     except Exception as e:
         print(f"Backend [Telegram callback]: Failed to answer callback query: {e}")
         
+    if data.startswith("jrnl:"):
+        from backend.feeds.journal_telegram import handle_callback as handle_journal_callback
+        await handle_journal_callback(data, chat_id, message_id, token, http_client)
+        return
+
     if data.startswith("feeds:"):
         from backend.feeds.approvals import handle_callback
         await handle_callback(data, chat_id, message_id, token, http_client)

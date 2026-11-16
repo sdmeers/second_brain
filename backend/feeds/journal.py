@@ -24,7 +24,8 @@ from backend.prompts import load_prompt
 
 FEED = "journal"
 ENTRY_FEED = "journal-entry"     # state key space for per-message de-duplication
-PROMPT_TEXT = ("🌙 Evening journal. Reply to this message with a voice note:\n"
+PROMPT_TEXT = ("🌙 Evening journal. Whenever you're ready before bed, send a voice note "
+               "and tap 📓 Journal:\n"
                "• What happened today?\n• What did you promise anyone?\n• What's on your mind?")
 # An entry made after midnight but before this hour belongs to the evening before.
 DAY_ROLLOVER_HOUR = 4

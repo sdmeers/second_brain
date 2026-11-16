@@ -58,7 +58,6 @@ function Tonight() {
   }, [seconds, mode]);
 
   // Leaving the page mid-recording discards it rather than leaving the mic on.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => () => stop(false), []);
 
   const stop = (save: boolean) => {

@@ -16,6 +16,7 @@ import html
 import os
 import re
 import sys
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from email.utils import parseaddr, parsedate_to_datetime
@@ -23,7 +24,7 @@ from email.utils import parseaddr, parsedate_to_datetime
 from pydantic import BaseModel, ValidationError
 
 from backend import config
-from backend.feeds import google_auth, ledger, llm, notes, state
+from backend.feeds import google_auth, ledger, llm, notes, notify, state
 from backend.feeds.dryrun import RunReport
 from backend.prompts import load_prompt
 from backend.utils.sanitize import sanitize_filename
@@ -251,6 +252,62 @@ class SyncResult:
         return "\n".join(lines)
 
 
+def telegram_summary(result: SyncResult) -> str | None:
+    """Where the run filed things, for Telegram. Counts and folder names only: titles,
+    senders and subjects come from the emails, so they stay in the vault (the daily
+    digest lists them). None when there is nothing worth a message."""
+    filed = result.report.notes
+    if result.report.dry_run or (not filed and not result.deferred):
+        return None
+    lines = [f"📧 Email digest: {len(filed)} filed"]
+    by_folder = Counter(os.path.dirname(p) for p in filed)
+    lines += [f"• {n} → {folder}" for folder, n in sorted(by_folder.items(), key=lambda kv: (-kv[1], kv[0]))]
+    left_out = sum(result.dropped.values())
+    if left_out:
+        lines.append(f"{left_out} left out by your rules")
+    if result.not_relevant:
+        lines.append(f"{result.not_relevant} read but not worth a note")
+    if result.deferred:
+        lines.append(f"{result.deferred} waiting for the next run (daily cap)")
+    if filed:
+        lines.append("Titles and links are in today's Daily Digest.")
+    return "\n".join(lines)
+
+
+def filed_since(since: datetime) -> list[str]:
+    """Vault-relative paths of digest notes written since ``since`` that still exist.
+    Used by the daily digest note; never sent to Telegram."""
+    with state.connect() as conn:
+        rows = conn.execute(
+            "SELECT note_path FROM seen_items WHERE feed = ? AND note_path IS NOT NULL AND ingested_at >= ? "
+            "ORDER BY note_path", (FEED, since.isoformat(timespec="seconds"))).fetchall()
+    return [r[0] for r in rows if os.path.isfile(os.path.join(config.OBSIDIAN_VAULT_PATH, r[0]))]
+
+
+def digest_section(since: datetime, skip_professional: bool = False) -> str:
+    """The daily digest note's "Filed from email" section, or "" if nothing was filed.
+    Weekend digests leave out Professional areas, as the rest of the digest does."""
+    paths = [p for p in filed_since(since) if not (skip_professional and "Professional" in p)]
+    if not paths:
+        return ""
+    lines = ["## 📧 Filed from email (last 24h)"]
+    for p in paths:
+        stem = os.path.splitext(p)[0]
+        lines.append(f"- [[{stem}|{os.path.basename(stem)}]] · `{os.path.dirname(p)}`")
+    return "\n".join(lines) + "\n\n"
+
+
+async def _sync_and_report(dry_run: bool) -> SyncResult:
+    result = await sync(dry_run=dry_run)
+    summary = telegram_summary(result)
+    if summary:
+        try:
+            await notify.send(summary)
+        except Exception as e:      # the notes are written; a missed message is not worth failing for
+            print(f"Backend [Email]: Telegram summary not sent ({type(e).__name__}).")
+    return result
+
+
 async def sync(dry_run: bool = False, http_client=None, now: datetime | None = None) -> SyncResult:
     import httpx
 
@@ -347,7 +404,7 @@ if __name__ == "__main__":
         if args == ["authorize"]:
             google_auth.authorise_interactively()
         elif args and args[0] == "sync" and not set(args[1:]) - {"--dry-run"}:
-            print(asyncio.run(sync(dry_run="--dry-run" in args)).text())
+            print(asyncio.run(_sync_and_report(dry_run="--dry-run" in args)).text())
         else:
             sys.exit("usage: python3 -m backend.feeds.mail authorize | sync [--dry-run]")
     except google_auth.AuthError as e:

@@ -837,6 +837,13 @@ async def generate_daily_digest(target_chat_id: int = None):
     digest_content += f"- Waiting For Items: {len(waiting_items)}\n"
     digest_content += f"- Orphaned Projects: {len(orphaned_projects)}\n\n"
 
+    # Email digest notes filed in the last day, with links (titles stay in the vault).
+    try:
+        from backend.feeds import mail as email_feed
+        digest_content += email_feed.digest_section(yesterday, skip_professional=is_weekend)
+    except Exception as e:
+        print(f"Backend [Digest]: email notes not listed ({type(e).__name__}).")
+
     digest_content += "## 📁 Recent Brain Activity (Last 24h)\n"
     if recent_activity:
         digest_content += "\n".join(f"- `{item}`" for item in recent_activity) + "\n\n"

@@ -112,7 +112,7 @@ Automatic feeds (voice journal, calendar, AI chat summaries, email digest, house
 
 - **Filing round-up:** the morning review (`brain_cleaner.generate_daily_digest`) uses `utils/filing_roundup.py` to report everything filed since the last scheduled review (librarian log plus email, household and chat feed notes): counts and folders in Telegram, links in the Daily Digest note. Feeds do not send their own "filed" messages.
 
-Raw material (journal audio, export zips) goes to `00_System/Inbox/Raw/<feed>/`, which Syncthing and the RAG index both skip. `feeds/household_scan.py` must stay standard-library only: it runs on the laptop without the venv.
+Raw material (journal audio, export zips) goes to `00_System/Inbox/Raw/<feed>/`, which Syncthing and the RAG index both skip. `feeds/household_scan.py` must stay standard-library only: it runs on the laptop without the venv. The household feed is general, not document-type specific: a ticked folder becomes one note about the whole subject (summary, key facts, timeline, outstanding items, every file including photos and videos that are listed but never copied), and a ticked file becomes one reference note. Readers by file type live in `feeds/readers.py` (PDF, Word, `.eml`, Outlook `.msg` via `olefile`, text, `.url`, CSV, `.xlsx`); adding a type means a reader there plus its extension in `household_scan.READABLE`. Generated text sits between `<!-- household:start -->` and `<!-- household:end -->`, so re-sending a folder refreshes its note and keeps hand-written text; the state store keys bundles by a hash of their path, never the path itself.
 
 ### Access control and secrets
 

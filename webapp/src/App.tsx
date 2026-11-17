@@ -25,14 +25,15 @@ import type { Category, Item, ListName, Project } from "./types";
 
 type Tab = ListName | "projects" | "journal";
 
-const TABS: { id: Tab; label: string; icon: ReactNode; empty: string }[] = [
+const TABS: { id: Exclude<Tab, "journal">; label: string; icon: ReactNode; empty: string }[] = [
   { id: "next", label: "Next", icon: <BoltIcon className="size-5" />, empty: "All clear. Nothing next on your plate." },
   { id: "waiting", label: "Waiting", icon: <HourglassIcon className="size-5" />, empty: "Nobody owes you anything right now." },
   { id: "someday", label: "Someday", icon: <BulbIcon className="size-5" />, empty: "No someday / maybe ideas parked here." },
   { id: "captured", label: "Captured", icon: <InboxIcon className="size-5" />, empty: "Inbox zero. Tap + to capture a thought." },
   { id: "projects", label: "Projects", icon: <FolderIcon className="size-5" />, empty: "" },
-  { id: "journal", label: "Journal", icon: <BookIcon className="size-5" />, empty: "" },
 ];
+// The journal sits apart, in the header's top-right corner: it's a once-a-day reflection
+// rather than a list, and five tabs fit a phone's bottom bar comfortably.
 
 const DEFAULT_CONTEXTS = ["@home", "@computer", "@errands", "@phone", "@anywhere", "@office", "@WFH"];
 
@@ -160,7 +161,7 @@ export default function App() {
   if (state.needToken) return <TokenPrompt />;
 
   const tabs = (
-    <ul className="mx-auto grid max-w-2xl grid-cols-6 sm:gap-1">
+    <ul className="mx-auto grid max-w-2xl grid-cols-5 sm:gap-1">
       {TABS.map((t) => {
         const on = t.id === tab;
         const count = countOf(t.id);
@@ -187,9 +188,6 @@ export default function App() {
                     {count}
                   </span>
                 )}
-                {t.id === "journal" && journalDue && (
-                  <span className="absolute -top-0.5 -right-1 size-2 rounded-full bg-(--accent)" aria-label="Tonight's journal not yet recorded" />
-                )}
               </span>
               {t.label}
               {count > 0 && <span className="hidden text-xs tabular-nums opacity-60 sm:inline">{count}</span>}
@@ -201,14 +199,32 @@ export default function App() {
   );
 
   const canEditList = tab !== "captured" && tab !== "projects" && tab !== "journal";
-  const current = TABS.find((t) => t.id === tab)!;
+  const current = TABS.find((t) => t.id === tab);
 
   return (
     <div className="mx-auto flex min-h-dvh max-w-2xl flex-col">
       <header className="sticky top-0 z-20 bg-slate-50/85 px-4 pt-[max(0.75rem,env(safe-area-inset-top))] pb-3 backdrop-blur-md dark:bg-slate-950/85">
-        <div className="flex items-center justify-between">
-          <h1 className="text-xl font-bold tracking-tight">GTD</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="flex shrink-0 items-center gap-2 text-xl font-bold tracking-tight">
+            <img src={`${import.meta.env.BASE_URL}icon.svg`} alt="" className="size-7 rounded-lg" />
+            GTD
+          </h1>
           <StatusPill status={statusOf(state)} pending={pendingCount(state)} />
+          <button
+            type="button"
+            onClick={() => setTab("journal")}
+            aria-current={tab === "journal" ? "page" : undefined}
+            aria-label={journalDue ? "Journal (tonight's entry not yet recorded)" : "Journal"}
+            title="Journal"
+            className={`relative ml-auto shrink-0 rounded-full p-2 transition-colors ${
+              tab === "journal"
+                ? "bg-(--accent-soft) text-(--accent-ink) dark:text-(--accent)"
+                : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
+            }`}
+          >
+            <BookIcon className="size-6" />
+            {journalDue && <span className="absolute top-1.5 right-1.5 size-2 rounded-full bg-(--accent)" />}
+          </button>
         </div>
 
         {/* The journal isn't split by area, but the filter keeps its space there so the
@@ -277,7 +293,7 @@ export default function App() {
         ) : tab === "projects" ? (
           <ProjectsTab category={category} projects={projects} archived={archived} actionsOf={actionsOf} onOpen={setOpenProject} />
         ) : all.length === 0 ? (
-          <Empty title={current.empty} />
+          <Empty title={current?.empty ?? ""} />
         ) : (
           <>
             <DndContext
@@ -456,10 +472,10 @@ function StatusPill({ status, pending }: { status: SyncStatus; pending: number }
       type="button"
       onClick={() => void store.sync()}
       title="Sync now"
-      className="flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm ring-1 ring-slate-900/5 dark:bg-slate-800 dark:text-slate-300 dark:ring-white/10"
+      className="flex min-w-0 items-center gap-2 truncate rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm ring-1 ring-slate-900/5 dark:bg-slate-800 dark:text-slate-300 dark:ring-white/10"
     >
-      <span className={`size-2 rounded-full ${dot}`} />
-      {text}
+      <span className={`size-2 shrink-0 rounded-full ${dot}`} />
+      <span className="truncate">{text}</span>
     </button>
   );
 }
@@ -472,7 +488,10 @@ function TokenPrompt() {
   };
   return (
     <form onSubmit={submit} className="mx-auto flex min-h-dvh max-w-sm flex-col justify-center gap-4 px-6">
-      <h1 className="text-2xl font-bold tracking-tight">GTD</h1>
+      <h1 className="flex items-center gap-2.5 text-2xl font-bold tracking-tight">
+        <img src={`${import.meta.env.BASE_URL}icon.svg`} alt="" className="size-8 rounded-lg" />
+        GTD
+      </h1>
       <p className="text-sm text-slate-500 dark:text-slate-400">
         Enter the API token from your Second Brain&apos;s <span className="font-mono">backend/.env</span>. It&apos;s kept on
         this device only.

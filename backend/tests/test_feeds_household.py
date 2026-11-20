@@ -327,7 +327,7 @@ FOLDER_REPLY = {
                  {"date": "soon", "event": "Ignored"}],
     "outstanding": [{"item": "Send photos of the boot damage", "due": "2026-12-01"},
                     {"item": "Wait for the repair invoice", "due": ""}],
-    "key_dates": [],
+    "key_dates": [{"label": "Policy ends", "date": "2027-01-09", "kind": "expiry"}],
     "files": [{"file": 1, "about": "Claim confirmation from the insurer"}, {"file": 3, "about": "The claim number"}],
     "area": "03_Areas/Car",
 }
@@ -385,10 +385,12 @@ async def test_folder_becomes_one_note(tmp_path, model, vault, tasks_dir, no_cla
     assert "- `boot0.jpg` (photo, 2026-09-26)" in text
     assert "- 2 photos: listed above and kept on the laptop, never copied or read" in text
     assert "- `Same email.eml` (email, 2026-06-19): the same email as another file here" in text
-    assert f"Folder on the laptop: `{CLAIM}`" in text
-    (line,) = next_actions(tasks_dir)                                         # only the dated item
-    assert line.startswith("- [ ] Send photos of the boot damage (Car accident claim June 2026) 📅 2026-12-01")
-    assert r.reminders == 1 and not (tmp_path / "staging" / "b001").exists()
+    assert f"Folder on the laptop: `{CLAIM}`" in text and "Folder: Car/Claim Jun 2026" in prompt
+    assert "## Key dates\n- **Policy ends:** 2027-01-09" in text
+    expiry, photos = next_actions(tasks_dir)                                  # dated items only
+    assert expiry.startswith("- [ ] Check expiry of: Policy ends (Car accident claim June 2026) 📅 2027-01-09")
+    assert photos.startswith("- [ ] Send photos of the boot damage (Car accident claim June 2026) 📅 2026-12-01")
+    assert r.reminders == 2 and not (tmp_path / "staging" / "b001").exists()
 
 
 async def test_resending_a_folder_refreshes_its_note_and_keeps_hand_written_text(tmp_path, model, vault, tasks_dir,
@@ -411,7 +413,7 @@ async def test_resending_a_folder_refreshes_its_note_and_keeps_hand_written_text
     assert "My own note: rang them on Tuesday." in text and text.count(household.START) == 1
     assert parse_frontmatter(text)["status"] == "closed"
     assert len(list(note.parent.glob("Car accident claim*"))) == 1
-    assert len(next_actions(tasks_dir)) == 1                                  # the reminder isn't added twice
+    assert len(next_actions(tasks_dir)) == 2                                  # reminders aren't added twice
 
 
 async def test_a_large_folder_is_condensed_file_by_file(tmp_path, model, vault, monkeypatch, no_claim_note):

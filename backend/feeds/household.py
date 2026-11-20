@@ -242,7 +242,9 @@ def _label(s: Staged) -> str:
 
 def folder_prompt(b: Bundle, texts: dict[int, str]) -> str:
     """Every readable file's text (or its condensed version), then what was not read."""
-    parts = [f"Folder: {os.path.basename(b.manifest['original_path'])}", ""]
+    # The parent's name too ("Car/Claim Jan 2025"): it says what area the subject belongs to.
+    parent, name = os.path.split(b.manifest["original_path"].rstrip("/"))
+    parts = [f"Folder: {os.path.basename(parent)}/{name}" if os.path.basename(parent) else f"Folder: {name}", ""]
     for s in b.readable:
         parts += [_label(s), llm.wrap_untrusted(texts[s.number]), ""]
     others = ([f"{_label(s)}: no readable text" for s in b.unreadable]
@@ -303,6 +305,9 @@ def render_folder_note(b: Bundle, d: FolderNote) -> str:
     facts = [f.strip() for f in d.key_facts if f.strip()]
     if facts:
         lines += ["## Key facts", *[f"- {f}" for f in facts], ""]
+    key_dates = [kd for kd in d.key_dates if _parse_date(kd.date) and kd.label.strip()]
+    if key_dates:
+        lines += ["## Key dates", *[f"- **{kd.label.strip()}:** {kd.date.strip()}" for kd in key_dates], ""]
     events = sorted((e for e in d.timeline if _parse_date(e.date) and e.event.strip()), key=lambda e: e.date)
     if events:
         lines += ["## Timeline", *[f"- **{e.date.strip()}:** {e.event.strip()}" for e in events], ""]
@@ -328,9 +333,11 @@ def render_folder_note(b: Bundle, d: FolderNote) -> str:
 
 
 def add_reminders(key_dates: list[KeyDate], what: str, provider: str, note_title: str, today: date,
-                  outstanding: list[Outstanding] = (), source_id: str = "") -> int:
+                  outstanding: list[Outstanding] = (), source_id: str = "", by_label: bool = False) -> int:
     """A dated next action for each future renewal, expiry or dated outstanding item, hidden
-    until it is near. A refreshed note never adds the same reminder twice."""
+    until it is near. A refreshed note never adds the same reminder twice. ``by_label`` names
+    the reminder after the date's label (a folder holds several things that can expire),
+    with the subject in brackets."""
     from backend.utils.tasks_dashboard import append_gtd_item
     from backend.vault.tasks import render_task_line
     wanted = []
@@ -338,7 +345,10 @@ def add_reminders(key_dates: list[KeyDate], what: str, provider: str, note_title
         when = _parse_date(kd.date)
         if when and when > today and kd.kind in ("renewal", "expiry"):
             verb = "Renew" if kd.kind == "renewal" else "Check expiry of"
-            wanted.append((f"{verb} {what.strip()}" + (f" ({provider.strip()})" if provider.strip() else ""), when))
+            if by_label and kd.label.strip():
+                wanted.append((f"{verb}: {kd.label.strip()} ({what.strip()})", when))
+            else:
+                wanted.append((f"{verb} {what.strip()}" + (f" ({provider.strip()})" if provider.strip() else ""), when))
     for o in outstanding:
         when = _parse_date(o.due)
         if when and when > today and o.item.strip():
@@ -426,7 +436,7 @@ async def folder_note(b: Bundle, system: str, summary_system: str, folders: list
     if path:
         result.reminders += add_reminders(parsed.key_dates, parsed.title, "",
                                           os.path.splitext(os.path.basename(path))[0], today,
-                                          outstanding=parsed.outstanding, source_id=b.source_id)
+                                          outstanding=parsed.outstanding, source_id=b.source_id, by_label=True)
 
 
 async def process(*, approved: bool = False, dry_run: bool = False, today: date | None = None) -> HouseholdResult:
